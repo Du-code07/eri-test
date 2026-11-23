@@ -1,0 +1,448 @@
+// Read-only local Excel sheets. Flutter owns the fixed top tabs and zoom buttons.
+import { XlsxSheetViewer } from './engine/xlsx.js';
+import { legacyXls } from './legacy/xls.js';
+import { math } from './engine/math.js';
+import { chartEx } from './engine/chart-ex.js';
+import { threeD } from './engine/three-d.js';
+import { tiff } from './engine/tiff.js';
+
+const host = document.getElementById('sheet');
+const MAX_BYTES = 256 * 1024 * 1024;
+let options = { format: 'xlsx', theme: 'white', position: null, progress: 0 };
+let incoming, received = 0, viewer, generation = 0, disposed = false;
+let loaded = false, opening = false, awaitingPassword = false;
+let events = [], flushing = false, navigation = Promise.resolve(), fontPromise;
+let locationTimer, resizeTimer, frameRequest = 0, desiredView, applyingView = false;
+let gesture = null, viewTask = Promise.resolve();
+const sheetViews = new Map();
+let searchMatches = [];
+const pointers = new Map();
+
+function emit(type, data = {}) { events.push({ type, ...data }); void flush(); }
+async function flush() {
+  if (disposed || flushing) return;
+  if (!window.flutter_inappwebview?.callHandler) { retryBridge(); return; }
+  flushing = true;
+  try {
+    while (events.length && !disposed) {
+      await window.flutter_inappwebview.callHandler('freaderXlsx', events[0]); events.shift();
+    }
+  } catch (_) { retryBridge(); /* Retry when the Android bridge finishes attaching. */ }
+  finally { flushing = false; }
+}
+// FReader(배터리): 보낼 알림이 남아 있을 때만 0.15초마다 다시 시도 (예전에는 시트를 펴 둔 내내 깨어 있었음)
+let bridgeTimer = 0;
+function retryBridge() {
+  if (bridgeTimer || disposed) return;
+  bridgeTimer = setInterval(() => {
+    if (disposed || !events.length) { clearInterval(bridgeTimer); bridgeTimer = 0; return; }
+    void flush();
+  }, 150);
+}
+window.addEventListener('flutterInAppWebViewPlatformReady', flush);
+function errorMessage(error) {
+  switch (error?.code) {
+    case 'unsupported-content': return '이 구형 XLS에는 아직 지원하지 않는 내용이 있어요\nExcel에서 XLSX로 저장한 뒤 열어 주세요';
+    case 'unsupported-encryption': return '이 엑셀 파일의 암호화 방식은 지원하지 않아요\n암호를 해제한 사본을 열어 주세요';
+    case 'ooxml-resource-limit': return '엑셀 파일의 압축 해제 데이터 또는 셀 수가 처리 한도를 초과했어요\n시트를 나눈 사본을 열어 주세요';
+    case 'ooxml-decoded-image-limit': return '시트의 그림을 처리할 메모리가 부족해요\n그림 해상도를 낮춘 사본을 열어 주세요';
+    default: return '엑셀 파일을 표시하지 못했어요: ' + String(error?.message || error).slice(0, 400);
+  }
+}
+function fail(error) { emit('error', { message: errorMessage(error) }); return false; }
+function wipe(bytes) { if (bytes?.byteLength) bytes.fill(0); }
+function closeViewer() {
+  loaded = false; desiredView = null; gesture = null; pointers.clear();
+  searchMatches = []; sheetViews.clear();
+  clearTimeout(locationTimer); clearTimeout(resizeTimer); cancelAnimationFrame(frameRequest);
+  viewer?.destroy(); viewer = null; host.replaceChildren();
+}
+function beginDocument(length, config = {}) {
+  if (disposed) throw new Error('뷰어가 종료됐어요');
+  if (!Number.isSafeInteger(length) || length < 1 || length > MAX_BYTES) throw new Error('열 수 있는 문서 크기는 256MB 이하예요');
+  generation++; closeViewer(); wipe(incoming);
+  incoming = new Uint8Array(length); received = 0;
+  opening = false; awaitingPassword = false; navigation = Promise.resolve();
+  options = { format: 'xlsx', theme: 'white', position: null, progress: 0, ...config };
+  configure(options);
+}
+function appendChunk(offset, encoded) {
+  if (!incoming || offset !== received) throw new Error('문서 전송 순서가 올바르지 않아요');
+  const data = atob(encoded);
+  if (received + data.length > incoming.length) throw new Error('문서 전송 크기가 일치하지 않아요');
+  for (let i = 0; i < data.length; i++) incoming[received + i] = data.charCodeAt(i);
+  received += data.length;
+}
+function loadFonts() {
+  if (fontPromise) return fontPromise;
+  const sans = ['Noto Sans KR', 'Noto Sans CJK KR', '맑은 고딕', 'Malgun Gothic', '굴림', 'Gulim', '돋움', 'Dotum', 'Arial', 'Calibri', 'Calibri Light', 'Aptos', 'Arial Unicode MS'];
+  const serif = ['Noto Serif KR', 'Noto Serif CJK KR', '바탕', 'Batang', 'Times New Roman', 'Cambria'];
+  fontPromise = Promise.all([...sans, ...serif].flatMap(name => [400, 700].map(async weight => {
+    const base = serif.includes(name) ? 'NotoSerifKR' : 'NotoSansKR';
+    const face = new FontFace(name, `local(${JSON.stringify(name)}), url(../hwp/fonts/${base}-${weight === 700 ? 'Bold' : 'Regular'}.woff2)`, { weight: String(weight) });
+    await face.load(); document.fonts.add(face);
+  })));
+  return fontPromise;
+}
+function clampSheet(value) { return Math.max(0, Math.min((viewer?.sheetCount || 1) - 1, Number.isFinite(value) ? Math.trunc(value) : 0)); }
+function savedPosition(position, progress = 0) {
+  const m = /^(?:xlsx|xlsm|xls):(\d+)(?::([\d.]+):([\d.]+):([\d.]+))?$/.exec(String(position || ''));
+  const number = (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+  return { sheet: clampSheet(m ? Number(m[1]) : Math.round(number(progress, 0) * ((viewer?.sheetCount || 1) - 1))),
+    x: m ? Math.max(0, number(m[2], 0)) : 0, y: m ? Math.max(0, number(m[3], 0)) : 0,
+    scale: m ? Math.max(.25, Math.min(4, number(m[4], 1))) : 1 };
+}
+function rememberSheet() {
+  if (loaded && viewer) sheetViews.set(viewer.sheetIndex, {
+    ...viewer.getViewportOffset(), scale: viewer.getScale(),
+  });
+}
+function reportLocation() {
+  if (!loaded || !viewer) return;
+  const { x, y } = viewer.getViewportOffset(), count = viewer.sheetCount, page = viewer.sheetIndex;
+  const scale = Math.round(viewer.getScale() * 1000) / 1000;
+  rememberSheet();
+  emit('location', { page, pageCount: count,
+    position: `${options.format}:${page}:${Math.round(x)}:${Math.round(y)}:${scale}`,
+    progress: count > 1 ? page / (count - 1) : 1 });
+}
+function scheduleLocation() { clearTimeout(locationTimer); locationTimer = setTimeout(reportLocation, 250); }
+async function restorePosition(position, progress = 0) {
+  const at = savedPosition(position, progress), active = viewer;
+  if (!active) return;
+  await active.goToSheet(at.sheet);
+  if (active !== viewer) return;
+  active.setScale(at.scale);
+  await active.setViewportOffset({ x: at.x, y: at.y });
+}
+async function openDocument(password = null) {
+  if (opening || disposed) return false;
+  const current = generation, bytes = incoming;
+  opening = true;
+  try {
+    if (!bytes || received !== bytes.length) throw new Error('문서 데이터를 모두 받지 못했어요');
+    await loadFonts();
+    if (disposed || current !== generation) return false;
+    const start = performance.now();
+    while (host.clientWidth < 2 || host.clientHeight < 2) {
+      if (disposed || current !== generation) return false;
+      if (performance.now() - start > 15000) throw new Error('엑셀 화면 크기를 확인하지 못했어요');
+      await new Promise(resolve => setTimeout(resolve, 30));
+    }
+    closeViewer();
+    const canvas = document.createElement('canvas');
+    canvas.style.width = `${host.clientWidth}px`; canvas.style.height = `${host.clientHeight}px`;
+    host.appendChild(canvas);
+    const active = new XlsxSheetViewer(canvas, {
+      legacyXls, math, chartEx, threeD, tiff, mode: 'main',
+      useGoogleFonts: false, cjkFallback: 'kr', password: password ?? undefined,
+      workerTimeoutMs: 240000, resizable: false, showScrollbars: true,
+      // Logical grid bounds only: sparse axes and viewport painting do not
+      // allocate these empty cells. Keep long overflowing text and content
+      // beyond the saved used range reachable in every worksheet.
+      minRows: options.format === 'xls' ? 65536 : 1048576,
+      minCols: options.format === 'xls' ? 256 : 16384,
+      marginRows: 0, marginCols: 0,
+      enableHyperlinks: false, hiddenSheetMode: 'show', zoomMin: .25, zoomMax: 4,
+      resourceLimits: { maxArchiveEntryBytes: 128 * 1024 * 1024, maxTotalInflatedBytes: 512 * 1024 * 1024, maxArchiveEntries: 20000 },
+      imageResources: { decodedByteBudget: 64 * 1024 * 1024, strategy: 'adaptive', resolution: 'display' },
+      onViewportChange: scheduleLocation, onScaleChange: scheduleLocation,
+      onError: error => { if (loaded && !disposed && current === generation) fail(error); },
+    });
+    viewer = active;
+    await active.load(bytes.buffer);
+    password = null;
+    if (disposed || current !== generation) { active.destroy(); return false; }
+    if (!Number.isSafeInteger(active.sheetCount) || active.sheetCount < 1) throw new Error('표시할 시트가 없어요');
+    await restorePosition(options.position, options.progress);
+    if (disposed || current !== generation) return false;
+    awaitingPassword = false; incoming = null; received = 0; wipe(bytes);
+    loaded = true;
+    emit('loaded', { pageCount: active.sheetCount, chapters: active.sheetNames }); reportLocation();
+    return true;
+  } catch (error) {
+    if (disposed || current !== generation) return false;
+    closeViewer();
+    if (error?.code === 'encrypted' || error?.code === 'invalid-password') {
+      awaitingPassword = true; emit('password', { incorrect: error.code === 'invalid-password' }); return false;
+    }
+    wipe(incoming); incoming = null; received = 0; awaitingPassword = false;
+    return fail(error);
+  } finally { password = null; if (current === generation) opening = false; }
+}
+function configure(config = {}) {
+  options = { ...options, ...config };
+  if (!['xlsx', 'xlsm', 'xls'].includes(options.format)) options.format = 'xlsx';
+  document.body.dataset.theme = ['white', 'sepia', 'dark'].includes(options.theme) ? options.theme : 'white';
+}
+function enqueue(action) {
+  const current = generation;
+  navigation = navigation.catch(() => {}).then(async () => {
+    if (!loaded || !viewer || disposed || current !== generation) return;
+    try {
+      // Finish the last drag before changing sheets or zoom. A delayed frame
+      // from the previous sheet must never move the newly selected one.
+      cancelAnimationFrame(frameRequest); pointers.clear(); gesture = null;
+      await applyDesiredView();
+      if (current !== generation || !viewer) return;
+      rememberSheet();
+      const result = await action();
+      if (current === generation) reportLocation();
+      return result;
+    }
+    catch (error) { if (!disposed && current === generation) fail(error); }
+  });
+  return navigation;
+}
+function display(position) {
+  return enqueue(() => restorePosition(/^\d+$/.test(String(position)) ? `${options.format}:${position}` : position));
+}
+async function activateSheet(index) {
+  const target = clampSheet(Number(index));
+  if (target === viewer.sheetIndex) return;
+  const at = sheetViews.get(target) || { x: 0, y: 0, scale: 1 };
+  await restorePosition(`${options.format}:${target}:${at.x}:${at.y}:${at.scale}`);
+}
+function selectSheet(index) { return enqueue(() => activateSheet(index)); }
+function turnSheet(delta) { return enqueue(() => activateSheet(viewer.sheetIndex + delta)); }
+async function setZoom(scale) {
+  const active = viewer, offset = active.getViewportOffset(), oldScale = active.getScale();
+  const center = { x: host.clientWidth / 2, y: host.clientHeight / 2 };
+  active.setScale(Math.max(.25, Math.min(4, scale)));
+  const ratio = active.getScale() / oldScale;
+  await active.setViewportOffset({
+    x: (offset.x + center.x) * ratio - center.x,
+    y: (offset.y + center.y) * ratio - center.y,
+  });
+}
+function zoomBy(factor) {
+  return enqueue(() => {
+    const value = Number(factor);
+    if (Number.isFinite(value) && value > 0) return setZoom(viewer.getScale() * value);
+  });
+}
+function resetZoom() { return enqueue(() => setZoom(1)); }
+function next() { return turnSheet(1); }
+function previous() { return turnSheet(-1); }
+function progress(value) { return enqueue(() => restorePosition(null, Math.max(0, Math.min(1, Number(value) || 0)))); }
+function highlightSelection() { viewer?.setSelectionColor('#ffc107'); }
+
+// Connect v86's existing Find bar to all workbook sheets, including hidden ones.
+function search(text) {
+  return enqueue(async () => {
+    searchMatches = await viewer.findText(String(text || ''));
+    return { count: searchMatches.length };
+  });
+}
+function cellAddress(row, col) {
+  let letters = '';
+  while (col > 0) { col--; letters = String.fromCharCode(65 + col % 26) + letters; col = Math.floor(col / 26); }
+  return `${letters}${row}`;
+}
+function showSearchResult(index) {
+  return enqueue(async () => {
+    const match = searchMatches[Math.trunc(Number(index))];
+    if (!match) return;
+    const { sheet, row, col } = match.location;
+    await viewer.goToSheet(sheet);
+    await viewer.scrollToCell(cellAddress(row, col), { align: 'center' });
+  });
+}
+function clearSearch() {
+  return enqueue(() => { searchMatches = []; viewer.clearFind(); });
+}
+
+// Native mobile panning and pinch zoom. A drag stays inside a sheet;
+// sheet changes use fixed Flutter tabs outside the WebView's gesture area.
+function rebaseGesture() {
+  if (!viewer || !pointers.size) { gesture = null; return; }
+  const points = [...pointers.values()], a = points[0], b = points[1];
+  const dv = pinchPreview?.desired || desiredView;
+  gesture = { count: points.length, x: b ? (a.x + b.x) / 2 : a.x, y: b ? (a.y + b.y) / 2 : a.y,
+    distance: b ? Math.hypot(a.x - b.x, a.y - b.y) : 0,
+    offset: dv ? { x: Math.max(0, dv.x), y: Math.max(0, dv.y) } : viewer.getViewportOffset(),
+    scale: dv?.scale ?? viewer.getScale() };
+}
+// FReader: 두 손가락으로 확대·축소하는 동안에는 표를 매번 다시 그리지 않고 지금 그림을 키우거나 줄여서만 보여 줌
+// (매번 다시 그리면 무겁고, 배율과 위치가 따로 그려져 화면이 튀었음). 손을 떼면 한 번만 제대로 그림
+let pinchPreview = null; // { base: 지금 그려진 배율·위치, desired: 손가락이 원하는 배율·위치 }
+function previewPinch(desired) {
+  const canvas = viewer?.canvasElement;
+  if (!canvas) { desiredView = desired; return false; }
+  if (!pinchPreview) {
+    const o = viewer.getViewportOffset();
+    pinchPreview = { base: { scale: viewer.getScale(), x: o.x, y: o.y }, desired };
+  }
+  pinchPreview.desired = desired;
+  const b = pinchPreview.base, r = desired.scale / b.scale;
+  canvas.style.transformOrigin = '0 0';
+  canvas.style.transform = `matrix(${r},0,0,${r},${b.x * r - desired.x},${b.y * r - desired.y})`;
+  return true;
+}
+function finishPinch() {
+  const p = pinchPreview; pinchPreview = null;
+  const canvas = viewer?.canvasElement;
+  if (!p || !canvas) return;
+  // 제대로 다시 그리는 동안은 지금 보이는 그림을 그대로 덮어 둠 (중간 모습이 비치지 않게)
+  let cover = null;
+  const shown = canvas.style.transform;
+  canvas.style.transform = '';
+  try {
+    const rect = canvas.getBoundingClientRect();
+    cover = document.createElement('canvas');
+    cover.width = canvas.width; cover.height = canvas.height;
+    cover.getContext('2d').drawImage(canvas, 0, 0);
+    cover.style.cssText = `position:fixed;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;` +
+      `transform-origin:0 0;transform:${shown};pointer-events:none;z-index:50`;
+    document.body.appendChild(cover);
+  } catch { cover?.remove(); cover = null; }
+  desiredView = p.desired;
+  void applyDesiredView().finally(() => {
+    requestAnimationFrame(() => requestAnimationFrame(() => cover?.remove()));
+  });
+}
+function applyDesiredView() {
+  if (applyingView) return viewTask;
+  applyingView = true;
+  viewTask = (async () => {
+    try {
+      while (desiredView && loaded && viewer && !disposed) {
+        const desired = desiredView; desiredView = null;
+        const active = viewer, current = generation;
+        active.setScale(desired.scale);
+        try { await active.setViewportOffset({ x: desired.x, y: desired.y }); }
+        catch (error) { if (!disposed && current === generation) fail(error); }
+      }
+    } finally { applyingView = false; }
+  })();
+  return viewTask;
+}
+// FReader: 칸을 길게 누르면 그 칸이 골라지고, 손을 떼지 않고 끌면 범위가 늘어남.
+// 손을 떼면 고른 칸들의 글을 앱의 복사 창으로 (EPUB에서 글을 길게 눌러 복사하는 것과 같은 흐름)
+let press = null; // { id, x, y, timer, active, anchor }
+const colName = n => { let s = ''; for (n = n | 0; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s; return s; };
+function selectRange(a, b) {
+  const top = Math.min(a.row, b.row), bottom = Math.max(a.row, b.row), left = Math.min(a.col, b.col), right = Math.max(a.col, b.col);
+  try { viewer?.setSelection(`${colName(left)}${top}:${colName(right)}${bottom}`); } catch {}
+}
+function cancelPress() { if (press) clearTimeout(press.timer); press = null; }
+// FReader: [모두 선택] — 글이 있는 칸 전체를 고르고 다시 막대를 띄움
+function selectAllCells() {
+  if (!viewer) return;
+  try {
+    viewer.setSelection('A1:GR5000');
+    const ctx = viewer.getSelectionContext({ maxTextCharacters: 200000 });
+    let maxR = 1, maxC = 1;
+    for (const c of ctx?.cells || []) {
+      if (String(c.displayText ?? '').trim() === '') continue;
+      maxR = Math.max(maxR, c.address.row); maxC = Math.max(maxC, c.address.col);
+    }
+    selectRange({ row: 1, col: 1 }, { row: maxR, col: maxC });
+    const text = selectedText();
+    const hb = host.getBoundingClientRect();
+    if (text) emit('copyText', { text, x: hb.width / 2, y: Math.min(hb.height / 3, 160) });
+  } catch {}
+}
+function selectedText() {
+  try {
+    const ctx = viewer?.getSelectionContext({ maxTextCharacters: 200000 });
+    const area = ctx?.selection?.areas?.[ctx.selection.activeAreaIndex || 0];
+    if (!ctx || !area) return '';
+    const byCell = new Map((ctx.cells || []).map(c => [`${c.address.row}:${c.address.col}`, c.displayText ?? '']));
+    const rows = [];
+    for (let r = area.top; r <= area.bottom && rows.length < 2000; r++) {
+      const cols = [];
+      for (let c = area.left; c <= area.right && cols.length < 200; c++) cols.push(String(byCell.get(`${r}:${c}`) ?? ''));
+      rows.push(cols.join('\t'));
+    }
+    return rows.join('\n').replace(/\s+$/, '');
+  } catch { return ''; }
+}
+host.addEventListener('pointerdown', event => {
+  if (event.pointerType === 'mouse' || !loaded) return;
+  event.preventDefault(); event.stopPropagation();
+  host.setPointerCapture(event.pointerId);
+  pointers.set(event.pointerId, { x: event.clientX, y: event.clientY }); rebaseGesture();
+  cancelPress();
+  if (pointers.size === 1) {
+    const x = event.clientX, y = event.clientY;
+    press = { id: event.pointerId, x, y, active: false, anchor: null, timer: setTimeout(() => {
+      if (!press || !viewer) return;
+      const cell = viewer.getCellAt(x, y);
+      if (!cell) { press = null; return; }
+      press.active = true; press.anchor = cell; selectRange(cell, cell);
+      emit('haptic', {});
+    }, 450) };
+  }
+}, true);
+host.addEventListener('pointermove', event => {
+  if (press && press.id === event.pointerId) {
+    if (press.active) {
+      event.preventDefault(); event.stopPropagation();
+      const cell = viewer?.getCellAt(event.clientX, event.clientY);
+      if (cell) selectRange(press.anchor, cell);
+      return;
+    }
+    if (Math.hypot(event.clientX - press.x, event.clientY - press.y) > 10) cancelPress();
+  } else if (press) cancelPress();
+  if (!pointers.has(event.pointerId) || !gesture || !viewer) return;
+  event.preventDefault(); event.stopPropagation();
+  pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  const [a, b] = [...pointers.values()], x = b ? (a.x + b.x) / 2 : a.x, y = b ? (a.y + b.y) / 2 : a.y;
+  const scale = b && gesture.distance > 0 ? Math.max(.25, Math.min(4, gesture.scale * Math.hypot(a.x - b.x, a.y - b.y) / gesture.distance)) : gesture.scale;
+  const ratio = scale / gesture.scale, bounds = host.getBoundingClientRect();
+  const want = { scale, x: (gesture.offset.x + gesture.x - bounds.left) * ratio - (x - bounds.left),
+    y: (gesture.offset.y + gesture.y - bounds.top) * ratio - (y - bounds.top) };
+  if (b && !applyingView && previewPinch(want)) return;
+  desiredView = want;
+  cancelAnimationFrame(frameRequest); frameRequest = requestAnimationFrame(() => { void applyDesiredView(); });
+}, true);
+function endPointer(event) {
+  if (press && press.id === event.pointerId) {
+    const wasActive = press.active;
+    cancelPress();
+    // 짧게 한 번 누르면 길게 눌러 골라 둔 칸(파란 테두리)을 지움
+    if (!wasActive && event.type === 'pointerup' && pointers.size === 1) {
+      try {
+        if (viewer?.selectionState) { viewer.setSelection(null); emit('selectionCleared', {}); }
+      } catch {}
+    }
+    if (wasActive && event.type === 'pointerup') {
+      const text = selectedText();
+      const hb = host.getBoundingClientRect();
+      if (text) emit('copyText', { text, x: event.clientX - hb.left, y: event.clientY - hb.top });
+      pointers.delete(event.pointerId);
+      if (host.hasPointerCapture(event.pointerId)) host.releasePointerCapture(event.pointerId);
+      rebaseGesture();
+      return;
+    }
+  }
+  if (!pointers.has(event.pointerId)) return;
+  event.preventDefault(); event.stopPropagation(); pointers.delete(event.pointerId);
+  if (host.hasPointerCapture(event.pointerId)) host.releasePointerCapture(event.pointerId);
+  if (pinchPreview && pointers.size < 2) finishPinch();
+  rebaseGesture(); scheduleLocation();
+}
+host.addEventListener('pointerup', endPointer, true);
+host.addEventListener('pointercancel', endPointer, true);
+const observer = new ResizeObserver(() => {
+  clearTimeout(resizeTimer);
+  const current = generation;
+  resizeTimer = setTimeout(() => {
+    if (!loaded || !viewer || disposed || current !== generation) return;
+    const canvas = viewer.canvasElement;
+    canvas.style.width = `${host.clientWidth}px`; canvas.style.height = `${host.clientHeight}px`;
+    void enqueue(() => viewer.relayout());
+  }, 80);
+});
+observer.observe(host);
+function destroy() {
+  disposed = true; generation++; clearInterval(bridgeTimer); observer.disconnect();
+  closeViewer(); wipe(incoming); incoming = null; received = 0; events = [];
+}
+window.freaderXlsx = { beginDocument, appendChunk, openDocument, configure, display, next, previous, progress, highlightSelection, destroy,
+  search, showSearchResult, clearSearch, selectSheet, zoomBy, resetZoom, selectAllCells,
+  getState: () => ({ ready: !disposed, loaded, page: viewer?.sheetIndex || 0, count: viewer?.sheetCount || 0,
+    sheets: viewer?.sheetNames || [], viewport: viewer?.getViewportOffset() || { x: 0, y: 0 }, scale: viewer?.getScale() || 1,
+    received, awaitingPassword, format: options.format, maxBytes: MAX_BYTES }) };
+emit('ready');
