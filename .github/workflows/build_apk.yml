@@ -154,10 +154,34 @@ jobs:
             fi
           done
 
-          # 앱 시작(안드로이드가 첫 화면을 그리기 전) 배경도 다크 모드와 상관없이 밝게
-          if [ -f android/app/src/main/res/values-night/styles.xml ]; then
-            sed -i '0,/Theme.Black.NoTitleBar/s//Theme.Light.NoTitleBar/' android/app/src/main/res/values-night/styles.xml
-          fi
+          # Android 12+ 시스템 기본 스플래시(앱 아이콘 원형 깜빡임) 제거 — Flutter 시작화면이 바로 깔끔하게 이어지게
+          mkdir -p android/app/src/main/res/values-v31 android/app/src/main/res/values-night-v31
+          for V31 in android/app/src/main/res/values-v31/styles.xml android/app/src/main/res/values-night-v31/styles.xml; do
+            if [ "$V31" = "android/app/src/main/res/values-night-v31/styles.xml" ]; then
+              BG_COL="#181A19"
+              BASE_TH="Theme.Black.NoTitleBar"
+            else
+              BG_COL="#FFFFFF"
+              BASE_TH="Theme.Light.NoTitleBar"
+            fi
+            cat > "$V31" <<STYLEEOF
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="LaunchTheme" parent="@android:style/$BASE_TH">
+        <item name="android:windowBackground">@drawable/launch_background</item>
+        <item name="android:windowSplashScreenBackground">$BG_COL</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@android:color/transparent</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+    <style name="NormalTheme" parent="@android:style/$BASE_TH">
+        <item name="android:windowBackground">?android:colorBackground</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>
+STYLEEOF
+          done
 
           # 앱 아이콘(이리ERI): 적응형 아이콘(안드로이드 8 이상) + 예전 기기용 아이콘
           cp -rf /tmp/v7_backup/android_override/res/. android/app/src/main/res/
