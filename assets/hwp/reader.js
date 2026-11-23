@@ -1199,7 +1199,31 @@ function emitEditState() {
   });
 }
 
+function sameCursorTarget(a, b) {
+  if (!a || !b) return false;
+  return a.sec === b.sec && a.para === b.para && a.parentPara === b.parentPara &&
+    Boolean(a.inTable) === Boolean(b.inTable) && a.pathJson === b.pathJson &&
+    a.ctrl === b.ctrl && a.cell === b.cell && a.cellPara === b.cellPara;
+}
+
 function pushUndoOp(op) {
+  const now = Date.now();
+  op.ts = now;
+  const top = editUndoStack.length > 0 ? editUndoStack[editUndoStack.length - 1] : null;
+  // 연속으로 글자를 지운 경우(백스페이스 꾹 누르기 등) 하나의 되돌리기 단위로 합쳐 한 번에 복구
+  if (top && op.kind === 'text' && top.kind === 'text' &&
+      op.newText === '' && top.newText === '' &&
+      op.oldText.length > 0 && top.oldText.length > 0 &&
+      sameCursorTarget(top.cursor, op.cursor) &&
+      (now - (top.ts || 0)) < 1000 &&
+      (op.off + op.oldText.length === top.off)) {
+    top.off = op.off;
+    top.oldText = op.oldText + top.oldText;
+    top.ts = now;
+    editRedoStack = [];
+    emitEditState();
+    return;
+  }
   editUndoStack.push(op);
   if (editUndoStack.length > MAX_EDIT_UNDO) {
     const dropped = editUndoStack.shift();
@@ -1754,7 +1778,7 @@ function applyDeltaFast(offset, delCount, insertStr, recordUndo = false) {
     scheduleFastRedraw(c.pageIdx);
     if (usedDeferred) {
       editPaginationPending = true;
-      if (flowChanged) scheduleFlowFlushIfNeeded();
+      if (flowChanged && count < 200) scheduleFlowFlushIfNeeded();
     }
     if (lastRes && lastRes.ok && typeof lastRes.charOffset === 'number') {
       return lastRes.charOffset;
@@ -1767,25 +1791,10 @@ function applyDeltaFast(offset, delCount, insertStr, recordUndo = false) {
 
 function editApplyFormat(opts) {
   if (!editModeOn || !doc || disposed || !opts) return false;
+  // 볼드체·글자 크기·글자 색은 전체 문단을 덮어쓰지 않고 커서 위치에서 새로 입력/수정하는 문구에만 적용
   if (opts.bold !== undefined) pendingFormat.bold = Boolean(opts.bold);
   if (opts.fontSizePt !== undefined) pendingFormat.fontSizePt = Number(opts.fontSizePt);
   if (opts.textColor !== undefined) pendingFormat.textColor = String(opts.textColor);
-  if (editCursor) {
-    const c = editCursor;
-    const paraLen = getParagraphLenAt(c);
-    if (paraLen > 0) {
-      flushPendingPaginationNow(false);
-      const beforeSnap = typeof doc.saveSnapshot === 'function' ? doc.saveSnapshot() : undefined;
-      const ok = applyCharFormatRange(c, 0, paraLen, opts);
-      if (ok) {
-        markEditDirty();
-        pushUndoOp({ kind: 'snap', beforeSnap, beforeCursor: { ...c }, afterCursor: { ...c }, pageIdx: c.pageIdx });
-        scheduleFastRedraw(c.pageIdx);
-      } else {
-        discardSnapSafe(beforeSnap);
-      }
-    }
-  }
   emitEditState();
   return true;
 }
@@ -1832,17 +1841,18 @@ function editRedo() {
 function cancelEditSession() {
   if (!doc || disposed) return false;
   if (flowFlushTimer) { clearTimeout(flowFlushTimer); flowFlushTimer = 0; }
+  const hadChanges = editDirty || editUndoStack.length > 0;
   editPaginationPending = false;
-  if (sessionBaseSnapId !== null && typeof doc.restoreSnapshot === 'function') {
+  if (hadChanges && sessionBaseSnapId !== null && typeof doc.restoreSnapshot === 'function') {
     try { doc.restoreSnapshot(sessionBaseSnapId); } catch (_) {}
-    discardSnapSafe(sessionBaseSnapId);
-    sessionBaseSnapId = null;
   }
+  discardSnapSafe(sessionBaseSnapId);
+  sessionBaseSnapId = null;
   clearEditHistory();
   pendingFormat = {};
   editDirty = false;
   setEditMode(false);
-  redrawAllVisiblePages();
+  if (hadChanges) redrawAllVisiblePages();
   return true;
 }
 
