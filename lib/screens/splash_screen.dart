@@ -16,7 +16,7 @@ class SplashOverlay extends StatefulWidget {
 }
 
 class _SplashOverlayState extends State<SplashOverlay> with SingleTickerProviderStateMixin {
-  static const int _totalMs = 3100;
+  static const int _totalMs = 4100;
   static const String _animAsset = 'assets/splash/splash_anim.webp';
   static const String _stillAsset = 'assets/splash/splash_still.webp';
 
@@ -80,7 +80,7 @@ class _SplashOverlayState extends State<SplashOverlay> with SingleTickerProvider
             final double t = _c.value;
             final double intro = _seg(t, 0, _ms(450), Curves.easeOutCubic);
             final double name = _seg(t, _ms(250), _ms(700), Curves.easeOutCubic);
-            final double out = _seg(t, _ms(2750), 1, Curves.easeInCubic);
+            final double out = _seg(t, _ms(3750), 1, Curves.easeInCubic);
 
             return Opacity(
               opacity: (1 - out).clamp(0.0, 1.0),
