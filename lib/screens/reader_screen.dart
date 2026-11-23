@@ -337,7 +337,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   Map<String, Object?>? _hwpEditTarget;
   bool _hwpEditInTable = false;
   final TextEditingController _hwpEditCtrl = TextEditingController();
-  bool get _canHwpEdit => _isHwpFile && _pageDisplay != 'two' && !_pageModeScroll;
+  bool get _canHwpEdit => _isHwpFile;
   bool _isEraserMode = false;
   bool _allowFingerDrawing = false;
   bool _isStylusDown = false;
@@ -1221,6 +1221,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           key: ValueKey('document:${widget.filePath}'),
           filePath: widget.filePath,
           controller: _hwpController,
+          onEditDirty: () { if (mounted && !_hwpEditDirty) setState(() => _hwpEditDirty = true); },
           initialPosition: _currentCfi ?? _initialCfi,
           initialProgress: _initialProgress,
           theme: _epubBgTheme,
@@ -1867,10 +1868,18 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
 
   /// 도구 모음 설정 (화면 가운데 창): 상단바·도구 모음 아이콘 배치, 진행바 숨기기, EPUB 글자 크기
   Future<void> _showViewerSettingsSheet() async {
+    final Map<String, String> modeReasons = <String, String>{};
+    final String scrollName = _tr('스크롤 모드', 'Scroll mode', '滚动模式', 'スクロールモード');
+    if (_pageModeScroll && !_docVertical) modeReasons['memo'] = scrollName;
+    if (_pageModeScroll && _isOfflineDocument && !_isPresentation && !_isSpreadsheet) {
+      modeReasons['display'] = scrollName;
+      modeReasons['direction'] = scrollName;
+    }
     await showToolbarSettingsDialog(
       context,
       tr: _tr,
       items: _barItems(),
+      modeReasons: modeReasons,
       progressHidden: _progressBarHidden,
       onProgressHidden: (val) {
         StorageService.setProgressBarHidden(val);
@@ -3475,7 +3484,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   /// 화면을 한 번 눌렀을 때: 탭 모드면 위쪽은 메뉴, 아래 왼쪽·오른쪽은 이전·다음 쪽
   /// (메뉴가 떠 있거나 필기 중이면 메뉴만 닫음. '이전'·'다음' 칸은 읽기 방향과 상관없이 그대로)
   void _onReaderTap(Offset global) {
-    if (!_pageModeTap || _showControls || _isMemoMode || _slideShow) {
+    if (!_pageModeTap || _showControls || _isMemoMode || _isHwpEditMode || _slideShow) {
       _toggleControls();
       return;
     }
@@ -4250,64 +4259,18 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
 
   /// 지금 보고 있는 쪽(2페이지 보기면 두 쪽)의 글을 보여 주고 복사할 수 있게 함
   void _toggleHwpEditMode() {
-    if (!_canHwpEdit) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_tr('한글 편집은 한 쪽 보기에서만 사용할 수 있어요', 'HWP editing is available in single-page mode only', 'HWP 编辑仅支持单页模式', 'HWP編集は1ページ表示でのみ使えます'))),
-        );
-      }
-      return;
-    }
+    if (!_canHwpEdit) return;
+    final bool next = !_isHwpEditMode;
     setState(() {
-      _isHwpEditMode = !_isHwpEditMode;
+      _isHwpEditMode = next;
       _hwpEditTarget = null;
       _showControls = false;
-      if (_isHwpEditMode) {
+      if (next) {
         _isMemoMode = false;
         _isEraserMode = false;
       }
     });
-  }
-
-  Future<void> _onTapHwpEditSurface(TapUpDetails details, Size surfaceSize) async {
-    if (!_isHwpEditMode || _hwpEditSaving) return;
-    if (surfaceSize.width <= 0 || surfaceSize.height <= 0) return;
-    final double nx = (details.localPosition.dx / surfaceSize.width).clamp(0.0, 1.0);
-    final double ny = (details.localPosition.dy / surfaceSize.height).clamp(0.0, 1.0);
-    final hit = await _hwpController.editHitTest(nx, ny);
-    if (!mounted) return;
-    if (hit == null || hit['ok'] != true || hit['target'] is! Map) {
-      ScaffoldMessenger.of(context).clearSnackBars();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_tr('수정할 글자나 표 칸을 정확히 터치해 주세요', 'Tap directly on a line or table cell to edit', '请准确点击要修改的文字或表格单元格', '編集する文字や表のセルをタップしてください')),
-          duration: const Duration(milliseconds: 1100),
-        ),
-      );
-      return;
-    }
-    setState(() {
-      _hwpEditTarget = Map<String, Object?>.from(hit['target'] as Map);
-      _hwpEditInTable = hit['inTable'] == true;
-      _hwpEditCtrl.text = (hit['text'] ?? '').toString();
-    });
-  }
-
-  Future<void> _applyHwpInlineEdit() async {
-    final target = _hwpEditTarget;
-    if (target == null) return;
-    final ok = await _hwpController.editApply(target, _hwpEditCtrl.text);
-    if (!mounted) return;
-    if (ok) {
-      setState(() {
-        _hwpEditDirty = true;
-        _hwpEditTarget = null;
-      });
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_tr('문구 반영에 실패했어요', 'Could not apply the edit', '应用修改失败', '変更を反映できませんでした'))),
-      );
-    }
+    _hwpController.setEditMode(next);
   }
 
   Future<void> _saveHwpEditedCopy() async {
@@ -4427,7 +4390,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                     ),
                     const SizedBox(width: 4),
                     FilledButton(
-                      onPressed: _applyHwpInlineEdit,
+                      onPressed: () {},
                       style: FilledButton.styleFrom(visualDensity: VisualDensity.compact),
                       child: Text(_tr('적용', 'Apply', '应用', '適用')),
                     ),
@@ -4455,7 +4418,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     return Positioned(
       left: 16,
       right: 16,
-      bottom: bottomPadding + 16,
+      bottom: (kb > 0 ? kb + 8 : bottomPadding + 16),
       child: Center(
         child: Material(
           elevation: 6,
@@ -4470,7 +4433,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                 const SizedBox(width: 8),
                 Flexible(
                   child: Text(
-                    _tr('수정할 글자나 표를 터치하세요', 'Tap text or a table cell to edit', '点击文字或表格即可编辑', '文字や表をタップして編集'),
+                    _tr('수정할 자리를 터치해 바로 입력하세요', 'Tap anywhere to type directly', '点击文字位置即可直接输入', '編集する位置をタップして直接入力'),
                     style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -4490,10 +4453,13 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                         : Text(_tr('사본 저장', 'Save copy', '保存副本', 'コピー保存'), style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
                   ),
                 TextButton(
-                  onPressed: () => setState(() {
-                    _isHwpEditMode = false;
-                    _hwpEditTarget = null;
-                  }),
+                  onPressed: () {
+                    setState(() {
+                      _isHwpEditMode = false;
+                      _hwpEditTarget = null;
+                    });
+                    _hwpController.setEditMode(false);
+                  },
                   child: Text(_tr('완료', 'Done', '完成', '完了'), style: TextStyle(color: sig, fontWeight: FontWeight.w700)),
                 ),
               ],
@@ -4590,70 +4556,22 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                     ),
                   ),
                 ),
-              Expanded(
-                child: AfterRouteTransition(
-                  builder: (_) => UiUnscale(child: _buildDocumentViewer(isLandscape)),
-                ),
-              ),
-              // 아래 막대: 시트 목록 + 확대·축소 (서재 위 그룹 칩과 같은 모양)
+              // 상단 시트 막대 (확대·축소 단추 제거, 시트 목록만 깔끔하게 상단 배치)
               Material(
                 color: Theme.of(context).colorScheme.surface,
                 child: Container(
-                  decoration: BoxDecoration(border: Border(top: BorderSide(color: Theme.of(context).dividerColor))),
-                  child: Row(children: [
-                    Expanded(
-                      child: SpreadsheetTabBar(
-                        names: [for (final chapter in _chapters) chapter.title],
-                        selectedIndex: _docPage,
-                        onSelected: (index) => _hwpController.selectSheet(index),
-                        atBottom: true,
-                      ),
-                    ),
-                    Container(width: 1, height: 28, color: Theme.of(context).dividerColor),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(10, 8, 12, 8),
-                      child: Material(
-                        type: MaterialType.transparency,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
-                        ),
-                        clipBehavior: Clip.antiAlias,
-                        child: SizedBox(
-                          height: 32,
-                          child: Row(mainAxisSize: MainAxisSize.min, children: [
-                            IconButton(
-                              visualDensity: VisualDensity.compact,
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(minWidth: 36, minHeight: 32),
-                              icon: const Icon(Icons.remove, size: 18),
-                              tooltip: _tr('축소', 'Zoom out', '缩小', '縮小'),
-                              onPressed: _docPageCount > 0 && _sheetZoom > .25 ? () => _hwpController.zoomSheet(1 / 1.25) : null,
-                            ),
-                            InkWell(
-                              onTap: _docPageCount > 0 ? () => _hwpController.resetSheetZoom() : null,
-                              child: SizedBox(
-                                width: 46,
-                                height: 32,
-                                child: Center(
-                                  child: Text('${(_sheetZoom * 100).round()}%',
-                                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                                ),
-                              ),
-                            ),
-                            IconButton(
-                              visualDensity: VisualDensity.compact,
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(minWidth: 36, minHeight: 32),
-                              icon: const Icon(Icons.add, size: 18),
-                              tooltip: _tr('확대', 'Zoom in', '放大', '拡大'),
-                              onPressed: _docPageCount > 0 && _sheetZoom < 4 ? () => _hwpController.zoomSheet(1.25) : null,
-                            ),
-                          ]),
-                        ),
-                      ),
-                    ),
-                  ]),
+                  decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor))),
+                  child: SpreadsheetTabBar(
+                    names: [for (final chapter in _chapters) chapter.title],
+                    selectedIndex: _docPage,
+                    onSelected: (index) => _hwpController.selectSheet(index),
+                    atBottom: false,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: AfterRouteTransition(
+                  builder: (_) => UiUnscale(child: _buildDocumentViewer(isLandscape)),
                 ),
               ),
             ],
@@ -5283,15 +5201,7 @@ Offstage(offstage: _tocFreeze != null, child: EpubViewer(
             // 도구 모음: 아래(가로) 또는 왼쪽·오른쪽(세로). 길게 눌러 끌어 옮김 (상단바·진행바와 함께 보였다 사라짐)
             if (_showControls) _buildQuickToolBar(bottomPadding),
             // 메모 도구 모음: 파일 도구 모음보다 위에 (아래에 둘 때는 도구 모음 바로 위)
-            if (_isHwpEditMode && _canHwpEdit && !_slideShow)
-              Positioned.fill(
-                child: LayoutBuilder(
-                  builder: (ctx, constraints) => GestureDetector(
-                    behavior: HitTestBehavior.translucent,
-                    onTapUp: (d) => _onTapHwpEditSurface(d, constraints.biggest),
-                  ),
-                ),
-              ),
+
             if (_isHwpEditMode && _canHwpEdit && !_slideShow) _buildHwpInlineEditBar(bottomPadding),
             if (_isMemoMode && !_slideShow) _buildMemoToolbar(bottomPadding),
             // PPT 슬라이드 쇼: 맨 위에서 모든 터치를 받는다

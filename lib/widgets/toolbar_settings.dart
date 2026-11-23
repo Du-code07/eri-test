@@ -147,6 +147,7 @@ Future<void> showToolbarSettingsDialog(
   required bool progressHidden,
   required ValueChanged<bool> onProgressHidden,
   required Future<void> Function() onReset,
+  Map<String, String> modeReasons = const {},
   Widget Function(StateSetter setDlg)? extra,
 }) async {
   ToolbarLayout? result;
@@ -159,6 +160,7 @@ Future<void> showToolbarSettingsDialog(
       progressHidden: progressHidden,
       onProgressHidden: onProgressHidden,
       onReset: onReset,
+      modeReasons: modeReasons,
       extra: extra,
       onChanged: (l) => result = l,
     ),
@@ -174,8 +176,10 @@ class _ToolbarSettings extends StatefulWidget {
     required this.onProgressHidden,
     required this.onReset,
     required this.onChanged,
+    this.modeReasons = const {},
     this.extra,
   });
+  final Map<String, String> modeReasons;
   final String Function(String ko, String en, String zh, String ja) tr;
   final Map<String, QuickToolItem> items;
   final bool progressHidden;
@@ -289,7 +293,7 @@ class _ToolbarSettingsState extends State<_ToolbarSettings> {
               icon: toolbarCatalogIcon(id, cs.onSurface),
               label: toolbarCatalogLabel(id, widget.tr),
               // 이 파일에서는 쓰지 않는 아이콘: 자리만 옮겨 두고 이 파일에서는 보이지 않음
-              note: here ? null : widget.tr('이 파일 형식에서는 보이지 않아요', 'Not shown for this file type', '此文件类型中不显示', 'このファイル形式では表示されません'),
+              note: here ? null : (widget.modeReasons[id] != null ? widget.tr('현재 사용하고 있는 모드로 인해 보이지 않아요 (${widget.modeReasons[id]})', 'Not shown in current mode (${widget.modeReasons[id]})', '因当前模式而隐藏（${widget.modeReasons[id]}）', '現在のモードにより表示されません（${widget.modeReasons[id]}）') : widget.tr('이 파일 형식에서는 보이지 않아요', 'Not shown for this file type', '此文件类型中不显示', 'このファイル形式では表示されません')),
               dim: hidden,
               trailing: _hideButton(hidden: hidden, onTap: () => _toggleHidden(id)),
             ),

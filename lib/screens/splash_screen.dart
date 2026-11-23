@@ -91,9 +91,9 @@ class _SplashOverlayState extends State<SplashOverlay> with SingleTickerProvider
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Opacity(
-                        opacity: intro.clamp(0.0, 1.0),
+                        opacity: 1.0,
                         child: Transform.scale(
-                          scale: (0.90 + 0.10 * intro) * (1 + 0.04 * out),
+                          scale: (0.95 + 0.05 * intro) * (1 + 0.04 * out),
                           child: SizedBox(
                             width: animSize,
                             height: animSize,

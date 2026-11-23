@@ -101,20 +101,10 @@ class HwpReaderController {
   /// 글자 선택 중 WebView 자체 세로·가로 스크롤을 즉시 잠금/해제
   void setScrollLocked(bool locked) => _setScrollLocked?.call(locked);
 
-  /// 인라인 한글 편집: 화면 상대 좌표(0..1)의 문단·표 셀 위치와 현재 글자를 조회
-  Future<Map<String, Object?>?> editHitTest(double nx, double ny) async {
-    final raw = await _query?.call('editHitTest', [nx, ny]);
-    if (raw is Map) return Map<String, Object?>.from(raw);
-    return null;
-  }
+  /// 화면 위 직접 커서·키보드 편집 모드 켜기/끄기
+  Future<void> setEditMode(bool enabled) async => _invoke?.call('setEditMode', [enabled]);
 
-  /// 인라인 한글 편집: 수정한 문단·표 셀 글자를 현재 문서에 즉시 반영하고 페이지를 다시 그림
-  Future<bool> editApply(Map<String, Object?> target, String newText) async {
-    final raw = await _query?.call('editApply', [target, newText]);
-    return raw == true;
-  }
-
-  /// 인라인 한글 편집: 수정된 문서를 원본 형식(.hwp/.hwpx) 그대로 무손실 직렬화(base64)
+  /// 직접 편집한 문서를 원본 형식(.hwp/.hwpx) 그대로 무손실 직렬화(base64)
   Future<Map<String, Object?>?> editExport({required bool preferHwpx}) async {
     final raw = await _query?.call('editExport', [preferHwpx]);
     if (raw is Map) return Map<String, Object?>.from(raw);
@@ -286,6 +276,7 @@ class HwpViewer extends StatefulWidget {
 
   /// 스크롤 보기에서 지금 위치·전체 길이·보이는 높이 (오른쪽 회색 막대)
   final void Function(double top, double height, double client)? onScrollMetrics;
+  final VoidCallback? onEditDirty;
 
   const HwpViewer({
     super.key,
@@ -307,6 +298,7 @@ class HwpViewer extends StatefulWidget {
     this.onSheetNames,
     this.vertical = false,
     this.onScrollMetrics,
+    this.onEditDirty,
   });
 
   @override
@@ -565,6 +557,9 @@ class _HwpViewerState extends State<HwpViewer> {
       case 'password':
         widget.onPasswordNeeded?.call();
         unawaited(_requestPassword(event['incorrect'] == true));
+        break;
+      case 'editDirty':
+        widget.onEditDirty?.call();
         break;
       case 'error':
         _reportError(event['message'] ?? '$_format 문서를 표시하지 못했어요');

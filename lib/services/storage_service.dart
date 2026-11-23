@@ -154,6 +154,7 @@ class StorageService {
     railGroups = prefs.getStringList('rail_groups_v184') ?? <String>[];
     railPosition = prefs.getString('simple_rail_pos_v1') == 'right' ? 'right' : 'left';
     guidePromptShown = prefs.getBool('guide_prompt_shown_v1') ?? false;
+    lastSeenAppVersion = prefs.getString('last_seen_app_version_v1');
     Anim.off.value = prefs.getBool('anim_off_v109') ?? false;
     pageCurl = prefs.getBool('page_curl_v109') ?? false;
     final zones = prefs.getString('tap_zones_v122');
@@ -207,6 +208,16 @@ class StorageService {
 
   /// 앱 처음 시작 후 메인화면에서 가이드 유도 안내를 이미 보여 주었는지
   static bool guidePromptShown = false;
+
+  /// 업데이트 내역 창: 마지막으로 확인한 앱 버전
+  static const String currentAppVersion = '3.18.68';
+  static String? lastSeenAppVersion;
+
+  static Future<void> markAppVersionSeen([String version = currentAppVersion]) async {
+    lastSeenAppVersion = version;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('last_seen_app_version_v1', version);
+  }
 
   static Future<void> markGuidePromptShown() async {
     guidePromptShown = true;

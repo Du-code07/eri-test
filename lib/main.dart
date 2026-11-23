@@ -1145,10 +1145,91 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
     super.didUpdateWidget(oldWidget);
     if (widget.splashDone && !oldWidget.splashDone) {
       _maybePromptGuide();
+      _maybeShowUpdateNotes();
     }
   }
 
   bool _guidePromptQueued = false;
+  bool _updateNotesQueued = false;
+
+  void _maybeShowUpdateNotes() {
+    if (!widget.splashDone || _updateNotesQueued) return;
+    if (!StorageService.guidePromptShown) {
+      StorageService.markAppVersionSeen();
+      return;
+    }
+    if (StorageService.lastSeenAppVersion == StorageService.currentAppVersion) return;
+    _updateNotesQueued = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await StorageService.markAppVersionSeen();
+      if (!mounted) return;
+      final cs = Theme.of(context).colorScheme;
+      final Color sig = AppColors.of(context);
+      final List<String> notes = [
+        _tr('한글 문서 화면 위 실시간 커서·키보드 직접 편집 추가 (원본 글꼴 유지, 사본 저장·공유)',
+            'Added live on-page cursor & keyboard editing for HWP/HWPX (keeps original font, save copy & share)',
+            '新增 HWP/HWPX 页面实时光标键盘编辑（保留原字体、保存副本与分享）',
+            'HWP/HWPXのページ上リアルタイムカーソル編集を追加（元のフォント維持・コピー保存・共有）'),
+        _tr('새 이리 아이콘과 테마 배경에 어우러지는 시작화면 적용',
+            'Updated ERI icon and theme-adaptive splash screen',
+            '更新 ERI 图标与自适应主题启动画面',
+            '新しいERIアイコンとテーマ連動の起動画面を適用'),
+        _tr('엑셀 시트 목록을 상단으로 옮기고 확대 단추를 정리했어요',
+            'Moved Excel sheet tabs to the top and simplified the toolbar',
+            '将 Excel 工作表标签移至顶部并精简工具栏',
+            'Excelシート一覧を上部に移動し表示を整理しました'),
+        _tr('도구 모음 설정 모드별 안내 문구 및 아이콘 음영 개선',
+            'Improved mode-specific toolbar hints and icon readability',
+            '优化工具栏模式提示与图标阴影可读性',
+            'ツールバー設定のモード別案内とアイコン視認性を改善'),
+      ];
+      await showCenterDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                decoration: BoxDecoration(color: sig, borderRadius: BorderRadius.circular(10)),
+                child: Text(
+                  'v${StorageService.currentAppVersion}',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Colors.white, shadows: AppColors.whiteTextShadows),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(_tr('업데이트 내역', "What's New", '更新内容', 'アップデート内容'), style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final item in notes)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('• ', style: TextStyle(fontWeight: FontWeight.w800, color: sig)),
+                      Expanded(child: Text(item, style: TextStyle(fontSize: 14, height: 1.45, color: cs.onSurface))),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(_tr('확인', 'OK', '确定', 'OK')),
+            ),
+          ],
+        ),
+      );
+    });
+  }
 
   void _maybePromptGuide() {
     if (!widget.splashDone || _guidePromptQueued || StorageService.guidePromptShown) return;

@@ -1034,103 +1034,244 @@ function withoutZoom(fn) {
   };
 }
 
-// ── 인라인 한글 편집 (rhwp MIT 엔진 직접 호출: 원본 표·서식·도장·이미지 100% 보존) ──
+// ── 화면 위 실시간 커서·키보드 직접 편집 (rhwp MIT 엔진: 원본 글꼴·표·도장 유지, 한쪽/두쪽/스크롤 지원) ──
+let editModeOn = false;
+let editCursor = null; // { pageIdx, sec, para, offset, inTable, pathJson, ctrl, cell, cellPara }
+let editCaretEl = null;
+let editImeEl = null;
+let imeComposing = false;
+let imeCompBase = 0;
+let imeCompLen = 0;
+
 function clearPageCache() {
   for (const e of cache.values()) releaseEntry(e);
   cache.clear();
   cachedBytes = 0;
 }
 
-function editHitTest(nx, ny) {
-  if (!doc || disposed || options.spread || vertical) return { ok: false, reason: 'mode' };
-  const svg = host.querySelector('.page svg');
-  if (!svg) return { ok: false, reason: 'no_svg' };
+function ensureEditDom() {
+  if (!editCaretEl) {
+    const st = document.createElement('style');
+    st.textContent = '@keyframes eriBlink{0%,49%{opacity:1}50%,100%{opacity:0}} #eri-caret{position:fixed;width:2.2px;background:#2F7D32;border-radius:1px;pointer-events:none;z-index:9999;animation:eriBlink 1s step-end infinite;display:none;} #eri-ime{position:fixed;opacity:0;width:1px;height:20px;border:0;padding:0;margin:0;resize:none;z-index:9998;pointer-events:none;font-size:16px;}';
+    document.head.appendChild(st);
+    editCaretEl = document.createElement('div');
+    editCaretEl.id = 'eri-caret';
+    document.body.appendChild(editCaretEl);
+  }
+  if (!editImeEl) {
+    editImeEl = document.createElement('textarea');
+    editImeEl.id = 'eri-ime';
+    editImeEl.setAttribute('autocomplete', 'off');
+    editImeEl.setAttribute('autocorrect', 'off');
+    editImeEl.setAttribute('autocapitalize', 'off');
+    editImeEl.setAttribute('spellcheck', 'false');
+    document.body.appendChild(editImeEl);
+
+    editImeEl.addEventListener('compositionstart', () => {
+      if (!editModeOn || !editCursor) return;
+      imeComposing = true;
+      imeCompBase = editCursor.offset;
+      imeCompLen = 0;
+    });
+    editImeEl.addEventListener('compositionupdate', async (e) => {
+      if (!editModeOn || !editCursor) return;
+      const str = String(e.data ?? '');
+      await applyDeltaAt(imeCompBase, imeCompLen, str);
+      imeCompLen = str.length;
+      editCursor.offset = imeCompBase + imeCompLen;
+      updateCaretPos();
+    });
+    editImeEl.addEventListener('compositionend', async (e) => {
+      if (!editModeOn || !editCursor) { imeComposing = false; return; }
+      const str = String(e.data ?? '');
+      await applyDeltaAt(imeCompBase, imeCompLen, str);
+      editCursor.offset = imeCompBase + str.length;
+      imeComposing = false;
+      imeCompLen = 0;
+      editImeEl.value = '';
+      updateCaretPos();
+    });
+    editImeEl.addEventListener('input', async (e) => {
+      if (!editModeOn || !editCursor || imeComposing) return;
+      const it = e.inputType || '';
+      if (it === 'deleteContentBackward') {
+        if (editCursor.offset > 0) {
+          await applyDeltaAt(editCursor.offset - 1, 1, '');
+          editCursor.offset -= 1;
+          updateCaretPos();
+        }
+        editImeEl.value = '';
+        return;
+      }
+      const val = editImeEl.value;
+      if (val && val.length > 0) {
+        await applyDeltaAt(editCursor.offset, 0, val);
+        editCursor.offset += val.length;
+        editImeEl.value = '';
+        updateCaretPos();
+      }
+    });
+    editImeEl.addEventListener('keydown', async (e) => {
+      if (!editModeOn || !editCursor || imeComposing) return;
+      if (e.key === 'Backspace' && editImeEl.value === '') {
+        e.preventDefault();
+        if (editCursor.offset > 0) {
+          await applyDeltaAt(editCursor.offset - 1, 1, '');
+          editCursor.offset -= 1;
+          updateCaretPos();
+        }
+      }
+    });
+  }
+}
+
+async function applyDeltaAt(offset, delCount, insertStr) {
+  if (!doc || disposed || !editCursor) return;
+  const c = editCursor;
+  const off = Math.max(0, Number(offset));
+  const del = Math.max(0, Number(delCount));
+  const ins = String(insertStr ?? '');
+  try {
+    if (c.inTable && c.pathJson) {
+      if (del > 0) doc.deleteTextInCellByPath(c.sec, c.para, c.pathJson, c.cellPara, off, del);
+      if (ins.length > 0) doc.insertTextInCellByPath(c.sec, c.para, c.pathJson, c.cellPara, off, ins);
+    } else if (c.inTable && c.cell !== undefined) {
+      if (del > 0) doc.deleteTextInCell(c.sec, c.para, c.ctrl, c.cell, c.cellPara, off, del);
+      if (ins.length > 0) doc.insertTextInCell(c.sec, c.para, c.ctrl, c.cell, c.cellPara, off, ins);
+    } else {
+      // 문자 오프셋 위치에서 직접 삭제·삽입하므로 인접 글자의 원본 글꼴·크기·색상(charShapeId)을 그대로 유지!
+      if (del > 0) doc.deleteText(c.sec, c.para, off, del);
+      if (ins.length > 0) doc.insertText(c.sec, c.para, off, ins);
+    }
+    clearPageCache();
+    count = Math.max(1, doc.pageCount ? doc.pageCount() : count);
+    if (vertical && typeof vRefresh === 'function') {
+      vRefresh();
+    } else {
+      await render();
+    }
+    emit('editDirty', { dirty: true });
+  } catch (_) {}
+}
+
+function findPageSvgByIndex(pIdx) {
+  const wraps = [...document.querySelectorAll('.page, .vpage')];
+  for (const w of wraps) {
+    const idxAttr = w.dataset && (w.dataset.page ?? w.dataset.index);
+    if (idxAttr !== undefined && Number(idxAttr) === pIdx) {
+      const s = w.querySelector('svg');
+      if (s) return s;
+    }
+  }
+  return host.querySelector('.page svg') || document.querySelector('svg');
+}
+
+function updateCaretPos() {
+  if (!editCaretEl) return;
+  if (!editModeOn || !editCursor || !doc) {
+    editCaretEl.style.display = 'none';
+    return;
+  }
+  const c = editCursor;
+  const svg = findPageSvgByIndex(c.pageIdx);
+  if (!svg) { editCaretEl.style.display = 'none'; return; }
   const rect = svg.getBoundingClientRect();
-  if (!(rect.width > 0 && rect.height > 0)) return { ok: false, reason: 'no_rect' };
-  const vx = Number(nx) * window.innerWidth;
-  const vy = Number(ny) * window.innerHeight;
-  if (vx < rect.left || vx > rect.right || vy < rect.top || vy > rect.bottom) {
-    return { ok: false, reason: 'outside' };
+  const vb = svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width > 0
+    ? svg.viewBox.baseVal
+    : { x: 0, y: 0, width: rect.width, height: rect.height };
+  try {
+    let raw = null;
+    if (c.inTable && c.pathJson && typeof doc.getCursorRectByPath === 'function') {
+      raw = doc.getCursorRectByPath(c.sec, c.para, c.pathJson, c.offset);
+    } else if (c.inTable && c.cell !== undefined && typeof doc.getCursorRectInCell === 'function') {
+      raw = doc.getCursorRectInCell(c.sec, c.para, c.ctrl, c.cell, c.cellPara, c.offset);
+    } else if (typeof doc.getCursorRect === 'function') {
+      raw = doc.getCursorRect(c.sec, c.para, c.offset);
+    }
+    const r = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (!r || !(r.height > 0)) { editCaretEl.style.display = 'none'; return; }
+    const sx = rect.width / vb.width;
+    const sy = rect.height / vb.height;
+    const left = rect.left + (r.x - vb.x) * sx;
+    const top = rect.top + (r.y - vb.y) * sy;
+    const h = Math.max(14, r.height * sy);
+    editCaretEl.style.left = `${left}px`;
+    editCaretEl.style.top = `${top}px`;
+    editCaretEl.style.height = `${h}px`;
+    editCaretEl.style.display = 'block';
+    if (editImeEl) {
+      editImeEl.style.left = `${left}px`;
+      editImeEl.style.top = `${top}px`;
+    }
+  } catch (_) {
+    editCaretEl.style.display = 'none';
+  }
+}
+
+function handleDirectEditClick(e) {
+  if (!editModeOn || !doc || disposed) return;
+  const targetPageEl = e.target && e.target.closest ? e.target.closest('.page, .vpage') : null;
+  const svg = targetPageEl ? targetPageEl.querySelector('svg') : (host.querySelector('.page svg') || document.querySelector('svg'));
+  if (!svg) return;
+  const rect = svg.getBoundingClientRect();
+  if (!(rect.width > 0 && rect.height > 0)) return;
+  let pIdx = page;
+  if (targetPageEl && targetPageEl.dataset) {
+    const rawIdx = targetPageEl.dataset.page ?? targetPageEl.dataset.index;
+    if (rawIdx !== undefined) pIdx = Number(rawIdx);
+  } else if (options.spread) {
+    const allSvgs = [...host.querySelectorAll('.page svg')];
+    const k = allSvgs.indexOf(svg);
+    if (k >= 0) pIdx = page + k;
   }
   const vb = svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width > 0
     ? svg.viewBox.baseVal
     : { x: 0, y: 0, width: rect.width, height: rect.height };
-  const xPt = vb.x + ((vx - rect.left) / rect.width) * vb.width;
-  const yPt = vb.y + ((vy - rect.top) / rect.height) * vb.height;
-  let hit = null;
+  const xPt = vb.x + ((e.clientX - rect.left) / rect.width) * vb.width;
+  const yPt = vb.y + ((e.clientY - rect.top) / rect.height) * vb.height;
   try {
-    const raw = doc.hitTest(page, xPt, yPt);
-    hit = typeof raw === 'string' ? JSON.parse(raw) : raw;
-  } catch (e) {
-    return { ok: false, reason: 'hit_err', error: String(e) };
-  }
-  if (!hit || hit.hit === false) return { ok: false, reason: 'miss' };
-  const sec = Number(hit.sectionIndex ?? hit.sectionIdx ?? 0);
-  const para = Number(hit.paragraphIndex ?? hit.paraIndex ?? hit.parentParaIdx ?? hit.paraIdx ?? 0);
-  const inTable = Boolean(hit.inTable || hit.cellPath || hit.cellIndex !== undefined || hit.cellIdx !== undefined);
-  let text = '';
-  let target = { sec, para, inTable };
-  try {
-    if (inTable && hit.cellPath && typeof doc.getCellParagraphLengthByPath === 'function') {
-      const pathJson = typeof hit.cellPath === 'string' ? hit.cellPath : JSON.stringify(hit.cellPath);
-      const cellPara = Number(hit.cellParagraphIndex ?? hit.cellParaIdx ?? 0);
-      const len = doc.getCellParagraphLengthByPath(sec, para, pathJson, cellPara);
-      text = len > 0 ? doc.getTextInCellByPath(sec, para, pathJson, cellPara, 0, len) : '';
-      target = { sec, para, inTable: true, pathJson, cellPara, oldLen: len };
-    } else if (inTable && (hit.cellIndex !== undefined || hit.cellIdx !== undefined)) {
-      const ctrl = Number(hit.controlIndex ?? hit.controlIdx ?? 0);
-      const cell = Number(hit.cellIndex ?? hit.cellIdx ?? 0);
-      const cellPara = Number(hit.cellParagraphIndex ?? hit.cellParaIdx ?? 0);
-      const len = doc.getCellParagraphLength(sec, para, ctrl, cell, cellPara);
-      text = len > 0 ? doc.getTextInCell(sec, para, ctrl, cell, cellPara, 0, len) : '';
-      target = { sec, para, inTable: true, ctrl, cell, cellPara, oldLen: len };
-    } else {
-      const len = doc.getParagraphLength(sec, para);
-      text = len > 0 ? doc.getTextRange(sec, para, 0, len) : '';
-      target = { sec, para, inTable: false, oldLen: len };
+    const raw = doc.hitTest(pIdx, xPt, yPt);
+    const hit = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (!hit || hit.hit === false) return;
+    const sec = Number(hit.sectionIndex ?? hit.sectionIdx ?? 0);
+    const para = Number(hit.paragraphIndex ?? hit.paraIndex ?? hit.parentParaIdx ?? hit.paraIdx ?? 0);
+    const offset = Math.max(0, Number(hit.charOffset ?? 0));
+    const inTable = Boolean(hit.inTable || hit.cellPath || hit.cellIndex !== undefined || hit.cellIdx !== undefined);
+    editCursor = {
+      pageIdx: pIdx,
+      sec,
+      para,
+      offset,
+      inTable,
+      pathJson: hit.cellPath ? (typeof hit.cellPath === 'string' ? hit.cellPath : JSON.stringify(hit.cellPath)) : null,
+      ctrl: Number(hit.controlIndex ?? hit.controlIdx ?? 0),
+      cell: hit.cellIndex ?? hit.cellIdx,
+      cellPara: Number(hit.cellParagraphIndex ?? hit.cellParaIdx ?? 0),
+    };
+    imeComposing = false;
+    imeCompLen = 0;
+    ensureEditDom();
+    updateCaretPos();
+    if (editImeEl) {
+      editImeEl.value = '';
+      editImeEl.focus({ preventScroll: true });
     }
-  } catch (e) {
-    return { ok: false, reason: 'read_err', error: String(e) };
-  }
-  return { ok: true, target, text: String(text ?? ''), inTable };
+  } catch (_) {}
 }
 
-async function editApply(target, newText) {
-  if (!doc || disposed || !target) return false;
-  const txt = String(newText ?? '');
-  try {
-    const sec = Number(target.sec ?? 0);
-    const para = Number(target.para ?? 0);
-    if (target.inTable && target.pathJson) {
-      const cellPara = Number(target.cellPara ?? 0);
-      const curLen = doc.getCellParagraphLengthByPath(sec, para, target.pathJson, cellPara);
-      if (curLen > 0) doc.deleteTextInCellByPath(sec, para, target.pathJson, cellPara, 0, curLen);
-      if (txt.length > 0) doc.insertTextInCellByPath(sec, para, target.pathJson, cellPara, 0, txt);
-    } else if (target.inTable && target.cell !== undefined) {
-      const ctrl = Number(target.ctrl ?? 0);
-      const cell = Number(target.cell ?? 0);
-      const cellPara = Number(target.cellPara ?? 0);
-      const curLen = doc.getCellParagraphLength(sec, para, ctrl, cell, cellPara);
-      if (curLen > 0) doc.deleteTextInCell(sec, para, ctrl, cell, cellPara, 0, curLen);
-      if (txt.length > 0) doc.insertTextInCell(sec, para, ctrl, cell, cellPara, 0, txt);
-    } else {
-      const curLen = doc.getParagraphLength(sec, para);
-      if (typeof doc.replaceText === 'function') {
-        doc.replaceText(sec, para, 0, curLen, txt);
-      } else {
-        if (curLen > 0) doc.deleteText(sec, para, 0, curLen);
-        if (txt.length > 0) doc.insertText(sec, para, 0, txt);
-      }
-    }
-    clearPageCache();
-    count = Math.max(1, doc.pageCount ? doc.pageCount() : count);
-    if (page >= count) page = count - 1;
-    await render();
-    reportLocation();
-    return true;
-  } catch (e) {
-    return false;
+function setEditMode(enabled) {
+  editModeOn = Boolean(enabled);
+  ensureEditDom();
+  if (editModeOn) {
+    document.addEventListener('click', handleDirectEditClick, true);
+  } else {
+    document.removeEventListener('click', handleDirectEditClick, true);
+    editCursor = null;
+    imeComposing = false;
+    if (editCaretEl) editCaretEl.style.display = 'none';
+    if (editImeEl) { editImeEl.value = ''; editImeEl.blur(); }
   }
+  return editModeOn;
 }
 
 function uint8ToBase64(bytes) {
@@ -1165,7 +1306,7 @@ function editExport(preferHwpx) {
 }
 
 window.freaderHwp = { setView, resetScrollZoom: vResetZoom, setScrollMarks, setScrollMemos, setScrollMemo, visibleSlots: vVisibleSlots, mostVisiblePage: vMostVisible, highlightBoxes: withoutZoom(highlightBoxes), beginDocument, pageSizes, setVertical, scrollToRatio: vScrollToRatio, appendChunk, openDocument, configure, display, next, previous, progress, highlightSelection: withoutZoom(highlightSelection), destroy,
-  search, showSearchResult, clearSearch, headingCandidates, pageText, visibleTextBoxes: withoutZoom(visibleTextBoxes), pageRect: withoutZoom(pageRect), editHitTest: withoutZoom(editHitTest), editApply, editExport,
+  search, showSearchResult, clearSearch, headingCandidates, pageText, visibleTextBoxes: withoutZoom(visibleTextBoxes), pageRect: withoutZoom(pageRect), setEditMode, editExport,
   getState: () => ({ ready: readyReported, page, count, cachedPages: cache.size, cachedBytes, received, spread: options.spread, maxBytes: MAX_BYTES }) };
 window.addEventListener('pagehide', destroy, { once: true });
 

@@ -279,14 +279,15 @@ class DocPairIcon extends StatelessWidget {
 
 /// 언어 아이콘: 한글 'ㄱ'과 영문 'A'를 겹쳐 한 글자처럼
 class LanguageGlyphIcon extends StatelessWidget {
-  const LanguageGlyphIcon({super.key, this.size = 24, this.color});
+  const LanguageGlyphIcon({super.key, this.size = 24, this.color, this.shadows});
   final double size;
   final Color? color;
+  final List<Shadow>? shadows;
 
   @override
   Widget build(BuildContext context) {
     final c = color ?? Theme.of(context).colorScheme.onSurface;
-    TextStyle st(double f) => TextStyle(color: c, fontSize: f, height: 1.0, fontWeight: FontWeight.w800, letterSpacing: 0);
+    TextStyle st(double f) => TextStyle(color: c, fontSize: f, height: 1.0, fontWeight: FontWeight.w800, letterSpacing: 0, shadows: shadows);
     return SizedBox.square(
       dimension: size,
       child: Stack(

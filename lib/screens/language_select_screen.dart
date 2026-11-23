@@ -92,7 +92,7 @@ class _LanguageSelectScreenState extends State<LanguageSelectScreen> {
                   CircleAvatar(
                     radius: 22,
                     backgroundColor: cs.primaryContainer,
-                    child: LanguageGlyphIcon(size: 23, color: cs.onPrimaryContainer),
+                    child: LanguageGlyphIcon(size: 23, color: cs.onPrimaryContainer, shadows: AppColors.sigShadows(context)),
                   ),
                   const SizedBox(width: 14),
                   Expanded(
