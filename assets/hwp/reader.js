@@ -1037,7 +1037,7 @@ function withoutZoom(fn) {
   };
 }
 
-// ── 화면 위 실시간 커서·키보드 직접 편집 (rhwp MIT 고속 로컬/지연 페이지네이션 + 1페이지 rAF 합산 렌더) ──
+// ── 화면 위 실시간 커서·키보드 직접 편집 (1,400페이지급 대용량 문서 무지연 로컬 편집 + 8자 분할 + 유휴 플러시 최소화) ──
 let editModeOn = false;
 let editDirty = false;
 let editPaginationPending = false;
@@ -1050,7 +1050,7 @@ let imeCompLen = 0;
 let lastPinchEndedAt = 0;
 let redrawRafId = 0;
 let pendingRedrawPage = -1;
-let idleFlushTimer = 0;
+let flowFlushTimer = 0;
 const IME_SENTINEL = '\u200B';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -1076,7 +1076,7 @@ function resetImeBuffer() {
 }
 
 function flushPendingPaginationNow(redrawAll) {
-  if (idleFlushTimer) { clearTimeout(idleFlushTimer); idleFlushTimer = 0; }
+  if (flowFlushTimer) { clearTimeout(flowFlushTimer); flowFlushTimer = 0; }
   if (!doc || disposed) return;
   if (editPaginationPending) {
     editPaginationPending = false;
@@ -1091,12 +1091,13 @@ function flushPendingPaginationNow(redrawAll) {
   }
 }
 
-function scheduleIdlePaginationFlush() {
-  if (idleFlushTimer) clearTimeout(idleFlushTimer);
-  idleFlushTimer = setTimeout(() => {
-    idleFlushTimer = 0;
+function scheduleFlowFlushIfNeeded() {
+  // 페이지 넘침(flowChanged)이 실제로 발생했을 때만 입력 멈춤 1.5초 후 1회 전체 페이지네이션 동기화
+  if (flowFlushTimer) clearTimeout(flowFlushTimer);
+  flowFlushTimer = setTimeout(() => {
+    flowFlushTimer = 0;
     flushPendingPaginationNow(true);
-  }, 380);
+  }, 1500);
 }
 
 function scheduleFastRedraw(pIdx) {
@@ -1335,6 +1336,53 @@ function removeAllCarets() {
   for (const el of document.querySelectorAll('.eri-caret-rect')) el.remove();
 }
 
+/**
+ * rhwp의 replaceBodyTextLocal은 줄바꿈·탭 없는 최대 8자까지만 허용하므로,
+ * 삼성 키보드 등 긴 조합 문자열도 8자 단위로 나눠 100% 로컬 고속 경로(0.4ms)로 처리한다.
+ */
+function replaceBodyLocalChunked(sec, para, off, del, ins) {
+  if (typeof doc.replaceBodyTextLocal !== 'function') return null;
+  if (/[\r\n\t]/.test(ins)) return null;
+  let curOff = off;
+  let remDel = del;
+  let lastRes = null;
+  let flowChanged = false;
+  try {
+    if (ins.length === 0) {
+      // 삭제도 8자 단위로 안전하게 처리
+      while (remDel > 0) {
+        const d = Math.min(8, remDel);
+        lastRes = parseJsonSafe(doc.replaceBodyTextLocal(sec, para, curOff, d, ''));
+        if (!lastRes || !lastRes.ok) return null;
+        if (lastRes.flowChanged) flowChanged = true;
+        remDel -= d;
+      }
+      return { ok: true, charOffset: curOff, flowChanged };
+    }
+    let pos = 0;
+    while (pos < ins.length) {
+      const chunk = ins.slice(pos, pos + 8);
+      const d = Math.min(8, remDel);
+      lastRes = parseJsonSafe(doc.replaceBodyTextLocal(sec, para, curOff, d, chunk));
+      if (!lastRes || !lastRes.ok) return null;
+      if (lastRes.flowChanged) flowChanged = true;
+      curOff = typeof lastRes.charOffset === 'number' ? lastRes.charOffset : (curOff + chunk.length);
+      remDel -= d;
+      pos += chunk.length;
+    }
+    while (remDel > 0) {
+      const d = Math.min(8, remDel);
+      lastRes = parseJsonSafe(doc.replaceBodyTextLocal(sec, para, curOff, d, ''));
+      if (!lastRes || !lastRes.ok) return null;
+      if (lastRes.flowChanged) flowChanged = true;
+      remDel -= d;
+    }
+    return { ok: true, charOffset: curOff, flowChanged };
+  } catch (_) {
+    return null;
+  }
+}
+
 function handleBackspace() {
   if (!doc || disposed || !editCursor) return;
   const c = editCursor;
@@ -1422,12 +1470,6 @@ function handleEnter() {
   }
 }
 
-/**
- * 고속 동기 편집:
- * - 본문: replaceBodyTextLocal (전체 페이지네이션 생략, 현재 페이지만 즉시 갱신)
- * - 표 셀: replaceTextInCellDeferredPagination / delete/insertDeferredPagination (전체 페이지네이션은 idle 시 1회)
- * - 화면 렌더: requestAnimationFrame으로 합산해 현재 1페이지만 교체 (지우기 꾹 눌러도 밀림 제로)
- */
 function applyDeltaFast(offset, delCount, insertStr) {
   if (!doc || disposed || !editCursor) return null;
   const c = editCursor;
@@ -1437,6 +1479,7 @@ function applyDeltaFast(offset, delCount, insertStr) {
   if (del === 0 && ins.length === 0) return off;
   let lastRes = null;
   let usedDeferred = false;
+  let flowChanged = false;
   try {
     if (c.inTable && c.pathJson) {
       if (del > 0) lastRes = parseJsonSafe(doc.deleteTextInCellByPath(c.sec, c.parentPara, c.pathJson, off, del));
@@ -1445,30 +1488,17 @@ function applyDeltaFast(offset, delCount, insertStr) {
       if (typeof doc.replaceTextInCellDeferredPagination === 'function') {
         lastRes = parseJsonSafe(doc.replaceTextInCellDeferredPagination(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara, off, del, ins));
         usedDeferred = true;
+        flowChanged = Boolean(lastRes && lastRes.cellFlowChanged);
       } else {
-        if (del > 0 && typeof doc.deleteTextInCellDeferredPagination === 'function') {
-          lastRes = parseJsonSafe(doc.deleteTextInCellDeferredPagination(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara, off, del));
-          usedDeferred = true;
-        } else if (del > 0) {
-          lastRes = parseJsonSafe(doc.deleteTextInCell(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara, off, del));
-        }
-        if (ins.length > 0 && typeof doc.insertTextInCellDeferredPagination === 'function') {
-          lastRes = parseJsonSafe(doc.insertTextInCellDeferredPagination(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara, off, ins));
-          usedDeferred = true;
-        } else if (ins.length > 0) {
-          lastRes = parseJsonSafe(doc.insertTextInCell(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara, off, ins));
-        }
+        if (del > 0) lastRes = parseJsonSafe(doc.deleteTextInCell(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara, off, del));
+        if (ins.length > 0) lastRes = parseJsonSafe(doc.insertTextInCell(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara, off, ins));
       }
     } else {
-      if (typeof doc.replaceBodyTextLocal === 'function') {
-        lastRes = parseJsonSafe(doc.replaceBodyTextLocal(c.sec, c.para, off, del, ins));
-        if (lastRes && lastRes.ok) {
-          usedDeferred = true;
-        } else {
-          // 페이지 경계를 넘겨 로컬 갱신이 불가능한 경우에만 일반 경로로 폴백
-          if (del > 0) lastRes = parseJsonSafe(doc.deleteText(c.sec, c.para, off, del));
-          if (ins.length > 0) lastRes = parseJsonSafe(doc.insertText(c.sec, c.para, off, ins));
-        }
+      const localRes = replaceBodyLocalChunked(c.sec, c.para, off, del, ins);
+      if (localRes && localRes.ok) {
+        lastRes = localRes;
+        usedDeferred = true;
+        flowChanged = Boolean(localRes.flowChanged);
       } else {
         if (del > 0) lastRes = parseJsonSafe(doc.deleteText(c.sec, c.para, off, del));
         if (ins.length > 0) lastRes = parseJsonSafe(doc.insertText(c.sec, c.para, off, ins));
@@ -1478,7 +1508,9 @@ function applyDeltaFast(offset, delCount, insertStr) {
     scheduleFastRedraw(c.pageIdx);
     if (usedDeferred) {
       editPaginationPending = true;
-      scheduleIdlePaginationFlush();
+      // 같은 페이지 안에서 입력 중일 때는 전체 1,400페이지 재계산을 돌리지 않음!
+      // 페이지 넘침(flowChanged)이 실제로 생겼을 때만 긴 유휴(1.5초) 후 1회 동기화
+      if (flowChanged) scheduleFlowFlushIfNeeded();
     }
     if (lastRes && lastRes.ok && typeof lastRes.charOffset === 'number') {
       return lastRes.charOffset;
@@ -1517,7 +1549,7 @@ function updateCaretPos() {
       raw = doc.getCursorRect(c.sec, c.para, c.offset);
     }
     const r = parseJsonSafe(raw);
-    if (!r || !(r.height > 0)) return;
+    if (!r || !Number.isFinite(r.x) || !Number.isFinite(r.y)) return;
     if (typeof r.pageIndex === 'number' && Number.isFinite(r.pageIndex)) {
       c.pageIdx = r.pageIndex;
     }
@@ -1532,12 +1564,13 @@ function updateCaretPos() {
     const sy = vb.height / engH;
     const rectPx = svg.getBoundingClientRect();
     const caretW = Math.max(1.2, (rectPx.width > 0 ? (2.2 / rectPx.width) * vb.width : 1.8));
+    const caretH = Math.max(10, (r.height > 0 ? r.height : 14) * sy);
     const caret = document.createElementNS(SVG_NS, 'rect');
     caret.setAttribute('class', 'eri-caret-rect');
     caret.setAttribute('x', String(vb.x + r.x * sx));
     caret.setAttribute('y', String(vb.y + r.y * sy));
     caret.setAttribute('width', String(caretW));
-    caret.setAttribute('height', String(Math.max(8, r.height * sy)));
+    caret.setAttribute('height', String(caretH));
     caret.setAttribute('rx', String(caretW * 0.35));
     svg.appendChild(caret);
   } catch (err) {
@@ -1548,7 +1581,6 @@ function updateCaretPos() {
 function handleDirectEditClick(e) {
   if (!editModeOn || !doc || disposed) return;
   if (Date.now() - lastPinchEndedAt < 350) return;
-  flushPendingPaginationNow(false);
   const targetPageEl = e.target && e.target.closest ? e.target.closest('.page, .vslot') : null;
   const frame = targetPageEl && targetPageEl.classList.contains('page')
     ? targetPageEl
