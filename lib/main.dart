@@ -1167,7 +1167,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
       final cs = Theme.of(context).colorScheme;
       final Color sig = AppColors.of(context);
       final List<String> notes = [
-        _tr('한글 문서 화면 위 실시간 커서·키보드 직접 편집 추가 (원본 글꼴 유지, 사본 저장·공유)',
+        _tr('한글 문서 화면 위 실시간 커서·키보드 직접 편집 추가 (본문·표 안 문구 수정)',
             'Added live on-page cursor & keyboard editing for HWP/HWPX (keeps original font, save copy & share)',
             '新增 HWP/HWPX 页面实时光标键盘编辑（保留原字体、保存副本与分享）',
             'HWP/HWPXのページ上リアルタイムカーソル編集を追加（元のフォント維持・コピー保存・共有）'),

@@ -332,11 +332,6 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   // S펜 전용 페이지별 필기 및 지우개 상태 (필기 모드에서 S펜이 닿으면 화면 이동 100% 차단 + 해당 페이지에서만 필기 표시)
   bool _isMemoMode = false;
   bool _isHwpEditMode = false;
-  bool _hwpEditDirty = false;
-  bool _hwpEditSaving = false;
-  Map<String, Object?>? _hwpEditTarget;
-  bool _hwpEditInTable = false;
-  final TextEditingController _hwpEditCtrl = TextEditingController();
   bool get _canHwpEdit => _isHwpFile;
   bool _isEraserMode = false;
   bool _allowFingerDrawing = false;
@@ -1221,7 +1216,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           key: ValueKey('document:${widget.filePath}'),
           filePath: widget.filePath,
           controller: _hwpController,
-          onEditDirty: () { if (mounted && !_hwpEditDirty) setState(() => _hwpEditDirty = true); },
+          editMode: _isHwpEditMode,
           initialPosition: _currentCfi ?? _initialCfi,
           initialProgress: _initialProgress,
           theme: _epubBgTheme,
@@ -3484,7 +3479,8 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   /// 화면을 한 번 눌렀을 때: 탭 모드면 위쪽은 메뉴, 아래 왼쪽·오른쪽은 이전·다음 쪽
   /// (메뉴가 떠 있거나 필기 중이면 메뉴만 닫음. '이전'·'다음' 칸은 읽기 방향과 상관없이 그대로)
   void _onReaderTap(Offset global) {
-    if (!_pageModeTap || _showControls || _isMemoMode || _isHwpEditMode || _slideShow) {
+    if (_isHwpEditMode) return;
+    if (!_pageModeTap || _showControls || _isMemoMode || _slideShow) {
       _toggleControls();
       return;
     }
@@ -3961,7 +3957,6 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
 
   @override
   void dispose() {
-    _hwpEditCtrl.dispose();
     ToolbarLayout.current.removeListener(_onToolbarLayout);
     MemoTools.changed.removeListener(_onToolbarLayout);
     _outlineProgress.dispose();
@@ -4263,7 +4258,6 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     final bool next = !_isHwpEditMode;
     setState(() {
       _isHwpEditMode = next;
-      _hwpEditTarget = null;
       _showControls = false;
       if (next) {
         _isMemoMode = false;
@@ -4273,148 +4267,9 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     _hwpController.setEditMode(next);
   }
 
-  Future<void> _saveHwpEditedCopy() async {
-    if (_hwpEditSaving) return;
-    setState(() => _hwpEditSaving = true);
-    try {
-      final bool preferHwpx = widget.filePath.toLowerCase().endsWith('.hwpx');
-      final res = await _hwpController.editExport(preferHwpx: preferHwpx);
-      if (!mounted) return;
-      if (res == null || res['ok'] != true || res['base64'] is! String) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_tr('사본 생성에 실패했어요', 'Failed to export edited copy', '生成副本失败', 'コピーの作成に失敗しました'))),
-        );
-        return;
-      }
-      final String ext = (res['ext'] as String?) ?? (preferHwpx ? 'hwpx' : 'hwp');
-      final List<int> bytes = base64Decode(res['base64'] as String);
-      final appDir = await getApplicationDocumentsDirectory();
-      final String rawName = widget.filePath.split(Platform.pathSeparator).last;
-      final String stem = rawName.replaceAll(RegExp(r'\.hwpx?$', caseSensitive: false), '').replaceAll(RegExp(r'_편집본\d*$'), '');
-      String outPath = '${appDir.path}${Platform.pathSeparator}${stem}_편집본.$ext';
-      int n = 2;
-      while (await File(outPath).exists()) {
-        outPath = '${appDir.path}${Platform.pathSeparator}${stem}_편집본$n.$ext';
-        n++;
-      }
-      await File(outPath).writeAsBytes(bytes, flush: true);
-      if (!mounted) return;
-      final String savedName = outPath.split(Platform.pathSeparator).last;
-      setState(() => _hwpEditDirty = false);
-      final String? action = await showCenterDialog<String>(
-        context: context,
-        builder: (ctx) {
-          final cs = Theme.of(ctx).colorScheme;
-          return AlertDialog(
-            title: Text(_tr('사본으로 저장했어요', 'Saved as a copy', '已保存为副本', 'コピーとして保存しました')),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(savedName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
-                const SizedBox(height: 8),
-                Text(
-                  _tr(
-                    '원본 서식 그대로 내 서재에 사본을 저장했어요. 바로 공유해 내보내거나 사본을 열어볼 수 있어요',
-                    'Saved to your library with the original formatting intact. You can share or open it now',
-                    '已按原格式将副本保存到书架，可立即分享导出或打开副本',
-                    '元の書式のまま本棚にコピーを保存しました。すぐ共有したり開いたりできます',
-                  ),
-                  style: TextStyle(fontSize: 13.5, color: cs.onSurfaceVariant, height: 1.45),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx, 'close'), child: Text(_tr('닫기', 'Close', '关闭', '閉じる'))),
-              TextButton(onPressed: () => Navigator.pop(ctx, 'open'), child: Text(_tr('사본 열기', 'Open copy', '打开副本', 'コピーを開く'))),
-              FilledButton.icon(
-                onPressed: () => Navigator.pop(ctx, 'share'),
-                icon: const Icon(Icons.share_outlined, size: 18),
-                label: Text(_tr('공유하기', 'Share', '分享', '共有')),
-              ),
-            ],
-          );
-        },
-      );
-      if (!mounted) return;
-      if (action == 'share') {
-        await shareFile(context, outPath, title: savedName);
-      } else if (action == 'open') {
-        Navigator.pushReplacement(
-          context,
-          PushAsideRoute(
-            swipeBack: false,
-            fromLeft: false,
-            builder: (_) => ReaderScreen(filePath: outPath, bookTitle: savedName),
-          ),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _hwpEditSaving = false);
-    }
-  }
-
   Widget _buildHwpInlineEditBar(double bottomPadding) {
-    final cs = Theme.of(context).colorScheme;
     final Color sig = AppColors.of(context);
     final double kb = MediaQuery.of(context).viewInsets.bottom;
-    if (_hwpEditTarget != null) {
-      return Positioned(
-        left: 12,
-        right: 12,
-        bottom: (kb > 0 ? kb + 8 : bottomPadding + 14),
-        child: Material(
-          elevation: 8,
-          borderRadius: BorderRadius.circular(18),
-          color: cs.surface,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    Icon(Icons.edit_note_rounded, size: 18, color: sig),
-                    const SizedBox(width: 6),
-                    Text(
-                      _hwpEditInTable
-                          ? _tr('표 칸 문구 수정', 'Edit table cell', '编辑表格单元格', '表のセルを編集')
-                          : _tr('문단 문구 수정', 'Edit paragraph', '编辑段落', '段落を編集'),
-                      style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800),
-                    ),
-                    const Spacer(),
-                    TextButton(
-                      onPressed: () => setState(() => _hwpEditTarget = null),
-                      child: Text(_tr('취소', 'Cancel', '取消', 'キャンセル')),
-                    ),
-                    const SizedBox(width: 4),
-                    FilledButton(
-                      onPressed: () {},
-                      style: FilledButton.styleFrom(visualDensity: VisualDensity.compact),
-                      child: Text(_tr('적용', 'Apply', '应用', '適用')),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                TextField(
-                  controller: _hwpEditCtrl,
-                  autofocus: true,
-                  maxLines: 4,
-                  minLines: 1,
-                  style: const TextStyle(fontSize: 15, height: 1.4),
-                  decoration: InputDecoration(
-                    isDense: true,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
     return Positioned(
       left: 16,
       right: 16,
@@ -4439,25 +4294,9 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                   ),
                 ),
                 const SizedBox(width: 10),
-                if (_hwpEditDirty)
-                  FilledButton(
-                    onPressed: _hwpEditSaving ? null : _saveHwpEditedCopy,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: sig,
-                      foregroundColor: Colors.white,
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    ),
-                    child: _hwpEditSaving
-                        ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : Text(_tr('사본 저장', 'Save copy', '保存副本', 'コピー保存'), style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
-                  ),
                 TextButton(
                   onPressed: () {
-                    setState(() {
-                      _isHwpEditMode = false;
-                      _hwpEditTarget = null;
-                    });
+                    setState(() => _isHwpEditMode = false);
                     _hwpController.setEditMode(false);
                   },
                   child: Text(_tr('완료', 'Done', '完成', '完了'), style: TextStyle(color: sig, fontWeight: FontWeight.w700)),
@@ -4782,7 +4621,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                         // 빠르게 튕기는 스와이프는 WebView보다 먼저 Flutter가 받아 직접 페이지를 넘긴다.
                         // 손가락 한 개일 때만 (두 손가락이면 확대·축소가 가져가게), 스크롤 모드에서는 쓰지 않음
                         gestures: {
-                          if (_swipeFlutterOwned && !_pageModeScroll && !_docSel.active && !_docPressSelecting && !WordSelectionLayer.locked)
+                          if (_swipeFlutterOwned && !_pageModeScroll && !_docSel.active && !_docPressSelecting && !_isHwpEditMode && !WordSelectionLayer.locked)
                             _OneFingerHorizontalDrag: GestureRecognizerFactoryWithHandlers<_OneFingerHorizontalDrag>(
                               () => _OneFingerHorizontalDrag(),
                               (r) => r

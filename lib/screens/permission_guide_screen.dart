@@ -66,7 +66,7 @@ class PermissionGuideScreen extends StatelessWidget {
                 children: [
                   // 앱 아이콘 (책 읽는 늑대)
                   Center(
-                    child: Image.asset('assets/splash/app_icon.png', width: 96, height: 96, filterQuality: FilterQuality.medium),
+                    child: Image.asset('assets/splash/app_icon.png', width: 116, height: 116, filterQuality: FilterQuality.medium),
                   ),
                   const SizedBox(height: 18),
                   Center(
