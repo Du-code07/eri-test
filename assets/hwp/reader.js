@@ -584,6 +584,7 @@ function vPinchEnd(e) {
   vhost.scrollTop = vTops[p.i] + p.fy * sh - p.y;
   vhost.scrollLeft = vLeft() + p.fx * vPageWidth() - p.x;
   vUpdate();
+  lastPinchEndedAt = Date.now();
   vReportMetrics();
 }
 /** [a, b] 쪽을 한꺼번에 붙임 (두 손가락으로 줄이기 전에) */
@@ -1036,15 +1037,18 @@ function withoutZoom(fn) {
   };
 }
 
-// ── 화면 위 실시간 커서·키보드 직접 편집 (rhwp MIT 엔진: 본문·표 셀 실시간 입력/삭제, 한쪽/두쪽/스크롤 지원) ──
+// ── 화면 위 실시간 커서·키보드 직접 편집 (rhwp MIT 엔진: 본문·표 셀 실시간 입력/삭제, 정확한 커서 좌표, 자동 저장) ──
 let editModeOn = false;
+let editDirty = false;
 let editCursor = null; // { pageIdx, sec, para, parentPara, offset, inTable, pathJson, ctrl, cell, cellPara }
-let editCaretEl = null;
 let editImeEl = null;
+let editStyleInjected = false;
 let imeComposing = false;
 let imeCompBase = 0;
 let imeCompLen = 0;
+let lastPinchEndedAt = 0;
 const IME_SENTINEL = '\u200B';
+const SVG_NS = 'http://www.w3.org/2000/svg';
 
 function clearPageCache() {
   for (const e of cache.values()) releaseEntry(e);
@@ -1059,17 +1063,15 @@ function resetImeBuffer() {
 }
 
 function ensureEditDom() {
-  if (!editCaretEl) {
+  if (!editStyleInjected) {
+    editStyleInjected = true;
     const st = document.createElement('style');
     st.textContent = [
       '@keyframes eriBlink{0%,49%{opacity:1}50%,100%{opacity:0}}',
-      '#eri-caret{position:absolute;width:2.2px;background:#2F7D32;border-radius:1px;pointer-events:none;z-index:25;animation:eriBlink 1s step-end infinite;display:none;}',
-      'body[data-theme="dark"] #eri-caret{filter:none !important;background:#66BB6A;}',
+      '.eri-caret-rect{fill:#2F7D32;pointer-events:none;animation:eriBlink 1s step-end infinite;}',
       '#eri-ime{position:fixed;left:0;top:0;opacity:0.001;width:2px;height:20px;border:0;padding:0;margin:0;resize:none;z-index:9998;pointer-events:none;font-size:16px;background:transparent;color:transparent;caret-color:transparent;}',
     ].join(' ');
     document.head.appendChild(st);
-    editCaretEl = document.createElement('div');
-    editCaretEl.id = 'eri-caret';
   }
   if (!editImeEl) {
     editImeEl = document.createElement('textarea');
@@ -1161,6 +1163,40 @@ function parseJsonSafe(raw) {
   try { return JSON.parse(raw); } catch (_) { return null; }
 }
 
+function getPageEngineSize(pIdx, svg) {
+  let w = 0, h = 0;
+  try {
+    const info = parseJsonSafe(doc.getPageInfo(pIdx));
+    if (info && info.width > 0 && info.height > 0) {
+      w = Number(info.width);
+      h = Number(info.height);
+    }
+  } catch (_) {}
+  if (!(w > 0 && h > 0) && svg) {
+    const vb = svg.viewBox && svg.viewBox.baseVal;
+    if (vb && vb.width > 0 && vb.height > 0) {
+      w = vb.width;
+      h = vb.height;
+    } else {
+      const r = svg.getBoundingClientRect();
+      w = r.width || 595;
+      h = r.height || 842;
+    }
+  }
+  return { w, h };
+}
+
+function markEditDirty() {
+  if (!editDirty) {
+    editDirty = true;
+    emit('editChanged', { dirty: true });
+  }
+}
+
+function removeAllCarets() {
+  for (const el of document.querySelectorAll('.eri-caret-rect')) el.remove();
+}
+
 async function handleBackspace() {
   if (!doc || disposed || !editCursor) return;
   const c = editCursor;
@@ -1182,6 +1218,7 @@ async function handleBackspace() {
           c.cellPara = res.cellParaIndex;
         }
         c.offset = Number(res.charOffset ?? 0);
+        markEditDirty();
         await redrawAfterEdit();
       }
     } else if (c.inTable && c.cell !== undefined && c.cellPara > 0 && typeof doc.mergeParagraphInCell === 'function') {
@@ -1189,6 +1226,7 @@ async function handleBackspace() {
       if (res && res.ok) {
         c.cellPara = Number(res.cellParaIndex ?? Math.max(0, c.cellPara - 1));
         c.offset = Number(res.charOffset ?? 0);
+        markEditDirty();
         await redrawAfterEdit();
       }
     } else if (!c.inTable && c.para > 0 && typeof doc.mergeParagraph === 'function') {
@@ -1196,6 +1234,7 @@ async function handleBackspace() {
       if (res && res.ok) {
         c.para = Number(res.paraIdx ?? Math.max(0, c.para - 1));
         c.offset = Number(res.charOffset ?? 0);
+        markEditDirty();
         await redrawAfterEdit();
       }
     }
@@ -1219,6 +1258,7 @@ async function handleEnter() {
           c.cellPara = res.cellParaIndex;
         }
         c.offset = 0;
+        markEditDirty();
         await redrawAfterEdit();
       }
     } else if (c.inTable && c.cell !== undefined && typeof doc.splitParagraphInCell === 'function') {
@@ -1226,6 +1266,7 @@ async function handleEnter() {
       if (res && res.ok) {
         c.cellPara = Number(res.cellParaIndex ?? (c.cellPara + 1));
         c.offset = 0;
+        markEditDirty();
         await redrawAfterEdit();
       }
     } else if (!c.inTable && typeof doc.splitParagraph === 'function') {
@@ -1233,6 +1274,7 @@ async function handleEnter() {
       if (res && res.ok) {
         c.para = Number(res.paraIdx ?? (c.para + 1));
         c.offset = 0;
+        markEditDirty();
         await redrawAfterEdit();
       }
     }
@@ -1256,8 +1298,12 @@ async function redrawAfterEdit() {
       const entry = svgForPage(idx);
       const newSvg = entry.template.cloneNode(true);
       const oldSvg = m.frame.querySelector(':scope > svg');
-      if (oldSvg) oldSvg.replaceWith(newSvg);
-      else m.frame.prepend(newSvg);
+      if (oldSvg) {
+        if (oldSvg.style.cssText) newSvg.style.cssText = oldSvg.style.cssText;
+        oldSvg.replaceWith(newSvg);
+      } else {
+        m.frame.prepend(newSvg);
+      }
       const prevEntry = m.entry;
       m.entry = entry;
       activeEntries.add(entry);
@@ -1275,8 +1321,12 @@ async function redrawAfterEdit() {
         const entry = svgForPage(idx);
         const newSvg = entry.template.cloneNode(true);
         const oldSvg = frame.querySelector(':scope > svg');
-        if (oldSvg) oldSvg.replaceWith(newSvg);
-        else frame.prepend(newSvg);
+        if (oldSvg) {
+          if (oldSvg.style.cssText) newSvg.style.cssText = oldSvg.style.cssText;
+          oldSvg.replaceWith(newSvg);
+        } else {
+          frame.prepend(newSvg);
+        }
       }
     } else {
       await render();
@@ -1294,18 +1344,16 @@ async function applyDeltaAt(offset, delCount, insertStr) {
   let lastRes = null;
   try {
     if (c.inTable && c.pathJson) {
-      // rhwp 5-arg signature: (section_idx, parent_para_idx, path_json, char_offset, count/text)
       if (del > 0) lastRes = parseJsonSafe(doc.deleteTextInCellByPath(c.sec, c.parentPara, c.pathJson, off, del));
       if (ins.length > 0) lastRes = parseJsonSafe(doc.insertTextInCellByPath(c.sec, c.parentPara, c.pathJson, off, ins));
     } else if (c.inTable && c.cell !== undefined && c.cell !== null) {
-      // rhwp 7-arg signature: (section_idx, parent_para_idx, control_idx, cell_idx, cell_para_idx, char_offset, count/text)
       if (del > 0) lastRes = parseJsonSafe(doc.deleteTextInCell(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara, off, del));
       if (ins.length > 0) lastRes = parseJsonSafe(doc.insertTextInCell(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara, off, ins));
     } else {
-      // rhwp 4-arg signature: (section_idx, para_idx, char_offset, count/text)
       if (del > 0) lastRes = parseJsonSafe(doc.deleteText(c.sec, c.para, off, del));
       if (ins.length > 0) lastRes = parseJsonSafe(doc.insertText(c.sec, c.para, off, ins));
     }
+    if (del > 0 || ins.length > 0) markEditDirty();
     await redrawAfterEdit();
     if (lastRes && lastRes.ok && typeof lastRes.charOffset === 'number') {
       return lastRes.charOffset;
@@ -1331,11 +1379,8 @@ function findPageFrameByIndex(pIdx) {
 }
 
 function updateCaretPos() {
-  if (!editCaretEl) return;
-  if (!editModeOn || !editCursor || !doc) {
-    editCaretEl.style.display = 'none';
-    return;
-  }
+  removeAllCarets();
+  if (!editModeOn || !editCursor || !doc) return;
   const c = editCursor;
   try {
     let raw = null;
@@ -1347,35 +1392,39 @@ function updateCaretPos() {
       raw = doc.getCursorRect(c.sec, c.para, c.offset);
     }
     const r = parseJsonSafe(raw);
-    if (!r || !(r.height > 0)) { editCaretEl.style.display = 'none'; return; }
+    if (!r || !(r.height > 0)) return;
     if (typeof r.pageIndex === 'number' && Number.isFinite(r.pageIndex)) {
       c.pageIdx = r.pageIndex;
     }
     const frame = findPageFrameByIndex(c.pageIdx);
     const svg = frame ? frame.querySelector(':scope > svg') : null;
-    if (!frame || !svg) { editCaretEl.style.display = 'none'; return; }
+    if (!frame || !svg) return;
     const vb = svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width > 0
       ? svg.viewBox.baseVal
       : { x: 0, y: 0, width: parseFloat(frame.dataset.width) || 595, height: parseFloat(frame.dataset.height) || 842 };
-    // .page 내부 비율(%)로 배치하면 스크롤·핀치 확대/축소에도 커서가 문서 글자에 100% 고정됨
-    const leftPct = ((r.x - vb.x) / vb.width) * 100;
-    const topPct = ((r.y - vb.y) / vb.height) * 100;
-    const heightPct = Math.max(1.2, (r.height / vb.height) * 100);
-    if (editCaretEl.parentElement !== frame) {
-      frame.appendChild(editCaretEl);
-    }
-    editCaretEl.style.left = `${leftPct}%`;
-    editCaretEl.style.top = `${topPct}%`;
-    editCaretEl.style.height = `${heightPct}%`;
-    editCaretEl.style.display = 'block';
+    const { w: engW, h: engH } = getPageEngineSize(c.pageIdx, svg);
+    // 엔진 좌표(engW×engH) → SVG viewBox 좌표로 정확히 변환해 <svg> 안에 직접 배치
+    // (여백 자르기 tx/ty, 핀치 줌, 스크롤 모두 SVG와 100% 함께 움직임)
+    const sx = vb.width / engW;
+    const sy = vb.height / engH;
+    const rectPx = svg.getBoundingClientRect();
+    const caretW = Math.max(1.2, (rectPx.width > 0 ? (2.2 / rectPx.width) * vb.width : 1.8));
+    const caret = document.createElementNS(SVG_NS, 'rect');
+    caret.setAttribute('class', 'eri-caret-rect');
+    caret.setAttribute('x', String(vb.x + r.x * sx));
+    caret.setAttribute('y', String(vb.y + r.y * sy));
+    caret.setAttribute('width', String(caretW));
+    caret.setAttribute('height', String(Math.max(8, r.height * sy)));
+    caret.setAttribute('rx', String(caretW * 0.35));
+    svg.appendChild(caret);
   } catch (err) {
     console.warn('HWP updateCaretPos failed:', err);
-    editCaretEl.style.display = 'none';
   }
 }
 
 function handleDirectEditClick(e) {
   if (!editModeOn || !doc || disposed) return;
+  if (Date.now() - lastPinchEndedAt < 350) return;
   const targetPageEl = e.target && e.target.closest ? e.target.closest('.page, .vslot') : null;
   const frame = targetPageEl && targetPageEl.classList.contains('page')
     ? targetPageEl
@@ -1390,13 +1439,12 @@ function handleDirectEditClick(e) {
   } else if (targetPageEl && targetPageEl.dataset && targetPageEl.dataset.page !== undefined) {
     pIdx = Number(targetPageEl.dataset.page);
   }
-  const vb = svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width > 0
-    ? svg.viewBox.baseVal
-    : { x: 0, y: 0, width: rect.width, height: rect.height };
-  const xPt = vb.x + ((e.clientX - rect.left) / rect.width) * vb.width;
-  const yPt = vb.y + ((e.clientY - rect.top) / rect.height) * vb.height;
+  const { w: engW, h: engH } = getPageEngineSize(pIdx, svg);
+  const xEng = ((e.clientX - rect.left) / rect.width) * engW;
+  const yEng = ((e.clientY - rect.top) / rect.height) * engH;
+  if (xEng < 0 || yEng < 0 || xEng > engW || yEng > engH) return;
   try {
-    const hit = parseJsonSafe(doc.hitTest(pIdx, xPt, yPt));
+    const hit = parseJsonSafe(doc.hitTest(pIdx, xEng, yEng));
     if (!hit || hit.hit === false) return;
     const sec = Number(hit.sectionIndex ?? hit.sectionIdx ?? 0);
     const hasPath = Array.isArray(hit.cellPath) && hit.cellPath.length > 0;
@@ -1446,14 +1494,47 @@ function setEditMode(enabled) {
     editCursor = null;
     imeComposing = false;
     imeCompLen = 0;
-    if (editCaretEl) editCaretEl.style.display = 'none';
+    removeAllCarets();
     if (editImeEl) { editImeEl.value = ''; editImeEl.blur(); }
   }
   return editModeOn;
 }
 
+function uint8ToBase64(bytes) {
+  let out = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    out += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(out);
+}
+
+function exportEditedBytes(preferHwpx) {
+  if (!doc || disposed) return { ok: false, dirty: false };
+  if (!editDirty) return { ok: true, dirty: false };
+  try {
+    let bytes = null;
+    let ext = preferHwpx ? 'hwpx' : 'hwp';
+    if (preferHwpx) {
+      bytes = doc.exportHwpx();
+    } else {
+      try {
+        bytes = doc.exportHwp();
+      } catch (_) {
+        bytes = doc.exportHwpx();
+        ext = 'hwpx';
+      }
+    }
+    if (!bytes || !bytes.length) return { ok: false, dirty: true };
+    editDirty = false;
+    return { ok: true, dirty: true, ext, base64: uint8ToBase64(bytes) };
+  } catch (e) {
+    return { ok: false, dirty: true, error: String(e) };
+  }
+}
+
 window.freaderHwp = { setView, resetScrollZoom: vResetZoom, setScrollMarks, setScrollMemos, setScrollMemo, visibleSlots: vVisibleSlots, mostVisiblePage: vMostVisible, highlightBoxes: withoutZoom(highlightBoxes), beginDocument, pageSizes, setVertical, scrollToRatio: vScrollToRatio, appendChunk, openDocument, configure, display, next, previous, progress, highlightSelection: withoutZoom(highlightSelection), destroy,
-  search, showSearchResult, clearSearch, headingCandidates, pageText, visibleTextBoxes: withoutZoom(visibleTextBoxes), pageRect: withoutZoom(pageRect), setEditMode,
+  search, showSearchResult, clearSearch, headingCandidates, pageText, visibleTextBoxes: withoutZoom(visibleTextBoxes), pageRect: withoutZoom(pageRect), setEditMode, exportEditedBytes,
   getState: () => ({ ready: readyReported, page, count, cachedPages: cache.size, cachedBytes, received, spread: options.spread, maxBytes: MAX_BYTES }) };
 window.addEventListener('pagehide', destroy, { once: true });
 

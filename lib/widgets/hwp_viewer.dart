@@ -104,6 +104,13 @@ class HwpReaderController {
   /// 화면 위 직접 커서·키보드 편집 모드 켜기/끄기
   Future<void> setEditMode(bool enabled) async => _invoke?.call('setEditMode', [enabled]);
 
+  /// 편집한 내용을 원본 형식으로 직렬화(base64)해 현재 파일에 바로 반영
+  Future<Map<String, Object?>?> exportEditedBytes({required bool preferHwpx}) async {
+    final raw = await _query?.call('exportEditedBytes', [preferHwpx]);
+    if (raw is Map) return Map<String, Object?>.from(raw);
+    return null;
+  }
+
 
   /// PPT: 슬라이드 전체 그림(JPEG base64) — 글자가 그림으로만 된 슬라이드의 글자를 읽는 데 씀
   Future<String?> slideImage(int index, {int width = 1800}) async {
@@ -271,6 +278,7 @@ class HwpViewer extends StatefulWidget {
   /// 스크롤 보기에서 지금 위치·전체 길이·보이는 높이 (오른쪽 회색 막대)
   final void Function(double top, double height, double client)? onScrollMetrics;
   final bool editMode;
+  final VoidCallback? onEditChanged;
 
   const HwpViewer({
     super.key,
@@ -293,6 +301,7 @@ class HwpViewer extends StatefulWidget {
     this.vertical = false,
     this.onScrollMetrics,
     this.editMode = false,
+    this.onEditChanged,
   });
 
   @override
@@ -552,6 +561,9 @@ class _HwpViewerState extends State<HwpViewer> {
         widget.onPasswordNeeded?.call();
         unawaited(_requestPassword(event['incorrect'] == true));
         break;
+      case 'editChanged':
+        widget.onEditChanged?.call();
+        break;
       case 'error':
         _reportError(event['message'] ?? '$_format 문서를 표시하지 못했어요');
         break;
@@ -737,7 +749,7 @@ class _HwpViewerState extends State<HwpViewer> {
           // 주의: WebView는 처음 만들 때 받은 목록을 계속 써서 (나중에 목록을 바꿔도 반영 안 됨)
           // 슬라이드→스크롤로 바꾸면 스크롤이 먹통이 됐었음. 그래서 목록은 그대로 두고, 누를 때마다 지금 보기 방식을 확인함
           gestureRecognizers: {
-            Factory<OneSequenceGestureRecognizer>(() => _ModeEagerRecognizer(() => mounted && (_isSpreadsheet || widget.vertical || widget.editMode))),
+            Factory<OneSequenceGestureRecognizer>(() => _ModeEagerRecognizer(() => mounted && (_isSpreadsheet || widget.vertical))),
             // 엑셀: 칸을 길게 눌러 고르는 동작은 문서 화면이 직접 받음 (워드·한글의 글 고르기는 앱이 직접 해서 필요 없음)
             if (_isSpreadsheet) Factory<LongPressGestureRecognizer>(() => LongPressGestureRecognizer(duration: const Duration(milliseconds: 350))),
           },

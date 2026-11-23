@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
@@ -5,12 +6,14 @@ import 'package:flutter/services.dart';
 
 /// 서재(첫 화면)에서는 상태표시줄(과 버튼식 내비게이션 바)을 늘 보이고,
 /// 파일을 열어 보는 동안에는 모두 숨긴다.
-/// 뷰어가 다른 뷰어로 바뀔 때(다음 파일 열기)도 숨김이 유지되도록 열린 뷰어 수를 센다.
+/// 전환 애니메이션 도중에 시스템 바를 바꾸면 화면이 깜빡이므로,
+/// 열 때는 전환 직후에 숨기고 닫을 때는 화면이 정리된 뒤 복원한다.
 class SystemBars {
   static const _channel = MethodChannel('ebook_reader/pdf_renderer');
   static int _viewers = 0;
   static bool _status = false;
   static bool _inViewerMode = false;
+  static Timer? _enterTimer;
 
   static Future<void> _set(bool library) async {
     try {
@@ -18,29 +21,31 @@ class SystemBars {
     } catch (_) {}
   }
 
-  /// 뷰어 화면이 열릴 때 (initState)
+  /// 뷰어 화면이 열릴 때 (initState) — 슬라이드 전환(320ms)이 끝난 직후 바를 숨겨 깜빡임 방지
   static void enterViewer() {
     _viewers++;
     _status = false;
     if (_viewers == 1 && !_inViewerMode) {
-      _inViewerMode = true;
-      _set(false);
+      _enterTimer?.cancel();
+      _enterTimer = Timer(const Duration(milliseconds: 340), () {
+        if (_viewers > 0 && !_inViewerMode) {
+          _inViewerMode = true;
+          _set(false);
+        }
+      });
     }
   }
 
-  /// 뷰어 화면이 닫힐 때 (dispose)
-  /// 팝 애니메이션 시작 시점에 미리 호출하면 복귀 후 상태표시줄 점프(번쩍임)를 막는다
   static void prepareLeave() {
-    if (_viewers <= 1 && _inViewerMode) {
-      _inViewerMode = false;
-      _status = false;
-      _set(true);
-    }
+    _enterTimer?.cancel();
+    _enterTimer = null;
   }
 
   static void leaveViewer() {
     if (_viewers > 0) _viewers--;
     if (_viewers == 0) {
+      _enterTimer?.cancel();
+      _enterTimer = null;
       _status = false;
       if (_inViewerMode) {
         _inViewerMode = false;
@@ -51,7 +56,7 @@ class SystemBars {
 
   /// 파일 열람 중 메뉴(위아래 막대)를 띄운 동안에는 상태표시줄도 보임. 같은 값이면 다시 보내지 않음
   static void viewerStatus(bool show) {
-    if (_viewers == 0 || show == _status) return;
+    if (_viewers == 0 || !_inViewerMode || show == _status) return;
     _status = show;
     () async {
       try {
@@ -64,7 +69,6 @@ class SystemBars {
   static final Map<Orientation, double> _statusTop = {};
 
   /// 상태표시줄을 보였다 숨겼다 해도 바뀌지 않는 위쪽 여백.
-  /// 메뉴를 열 때 상태표시줄이 나타나며 본문 자리가 바뀌면 책 화면이 다시 그려지며 깜빡이므로 이 값을 씀
   static double stableTop(BuildContext context) {
     final Orientation o = MediaQuery.orientationOf(context);
     final double cur = MediaQuery.paddingOf(context).top;

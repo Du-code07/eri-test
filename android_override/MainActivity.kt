@@ -176,7 +176,6 @@ class MainActivity : FlutterActivity() {
             // Android 11+: 창 플래그(FLAG_FULLSCREEN)를 바꾸면 창이 다시 배치되며 화면이 한 장면 검게 깜빡임 → 막대 보이기·숨기기만
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                window.setDecorFitsSystemWindows(false)
                 window.insetsController?.let { controller ->
                     controller.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
                     controller.show(WindowInsets.Type.statusBars())
@@ -206,7 +205,6 @@ class MainActivity : FlutterActivity() {
         try {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                window.setDecorFitsSystemWindows(false)
                 window.insetsController?.let { controller ->
                     controller.systemBarsBehavior = WindowInsetsController.BEHAVIOR_DEFAULT
                     controller.show(WindowInsets.Type.statusBars())
@@ -253,7 +251,6 @@ class MainActivity : FlutterActivity() {
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                window.setDecorFitsSystemWindows(false)
                 window.insetsController?.let { controller ->
                     controller.systemBarsBehavior =
                         WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -314,6 +311,7 @@ class MainActivity : FlutterActivity() {
                 }
             } catch (_: Throwable) {}
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) window.setDecorFitsSystemWindows(false)
         hideSystemStatusBar(alsoHideNavBar = true)
         mainHandler.postDelayed({ hideSystemStatusBar(alsoHideNavBar = true) }, 250L)
         mainHandler.postDelayed({ hideSystemStatusBar(alsoHideNavBar = true) }, 600L)
@@ -1277,7 +1275,6 @@ class MainActivity : FlutterActivity() {
                     libraryBars = on
                     viewerStatusBar = false
                     hideSystemStatusBar(alsoHideNavBar = !on)
-                    if (!on) mainHandler.postDelayed({ hideSystemStatusBar(alsoHideNavBar = true) }, 200L)
                     result.success(true)
                 }
             } else {

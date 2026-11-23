@@ -332,6 +332,8 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   // S펜 전용 페이지별 필기 및 지우개 상태 (필기 모드에서 S펜이 닿으면 화면 이동 100% 차단 + 해당 페이지에서만 필기 표시)
   bool _isMemoMode = false;
   bool _isHwpEditMode = false;
+  bool _hwpHasEdits = false;
+  bool _hwpPersisting = false;
   bool get _canHwpEdit => _isHwpFile;
   bool _isEraserMode = false;
   bool _allowFingerDrawing = false;
@@ -1217,6 +1219,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           filePath: widget.filePath,
           controller: _hwpController,
           editMode: _isHwpEditMode,
+          onEditChanged: () => _hwpHasEdits = true,
           initialPosition: _currentCfi ?? _initialCfi,
           initialProgress: _initialProgress,
           theme: _epubBgTheme,
@@ -4253,18 +4256,51 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   }
 
   /// 지금 보고 있는 쪽(2페이지 보기면 두 쪽)의 글을 보여 주고 복사할 수 있게 함
+  Future<void> _persistHwpEdits() async {
+    if (!_isHwpFile || !_hwpHasEdits || _hwpPersisting) return;
+    _hwpPersisting = true;
+    try {
+      final bool preferHwpx = widget.filePath.toLowerCase().endsWith('.hwpx');
+      final res = await _hwpController.exportEditedBytes(preferHwpx: preferHwpx);
+      if (res != null && res['ok'] == true && res['dirty'] == true && res['base64'] is String) {
+        final List<int> bytes = base64Decode(res['base64'] as String);
+        final File target = File(widget.filePath);
+        final File tmp = File('${widget.filePath}.eri_tmp');
+        await tmp.writeAsBytes(bytes, flush: true);
+        await tmp.rename(target.path);
+        _hwpHasEdits = false;
+        // 다시 열 때 수정 전 캐시 화면이 뜨지 않도록 쪽 스냅샷 정리
+        try {
+          final dir = await PageSnapshotService.documentDir(widget.filePath);
+          if (dir != null && dir.existsSync()) dir.deleteSync(recursive: true);
+        } catch (_) {}
+      }
+    } catch (_) {} finally {
+      _hwpPersisting = false;
+    }
+  }
+
+  Future<void> _finishHwpEditMode() async {
+    if (_isHwpEditMode) {
+      setState(() => _isHwpEditMode = false);
+      await _hwpController.setEditMode(false);
+    }
+    await _persistHwpEdits();
+  }
+
   void _toggleHwpEditMode() {
     if (!_canHwpEdit) return;
-    final bool next = !_isHwpEditMode;
+    if (_isHwpEditMode) {
+      unawaited(_finishHwpEditMode());
+      return;
+    }
     setState(() {
-      _isHwpEditMode = next;
+      _isHwpEditMode = true;
       _showControls = false;
-      if (next) {
-        _isMemoMode = false;
-        _isEraserMode = false;
-      }
+      _isMemoMode = false;
+      _isEraserMode = false;
     });
-    _hwpController.setEditMode(next);
+    _hwpController.setEditMode(true);
   }
 
   Widget _buildHwpInlineEditBar(double bottomPadding) {
@@ -4295,10 +4331,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                 ),
                 const SizedBox(width: 10),
                 TextButton(
-                  onPressed: () {
-                    setState(() => _isHwpEditMode = false);
-                    _hwpController.setEditMode(false);
-                  },
+                  onPressed: () => unawaited(_finishHwpEditMode()),
                   child: Text(_tr('완료', 'Done', '完成', '完了'), style: TextStyle(color: sig, fontWeight: FontWeight.w700)),
                 ),
               ],
@@ -4379,7 +4412,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                       child: Row(children: [
                         IconButton(
                           icon: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
-                          onPressed: () { SystemBars.prepareLeave(); Navigator.pop(context); },
+                          onPressed: () => Navigator.maybePop(context),
                         ),
                         Expanded(child: Text(widget.bookTitle,
                             style: const TextStyle(color: Colors.white, fontSize: 14),
@@ -4450,9 +4483,16 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
             : _getBgColor();
 
     return PopScope(
-      canPop: !_slideShow && !_findOpen,
+      canPop: !_slideShow && !_findOpen && !_hwpHasEdits,
       onPopInvokedWithResult: (didPop, _) {
-        if (didPop) { SystemBars.prepareLeave(); return; }
+        if (didPop) return;
+        if (_hwpHasEdits) {
+          unawaited(() async {
+            await _finishHwpEditMode();
+            if (mounted) Navigator.of(context).pop();
+          }());
+          return;
+        }
         if (!didPop && _findOpen) {
           _closeFind(); // 뒤로 가기: 검색만 닫음
           return;
@@ -5000,7 +5040,7 @@ Offstage(offstage: _tocFreeze != null, child: EpubViewer(
                                 padding: btnPadding,
                                 constraints: btnConstraints,
                                 icon: const Icon(Icons.arrow_back, color: Colors.white, size: 17),
-                                onPressed: () { SystemBars.prepareLeave(); Navigator.pop(context); },
+                                onPressed: () => Navigator.maybePop(context),
                               ),
                               // 파일 이름은 화면 방향과 상관없이 항상 표시 (남는 공간을 모두 사용)
                               Expanded(
