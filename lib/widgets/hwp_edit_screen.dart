@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
-import '../services/app_i18n.dart';
 import '../services/file_share.dart';
 import '../services/hwpx_editor_service.dart';
 import '../services/storage_service.dart';

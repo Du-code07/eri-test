@@ -407,7 +407,8 @@ class HwpxEditorService {
     final String prefix = pEl.name.prefix ?? 'hp';
     final String runTag = prefix.isEmpty ? 'run' : '$prefix:run';
     final String tTag = prefix.isEmpty ? 't' : '$prefix:t';
-    final existingRun = pEl.childElements.where((e) => e.name.local == 'run').firstOrNull;
+    final runs = pEl.childElements.where((e) => e.name.local == 'run');
+    final existingRun = runs.isEmpty ? null : runs.first;
     final tEl = XmlElement(XmlName.fromString(tTag), [], [XmlText(newText)]);
     if (existingRun != null) {
       existingRun.children.add(tEl);
