@@ -587,7 +587,9 @@ void _paintTape(Canvas canvas, List<Offset> pts, Path body, Color color, double 
     final double depth = math.min(width * 0.24, 6.5);
     final double overlap = math.max(2.2, width * 0.12);
     final Offset back = p - d * overlap;
-    final t = Path()..moveTo(back.dx + n.dx * half, back.dy + n.dy * half);
+    final t = Path()
+      ..moveTo(back.dx + n.dx * half, back.dy + n.dy * half)
+      ..lineTo(p.dx + n.dx * half, p.dy + n.dy * half);
     for (int i = 0; i < count; i++) {
       final double a0 = half - (2 * half) * i / count;
       final double mid = a0 - half / count;

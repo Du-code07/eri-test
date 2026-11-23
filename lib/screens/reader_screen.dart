@@ -1521,7 +1521,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   static List<Map<String, Object>> _jsStrokes(List<MemoStroke> list) => [
         for (final s in list)
           if (s.dxList.isNotEmpty)
-            {'x': s.dxList, 'y': s.dyList, 'c': s.colorValue, 'w': s.strokeWidth < 0.5 ? s.strokeWidth : s.strokeWidth / 400},
+            {'x': s.dxList, 'y': s.dyList, 'c': s.colorValue, 'w': s.strokeWidth < 0.5 ? s.strokeWidth : s.strokeWidth / 400, 'k': s.kind, 'th': MemoTools.s.tapeHidden},
       ];
 
   /// 저장된 모든 쪽 메모를 문서에 알림 (문서를 열었을 때·스크롤 보기로 바꿨을 때)

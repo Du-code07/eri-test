@@ -852,14 +852,75 @@ function vDrawMemo(i) {
     slot.appendChild(svg);
   }
   svg.setAttribute('viewBox', `0 0 1000 ${H}`);
-  svg.innerHTML = list.map(s => {
+  const renderOne = (s) => {
     const xs = s.x || [], ys = s.y || [];
     if (!xs.length) return '';
+    const w = Math.max(0.5, (Number(s.w) || 0.004) * 1000);
+    const col = vArgb(s.c);
+    const kind = s.k || 'pen';
+    if (kind === 'tape') {
+      const pts = [];
+      for (let k = 0; k < xs.length; k++) {
+        const px = xs[k] * 1000, py = ys[k] * H;
+        if (!pts.length || Math.hypot(px - pts[pts.length - 1][0], py - pts[pts.length - 1][1]) >= 0.4) {
+          pts.push([px, py]);
+        }
+      }
+      if (!pts.length) return '';
+      if (pts.length === 1) {
+        const [x0, y0] = pts[0];
+        pts.push([x0 + 0.5, y0]);
+      }
+      const first = pts[0], last = pts[pts.length - 1];
+      let d = `M${first[0].toFixed(1)} ${first[1].toFixed(1)}`;
+      for (let k = 1; k < pts.length; k++) d += ` L${pts[k][0].toFixed(1)} ${pts[k][1].toFixed(1)}`;
+      const dirAt = (start) => {
+        const n = pts.length, base = start ? first : last;
+        const step = start ? 1 : -1;
+        for (let idx = start ? 1 : n - 2; idx >= 0 && idx < n; idx += step) {
+          const dx = base[0] - pts[idx][0], dy = base[1] - pts[idx][1];
+          const dist = Math.hypot(dx, dy);
+          if (dist > 0.01) return [dx / dist, dy / dist];
+        }
+        return start ? [-1, 0] : [1, 0];
+      };
+      const teethPath = (p, dir) => {
+        const nx = -dir[1], ny = dir[0];
+        const half = w / 2;
+        const cnt = Math.max(3, Math.round(w / 14));
+        const depth = Math.min(w * 0.24, 14);
+        const overlap = Math.max(2.5, w * 0.12);
+        const bx = p[0] - dir[0] * overlap, by = p[1] - dir[1] * overlap;
+        let td = `M${(bx + nx * half).toFixed(1)} ${(by + ny * half).toFixed(1)}`;
+        td += ` L${(p[0] + nx * half).toFixed(1)} ${(p[1] + ny * half).toFixed(1)}`;
+        for (let j = 0; j < cnt; j++) {
+          const a0 = half - (2 * half) * j / cnt;
+          const mid = a0 - half / cnt;
+          const pkx = p[0] + dir[0] * depth + nx * mid;
+          const pky = p[1] + dir[1] * depth + ny * mid;
+          const vOff = a0 - 2 * half / cnt;
+          const vlx = p[0] + nx * vOff;
+          const vly = p[1] + ny * vOff;
+          td += ` L${pkx.toFixed(1)} ${pky.toFixed(1)} L${vlx.toFixed(1)} ${vly.toFixed(1)}`;
+        }
+        td += ` L${(bx - nx * half).toFixed(1)} ${(by - ny * half).toFixed(1)} Z`;
+        return td;
+      };
+      const t1 = teethPath(first, dirAt(true));
+      const t2 = teethPath(last, dirAt(false));
+      const opaqueCol = `rgb(${(Number(s.c) >>> 16) & 255},${(Number(s.c) >>> 8) & 255},${Number(s.c) & 255})`;
+      const inner = `<path d="${d}" fill="none" stroke="${opaqueCol}" stroke-width="${w.toFixed(2)}" stroke-linecap="butt" stroke-linejoin="round"/><path d="${t1}" fill="${opaqueCol}"/><path d="${t2}" fill="${opaqueCol}"/>`;
+      return s.th ? `<g opacity="0.3">${inner}</g>` : inner;
+    }
     let d = `M${(xs[0] * 1000).toFixed(1)} ${(ys[0] * H).toFixed(1)}`;
     if (xs.length === 1) d += ` L${(xs[0] * 1000 + 0.1).toFixed(1)} ${(ys[0] * H).toFixed(1)}`;
     for (let k = 1; k < xs.length; k++) d += ` L${(xs[k] * 1000).toFixed(1)} ${(ys[k] * H).toFixed(1)}`;
-    return `<path d="${d}" fill="none" stroke="${vArgb(s.c)}" stroke-width="${Math.max(0.5, (Number(s.w) || 0.004) * 1000).toFixed(2)}" stroke-linecap="round" stroke-linejoin="round"/>`;
-  }).join('');
+    const cap = kind === 'hl' ? 'square' : 'round';
+    return `<path d="${d}" fill="none" stroke="${col}" stroke-width="${w.toFixed(2)}" stroke-linecap="${cap}" stroke-linejoin="round"/>`;
+  };
+  const hls = list.filter(s => s.k === 'hl').map(renderOne);
+  const others = list.filter(s => s.k !== 'hl').map(renderOne);
+  svg.innerHTML = hls.concat(others).join('');
 }
 function vApplyMemos() { for (let i = 0; i < vSlots.length; i++) vDrawMemo(i); }
 /** 모든 쪽 메모를 한꺼번에 ({쪽: 획들}) */
