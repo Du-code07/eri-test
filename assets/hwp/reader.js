@@ -519,7 +519,7 @@ function setVertical(on) {
     vhost = document.createElement('div'); vhost.id = 'vpages';
     vinner = document.createElement('div'); vinner.id = 'vinner'; vhost.appendChild(vinner);
     document.body.appendChild(vhost);
-    vhost.addEventListener('scroll', vSchedule, { passive: true });
+    vhost.addEventListener('scroll', () => { vSchedule(); updateCaretPos(); }, { passive: true });
     vResize.observe(vhost);
     vZoomListen(vhost);
     vLayout(false);
@@ -977,6 +977,7 @@ function zoomApply() {
   const [s, tx, ty] = zoomView;
   host.style.transform = `translate(${tx}px, ${ty}px) scale(${s / zoomDrawn})`;
   if (zoomUnder) zoomUnder.style.transform = `matrix(${s}, 0, 0, ${s}, ${tx}, ${ty})`;
+  updateCaretPos();
 }
 /** [zoomDrawn] 배율로 쪽을 다시 놓음 (문서 화면도 그만큼 크게 — 잘리는 곳이 없게) */
 function zoomRedraw() {
@@ -999,6 +1000,7 @@ function zoomClear() {
   host.classList.remove('zooming');
   Object.assign(host.style, { transform: '', width: '', height: '', gap: '' });
   fitPages();
+  updateCaretPos();
 }
 function setView(s, tx, ty) {
   if (!(s > 1.001)) { if (zoomView) zoomClear(); return true; }
@@ -1150,12 +1152,13 @@ async function applyDeltaAt(offset, delCount, insertStr) {
     } else {
       await render();
     }
+    updateCaretPos();
     emit('editDirty', { dirty: true });
   } catch (_) {}
 }
 
 function findPageSvgByIndex(pIdx) {
-  const wraps = [...document.querySelectorAll('.page, .vpage')];
+  const wraps = [...document.querySelectorAll('.page, .vslot')];
   for (const w of wraps) {
     const idxAttr = w.dataset && (w.dataset.page ?? w.dataset.index);
     if (idxAttr !== undefined && Number(idxAttr) === pIdx) {
@@ -1210,7 +1213,7 @@ function updateCaretPos() {
 
 function handleDirectEditClick(e) {
   if (!editModeOn || !doc || disposed) return;
-  const targetPageEl = e.target && e.target.closest ? e.target.closest('.page, .vpage') : null;
+  const targetPageEl = e.target && e.target.closest ? e.target.closest('.page, .vslot') : null;
   const svg = targetPageEl ? targetPageEl.querySelector('svg') : (host.querySelector('.page svg') || document.querySelector('svg'));
   if (!svg) return;
   const rect = svg.getBoundingClientRect();

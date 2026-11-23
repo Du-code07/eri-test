@@ -70,6 +70,8 @@ class _SpreadsheetTabBarState extends State<SpreadsheetTabBar> {
                 padding: EdgeInsets.only(right: i == widget.names.length - 1 ? 0 : 8),
                 child: ChoiceChip(
                   showCheckmark: false,
+                  backgroundColor: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF2B2D33) : const Color(0xFFEDEDEF),
+                  side: BorderSide.none,
                   // 고른 시트: 시그니처 바탕 + 흰 글씨 / 안 고른 시트: 라이트 모드는 검은 글씨, 다크 모드는 밝은 글씨
                   label: Text(widget.names[i], maxLines: 1, style: TextStyle(
                     color: i == widget.selectedIndex

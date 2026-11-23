@@ -4118,8 +4118,8 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
         onTap: _pickPageMode,
         closeAfterTap: true,
       ),
-      // TXT·PPT는 읽기 방향 전환을 쓰지 않음
-      if (!_isTxt && !_isPresentation)
+      // TXT·PPT 및 스크롤 모드에서는 읽기 방향 전환을 숨김
+      if (!_isTxt && !_isPresentation && !_pageModeScroll)
       QuickToolItem(
         id: 'direction',
         label: _tr('읽기 방향', 'Reading Direction', '阅读方向', '読む方向'),
@@ -4540,7 +4540,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                       child: Row(children: [
                         IconButton(
                           icon: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
-                          onPressed: () => Navigator.pop(context),
+                          onPressed: () { SystemBars.prepareLeave(); Navigator.pop(context); },
                         ),
                         Expanded(child: Text(widget.bookTitle,
                             style: const TextStyle(color: Colors.white, fontSize: 14),
@@ -4556,17 +4556,14 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                     ),
                   ),
                 ),
-              // 상단 시트 막대 (확대·축소 단추 제거, 시트 목록만 깔끔하게 상단 배치)
+              // 상단 시트 막대 (이상한 경계선 제거, 깔끔한 흰 배경 + 연한 회색 단추)
               Material(
-                color: Theme.of(context).colorScheme.surface,
-                child: Container(
-                  decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor))),
-                  child: SpreadsheetTabBar(
-                    names: [for (final chapter in _chapters) chapter.title],
-                    selectedIndex: _docPage,
-                    onSelected: (index) => _hwpController.selectSheet(index),
-                    atBottom: false,
-                  ),
+                color: Theme.of(context).brightness == Brightness.dark ? Theme.of(context).colorScheme.surface : Colors.white,
+                child: SpreadsheetTabBar(
+                  names: [for (final chapter in _chapters) chapter.title],
+                  selectedIndex: _docPage,
+                  onSelected: (index) => _hwpController.selectSheet(index),
+                  atBottom: false,
                 ),
               ),
               Expanded(
@@ -4616,6 +4613,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     return PopScope(
       canPop: !_slideShow && !_findOpen,
       onPopInvokedWithResult: (didPop, _) {
+        if (didPop) { SystemBars.prepareLeave(); return; }
         if (!didPop && _findOpen) {
           _closeFind(); // 뒤로 가기: 검색만 닫음
           return;
@@ -5163,7 +5161,7 @@ Offstage(offstage: _tocFreeze != null, child: EpubViewer(
                                 padding: btnPadding,
                                 constraints: btnConstraints,
                                 icon: const Icon(Icons.arrow_back, color: Colors.white, size: 17),
-                                onPressed: () => Navigator.pop(context),
+                                onPressed: () { SystemBars.prepareLeave(); Navigator.pop(context); },
                               ),
                               // 파일 이름은 화면 방향과 상관없이 항상 표시 (남는 공간을 모두 사용)
                               Expanded(

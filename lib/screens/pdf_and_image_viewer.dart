@@ -2555,6 +2555,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
         onTap: _pickPageMode,
         closeAfterTap: true,
       ),
+      if (!_pageModeScroll)
       QuickToolItem(
         id: 'direction',
         label: _tr('읽기 방향', 'Reading Direction', '阅读方向', '読む方向'),
@@ -2727,6 +2728,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
     return PopScope(
       canPop: !_findOpen,
       onPopInvokedWithResult: (didPop, _) {
+        if (didPop) { SystemBars.prepareLeave(); return; }
         if (!didPop && _findOpen) {
           _closeFind(); // 뒤로 가기: 검색만 닫음
           return;
@@ -2917,7 +2919,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
                               padding: btnPadding,
                               constraints: btnConstraints,
                               icon: const Icon(Icons.arrow_back, color: Colors.white, size: 17),
-                              onPressed: () => Navigator.pop(context),
+                              onPressed: () { SystemBars.prepareLeave(); Navigator.pop(context); },
                             ),
                             // 파일 이름은 화면 방향과 상관없이 항상 표시 (남는 공간을 모두 사용)
                             Expanded(

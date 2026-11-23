@@ -10,6 +10,7 @@ class SystemBars {
   static const _channel = MethodChannel('ebook_reader/pdf_renderer');
   static int _viewers = 0;
   static bool _status = false;
+  static bool _inViewerMode = false;
 
   static Future<void> _set(bool library) async {
     try {
@@ -21,15 +22,30 @@ class SystemBars {
   static void enterViewer() {
     _viewers++;
     _status = false;
-    if (_viewers == 1) _set(false);
+    if (_viewers == 1 && !_inViewerMode) {
+      _inViewerMode = true;
+      _set(false);
+    }
   }
 
   /// 뷰어 화면이 닫힐 때 (dispose)
+  /// 팝 애니메이션 시작 시점에 미리 호출하면 복귀 후 상태표시줄 점프(번쩍임)를 막는다
+  static void prepareLeave() {
+    if (_viewers <= 1 && _inViewerMode) {
+      _inViewerMode = false;
+      _status = false;
+      _set(true);
+    }
+  }
+
   static void leaveViewer() {
     if (_viewers > 0) _viewers--;
     if (_viewers == 0) {
       _status = false;
-      _set(true);
+      if (_inViewerMode) {
+        _inViewerMode = false;
+        _set(true);
+      }
     }
   }
 
