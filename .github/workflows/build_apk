@@ -1,0 +1,395 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    # 릴리스 서명 키는 저장소에 두지 않고 GitHub Secrets에서 읽음 (Settings > Secrets and variables > Actions)
+    env:
+      FREADER_KEYSTORE_BASE64: ${{ secrets.FREADER_KEYSTORE_BASE64 }}
+      FREADER_KEYSTORE_PASSWORD: ${{ secrets.FREADER_KEYSTORE_PASSWORD }}
+      FREADER_KEY_ALIAS: ${{ secrets.FREADER_KEY_ALIAS }}
+      FREADER_KEY_PASSWORD: ${{ secrets.FREADER_KEY_PASSWORD }}
+    steps:
+      - name: 1. Checkout Source
+        uses: actions/checkout@v4
+
+      - name: 2. Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: 3. Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          flutter-version: '3.47.9'
+
+      - name: 4. Generate Android Platform Files & Configure 이리ERI Store Release (com.dudu.eri)
+        run: |
+          if [ ! -f "lib/screens/pdf_and_image_viewer.dart" ]; then
+            FOUND_PUBSPEC=$(find . -maxdepth 3 -name "pubspec.yaml" | grep -v "^\./pubspec\.yaml$" | head -n 1)
+            if [ -n "$FOUND_PUBSPEC" ]; then
+              SUBDIR=$(dirname "$FOUND_PUBSPEC")
+              echo "Found project inside subdirectory: $SUBDIR. Moving to root..."
+              cp -rf "$SUBDIR"/* .
+            fi
+          fi
+
+          if ! grep -q "BookshelfScreen" lib/main.dart; then
+            echo "ERROR: lib/main.dart에 BookshelfScreen이 없습니다! GitHub 저장소에 lib/ 폴더가 제대로 올라갔는지 확인해주세요."
+            exit 1
+          fi
+
+          mkdir -p /tmp/v7_backup
+          cp -rf lib /tmp/v7_backup/
+          cp -f pubspec.yaml /tmp/v7_backup/
+          # 라이브러리 버전 고정 파일도 보관 (flutter create가 다시 받아 버전이 바뀌지 않게)
+          if [ -f pubspec.lock ]; then cp -f pubspec.lock /tmp/v7_backup/; fi
+          cp -rf android_override /tmp/v7_backup/
+
+          rm -rf android
+          flutter create . --project-name my_ebook_reader --org com.dudu
+
+          rm -rf lib test
+          cp -rf /tmp/v7_backup/lib .
+          cp -f /tmp/v7_backup/pubspec.yaml .
+          if [ -f /tmp/v7_backup/pubspec.lock ]; then cp -f /tmp/v7_backup/pubspec.lock .; fi
+
+          # 앱 패키지 이름(플레이 스토어 앱 ID): com.dudu.eri
+          rm -rf android/app/src/main/kotlin/com android/app/src/main/java/com
+          mkdir -p android/app/src/main/kotlin/com/dudu/eri
+          cp -f /tmp/v7_backup/android_override/MainActivity.kt android/app/src/main/kotlin/com/dudu/eri/MainActivity.kt
+          sed -i 's/namespace = "[^"]*"/namespace = "com.dudu.eri"/; s/applicationId = "[^"]*"/applicationId = "com.dudu.eri"/' android/app/build.gradle.kts
+          grep -q 'namespace = "com.dudu.eri"' android/app/build.gradle.kts || { echo "namespace 바꾸기 실패"; exit 1; }
+          grep -q 'applicationId = "com.dudu.eri"' android/app/build.gradle.kts || { echo "applicationId 바꾸기 실패"; exit 1; }
+
+          # 정식 릴리스 서명 키: GitHub Secrets의 FREADER_KEYSTORE_BASE64를 풀어서 둠 (없으면 디버그 키로 서명 — 시험용 APK만)
+          if [ -n "$FREADER_KEYSTORE_BASE64" ]; then
+            echo "$FREADER_KEYSTORE_BASE64" | base64 -d > android/app/freader_release.keystore
+          else
+            echo "::warning::FREADER_KEYSTORE_BASE64 비밀값이 없어 디버그 키로 서명합니다 (Play 스토어에 올릴 수 없음)"
+          fi
+
+          touch android/app/proguard-rules.pro
+
+          if [ -f android/app/build.gradle.kts ]; then
+            sed -i 's/compileSdk = .*/compileSdk = 36/g' android/app/build.gradle.kts
+            sed -i 's/minSdk = .*/minSdk = 24/g' android/app/build.gradle.kts
+            echo "" >> android/app/build.gradle.kts
+            echo 'android {' >> android/app/build.gradle.kts
+            echo '    signingConfigs {' >> android/app/build.gradle.kts
+            echo '        create("release") {' >> android/app/build.gradle.kts
+            echo '            if (file("freader_release.keystore").exists()) {' >> android/app/build.gradle.kts
+            echo '                storeFile = file("freader_release.keystore")' >> android/app/build.gradle.kts
+            echo '                storePassword = System.getenv("FREADER_KEYSTORE_PASSWORD")' >> android/app/build.gradle.kts
+            echo '                keyAlias = System.getenv("FREADER_KEY_ALIAS")' >> android/app/build.gradle.kts
+            echo '                keyPassword = System.getenv("FREADER_KEY_PASSWORD")' >> android/app/build.gradle.kts
+            echo '            }' >> android/app/build.gradle.kts
+            echo '        }' >> android/app/build.gradle.kts
+            echo '    }' >> android/app/build.gradle.kts
+            echo '    buildTypes {' >> android/app/build.gradle.kts
+            echo '        getByName("release") {' >> android/app/build.gradle.kts
+            echo '            signingConfig = if (file("freader_release.keystore").exists()) signingConfigs.getByName("release") else signingConfigs.getByName("debug")' >> android/app/build.gradle.kts
+            echo '            isMinifyEnabled = false' >> android/app/build.gradle.kts
+            echo '            isShrinkResources = false' >> android/app/build.gradle.kts
+            echo '            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")' >> android/app/build.gradle.kts
+            echo '        }' >> android/app/build.gradle.kts
+            echo '    }' >> android/app/build.gradle.kts
+            echo '}' >> android/app/build.gradle.kts
+            # 그림 속 글자 읽기(OCR, 한국어+영어) — 그림으로만 된 PPT의 목차용. 인식 모델은 앱에 포함되어 인터넷 없이 동작
+            echo 'dependencies {' >> android/app/build.gradle.kts
+            echo '    implementation("com.google.mlkit:text-recognition-korean:16.0.1")' >> android/app/build.gradle.kts
+            # 문서 스캔: 원근 보정·화질 처리 (OpenCV, Apache 2.0)
+            echo '    implementation("org.opencv:opencv:4.10.0")' >> android/app/build.gradle.kts
+            echo '}' >> android/app/build.gradle.kts
+          fi
+
+          if [ -f android/build.gradle.kts ]; then
+            sed -i '/evaluationDependsOn/d' android/build.gradle.kts
+            echo "" >> android/build.gradle.kts
+            echo "subprojects {" >> android/build.gradle.kts
+            echo "    afterEvaluate {" >> android/build.gradle.kts
+            echo '        if (extensions.findByName("android") != null) {' >> android/build.gradle.kts
+            echo '            extensions.configure<com.android.build.gradle.BaseExtension>("android") {' >> android/build.gradle.kts
+            echo "                compileSdkVersion(36)" >> android/build.gradle.kts
+            echo "            }" >> android/build.gradle.kts
+            echo "        }" >> android/build.gradle.kts
+            echo "    }" >> android/build.gradle.kts
+            echo "}" >> android/build.gradle.kts
+            echo 'subprojects { project.evaluationDependsOn(":app") }' >> android/build.gradle.kts
+          fi
+
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          if [ -f "$MANIFEST" ]; then
+            # Flutter 템플릿은 INTERNET 권한을 debug/profile에만 넣는다. 릴리스 APK의 WebView(EPUB/문서 뷰어)도
+            # 정상 동작하도록 릴리스 매니페스트에도 추가 (실행 중 권한 요청 팝업 없음)
+            if ! grep -q 'android.permission.INTERNET' "$MANIFEST"; then
+              sed -i '/<application/i\    <uses-permission android:name="android.permission.INTERNET"/>' "$MANIFEST"
+            fi
+            # (알림 기능은 없앴음: 알림·진동 권한을 넣지 않음)
+            # 저장소 읽기·모든 파일 접근·설치된 앱 목록 권한은 쓰지 않음 (파일은 선택 창·공유로 받고, 파일 탐색·글꼴 찾기는 사용자가 고른 폴더만 읽음)
+            sed -i '/android.permission.READ_EXTERNAL_STORAGE/d; /android.permission.MANAGE_EXTERNAL_STORAGE/d; /android.permission.QUERY_ALL_PACKAGES/d' "$MANIFEST"
+            if ! grep -q "PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY" "$MANIFEST"; then
+              sed -i 's/<\/activity>/<property android:name="android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY" android:value="true"\/><property android:name="android.window.PROPERTY_COMPAT_ALLOW_ORIENTATION_OVERRIDE" android:value="false"\/><property android:name="android.window.PROPERTY_COMPAT_IGNORE_REQUESTED_ORIENTATION" android:value="false"\/><\/activity>/' "$MANIFEST"
+              sed -i 's/<\/application>/<property android:name="android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY" android:value="true"\/><property android:name="android.window.PROPERTY_COMPAT_ALLOW_ORIENTATION_OVERRIDE" android:value="false"\/><property android:name="android.window.PROPERTY_COMPAT_IGNORE_REQUESTED_ORIENTATION" android:value="false"\/><\/application>/' "$MANIFEST"
+            fi
+            # 설치한 앱 이름: 이리ERI
+            sed -i 's/android:label="[^"]*"/android:label="이리ERI"/g' "$MANIFEST"
+            # 카메라 권한(선택) + 다른 앱의 '연결 앱' 목록에 이리ERI가 보이게 (문서·만화·이미지 열기)
+            python3 /tmp/v7_backup/android_override/manifest_patch.py "$MANIFEST"
+          fi
+
+          for STYLE_FILE in android/app/src/main/res/values/styles.xml android/app/src/main/res/values-night/styles.xml; do
+            if [ -f "$STYLE_FILE" ]; then
+              if ! grep -q "android:windowFullscreen" "$STYLE_FILE"; then
+                sed -i 's/<\/style>/<item name="android:windowFullscreen">true<\/item><item name="android:windowLayoutInDisplayCutoutMode">shortEdges<\/item><\/style>/g' "$STYLE_FILE"
+              fi
+            fi
+          done
+
+          # 앱 시작(안드로이드가 첫 화면을 그리기 전) 배경도 다크 모드와 상관없이 밝게
+          if [ -f android/app/src/main/res/values-night/styles.xml ]; then
+            sed -i '0,/Theme.Black.NoTitleBar/s//Theme.Light.NoTitleBar/' android/app/src/main/res/values-night/styles.xml
+          fi
+
+          # 앱 아이콘(이리ERI): 적응형 아이콘(안드로이드 8 이상) + 예전 기기용 아이콘
+          cp -rf /tmp/v7_backup/android_override/res/. android/app/src/main/res/
+
+      - name: 4a. Restore Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/caches/jars-9
+            ~/.gradle/wrapper/dists
+            ${{ runner.temp }}/freader-gradle-dists
+            !~/.gradle/caches/modules-2/*.lock
+          key: freader-gradle-v3-${{ runner.os }}-flutter3.47.9-${{ hashFiles('pubspec.yaml') }}
+          restore-keys: |
+            freader-gradle-v3-${{ runner.os }}-flutter3.47.9-
+
+      - name: 4b. Download Gradle distribution with retries (avoid GitHub 504)
+        shell: bash
+        run: |
+          set -euo pipefail
+          WRAPPER=android/gradle/wrapper/gradle-wrapper.properties
+          GV=$(grep '^distributionUrl' "$WRAPPER" | sed -E 's/.*gradle-([0-9][0-9.]*(-[a-z0-9-]+)?)-(all|bin)\.zip.*/\1/')
+          echo "Gradle version: $GV"
+          DIST_DIR="$RUNNER_TEMP/freader-gradle-dists"
+          ZIP="$DIST_DIR/gradle-$GV-bin.zip"
+          mkdir -p "$DIST_DIR"
+
+          # 공식 체크섬 (작은 파일이라 GitHub를 거치지 않음)
+          SHA=$(curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors --max-time 60 \
+            "https://services.gradle.org/distributions/gradle-$GV-bin.zip.sha256" | tr -d '[:space:]')
+          if ! [[ "$SHA" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Gradle 체크섬을 가져오지 못했습니다: '$SHA'"; exit 1
+          fi
+
+          ok() { [ -s "$1" ] && echo "$SHA  $1" | sha256sum --check --status; }
+
+          if ! ok "$ZIP"; then
+            rm -f "$ZIP"
+            for ROUND in 1 2 3; do
+              for URL in \
+                "https://services.gradle.org/distributions/gradle-$GV-bin.zip" \
+                "https://mirrors.cloud.tencent.com/gradle/gradle-$GV-bin.zip" \
+                "https://mirrors.aliyun.com/gradle/distributions/v$GV/gradle-$GV-bin.zip"; do
+                echo "[$ROUND] $URL"
+                if curl -fSL --silent --show-error --retry 2 --retry-delay 5 --retry-all-errors \
+                     --connect-timeout 20 --max-time 300 "$URL" -o "$ZIP.part" && ok "$ZIP.part"; then
+                  mv "$ZIP.part" "$ZIP"; break 2
+                fi
+                rm -f "$ZIP.part"
+              done
+              sleep $((ROUND * 15))
+            done
+          fi
+          ok "$ZIP" || { echo "::error::Gradle 배포판 다운로드 실패"; exit 1; }
+
+          # 래퍼가 네트워크 대신 검증된 로컬 파일을 쓰도록 변경
+          sed -i '/^distributionUrl=/d;/^distributionSha256Sum=/d;/^networkTimeout=/d' "$WRAPPER"
+          {
+            echo "distributionUrl=file\://$ZIP"
+            echo "distributionSha256Sum=$SHA"
+            echo "networkTimeout=60000"
+          } >> "$WRAPPER"
+          cat "$WRAPPER"
+
+      - name: 4c. Route Maven downloads through Google's Maven Central mirror
+        shell: bash
+        run: |
+          set -euo pipefail
+          GRADLE_HOME_DIR="${GRADLE_USER_HOME:-$HOME/.gradle}"
+          mkdir -p "$GRADLE_HOME_DIR/init.d"
+
+          # 네트워크 일시 장애 대비: Gradle 자체 다운로드 재시도/타임아웃 상향
+          cat >> "$GRADLE_HOME_DIR/gradle.properties" <<'PROPS'
+          systemProp.org.gradle.internal.http.connectionTimeout=60000
+          systemProp.org.gradle.internal.http.socketTimeout=180000
+          systemProp.org.gradle.internal.repository.max.retries=8
+          systemProp.org.gradle.internal.repository.initial.backoff=2000
+          PROPS
+
+          rm -f "$GRADLE_HOME_DIR/init.d/freader-repositories.gradle"
+          cat > "$GRADLE_HOME_DIR/init.d/freader-repositories.gradle" <<'GRADLE'
+          import org.gradle.api.artifacts.dsl.RepositoryHandler
+          import org.gradle.api.artifacts.repositories.MavenArtifactRepository
+          import org.gradle.api.initialization.resolve.RepositoriesMode
+
+          // 원인: GitHub 러너에서 Maven Central(repo.maven.apache.org)/Plugin Portal이
+          // 큰 Kotlin jar(kotlin-compiler-embeddable 등)를 github.com/JetBrains/kotlin/releases 로
+          // 리다이렉트하고, 그 GitHub 다운로드가 504로 터짐.
+          // 해결: Google이 운영하는 Maven Central 전체 미러(GCS)를 "맨 앞" 저장소로 둔다.
+          // 이 미러는 파일을 직접 내려주므로 GitHub 리다이렉트를 타지 않는다.
+          // (Gradle은 404면 다음 저장소로 넘어가므로 google() 전용 아티팩트는 기존대로 받아짐)
+
+          def MIRROR_NAME = 'FReaderCentralMirror'
+          def MIRROR_URL = 'https://maven-central.storage-download.googleapis.com/maven2/'
+          // Maven Central에 없는 그룹은 미러에서 아예 찾지 않음 (불필요한 404 왕복 방지)
+          def NON_CENTRAL = '(androidx|com[.]android|com[.]google[.]android|com[.]google[.]firebase|com[.]google[.]gms|io[.]flutter|dev[.]flutter)([.].*)?'
+
+          def addMirrorFirst = { RepositoryHandler repos ->
+              if (repos.findByName(MIRROR_NAME) != null) return
+              def mirror = repos.maven { MavenArtifactRepository r ->
+                  r.name = MIRROR_NAME
+                  r.url = MIRROR_URL
+                  r.content { excludeGroupByRegex(NON_CENTRAL) }
+              }
+              repos.remove(mirror)
+              repos.addFirst(mirror)
+          }
+
+          // Plugin Portal은 JetBrains jar를 Maven Central → GitHub 으로 넘기므로 JetBrains 그룹은 금지
+          def blockPortalRedirects = { RepositoryHandler repos ->
+              repos.withType(MavenArtifactRepository).configureEach { MavenArtifactRepository r ->
+                  if (r.url?.host in ['plugins.gradle.org', 'plugins-artifacts.gradle.org']) {
+                      r.content { excludeGroupByRegex('org[.]jetbrains([.].*)?') }
+                  }
+              }
+          }
+
+          // 플러그인/빌드스크립트 저장소 (Flutter의 included build ':gradle' 포함 — 이번 에러 지점)
+          def configurePluginRepositories = { RepositoryHandler repos ->
+              addMirrorFirst(repos)
+              repos.google()
+              repos.mavenCentral()
+              repos.gradlePluginPortal()
+              blockPortalRedirects(repos)
+          }
+
+          def repoMode = RepositoriesMode.PREFER_PROJECT
+
+          gradle.beforeSettings { settings ->
+              configurePluginRepositories(settings.pluginManagement.repositories)
+          }
+
+          gradle.settingsEvaluated { settings ->
+              def drm = settings.dependencyResolutionManagement
+              repoMode = drm.repositoriesMode.getOrElse(RepositoriesMode.PREFER_PROJECT)
+              if (!drm.repositories.isEmpty()) {
+                  addMirrorFirst(drm.repositories)
+                  blockPortalRedirects(drm.repositories)
+              }
+          }
+
+          gradle.beforeProject { project ->
+              configurePluginRepositories(project.buildscript.repositories)
+
+              // 앱 코틀린 컴파일용 kotlin-compiler-embeddable 등은 프로젝트 저장소로 받는다.
+              // 빌드 스크립트가 저장소를 선언한 뒤(afterEvaluate)에, 이미 저장소가 있을 때만 맨 앞에 미러를 끼운다.
+              project.afterEvaluate {
+                  if (repoMode == RepositoriesMode.PREFER_PROJECT && !project.repositories.isEmpty()) {
+                      addMirrorFirst(project.repositories)
+                      blockPortalRedirects(project.repositories)
+                  }
+              }
+          }
+          GRADLE
+
+      - name: 4d. Verify bundled Excel assets
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, json
+          root = Path('assets/xlsx')
+          manifest = json.loads((root / 'PROVENANCE.json').read_text())
+          # Release numbers are informational; file checksums verify the package.
+          # A fixed release check here would reject valid assets after an update.
+          revision = manifest.get('integrationRevision')
+          if type(revision) is not int or revision < 1:
+              raise SystemExit('Invalid Excel asset manifest. Upload the complete assets/xlsx folder.')
+          if not manifest['engine'].get('version') or manifest['engine']['version'] != manifest['legacy'].get('version'):
+              raise SystemExit('Excel engine and legacy reader versions do not match. Upload both from the same ZIP.')
+          required = {
+              'integrationArtifacts': ('index.html', 'reader.js', 'reader.css', 'merge_ranges.js', 'THIRD_PARTY_NOTICES.txt'),
+              'engine': ('xlsx.js', 'xlsx_parser_bg.wasm'),
+              'legacy': ('xls.js', 'legacy_xls_direct_bg.wasm'),
+          }
+          for group, names in required.items():
+              records = manifest[group] if group == 'integrationArtifacts' else manifest[group]['artifacts']
+              for name in names:
+                  if name not in records:
+                      raise SystemExit(f'Missing Excel manifest entry: {group}/{name}')
+          groups = [(root, manifest['integrationArtifacts'])]
+          groups += [(root / group, manifest[group]['artifacts']) for group in ('engine', 'legacy')]
+          for folder, files in groups:
+              for name, expected in files.items():
+                  file = folder / name
+                  if not file.is_file():
+                      raise SystemExit(f'Missing Excel asset: {file}')
+                  data = file.read_bytes()
+                  if len(data) != expected['bytes'] or hashlib.sha256(data).hexdigest() != expected['sha256']:
+                      raise SystemExit(f'Excel asset is incomplete or outdated: {file}')
+          pubspec = Path('pubspec.yaml').read_text()
+          for folder in ('assets/xlsx/', 'assets/xlsx/engine/', 'assets/xlsx/legacy/'):
+              if f'- {folder}' not in pubspec:
+                  raise SystemExit(f'Missing Flutter asset declaration: {folder}')
+          for group in ('engine', 'legacy'):
+              for name in ('LICENSE', 'THIRD_PARTY_NOTICES.md'):
+                  if not (root / group / name).is_file():
+                      raise SystemExit(f'Missing Excel license notice: {group}/{name}')
+          print(f'Excel assets verified (integration revision {revision})')
+          PY
+
+      - name: 5. Build Release APK (Direct Install/Update) & AAB (Google Play Store)
+        shell: bash
+        run: |
+          set -uo pipefail
+          BUILD_NUM=$((123 + ${{ github.run_number }}))
+
+          retry() {
+            local n=1 max=3
+            until "$@"; do
+              if [ $n -ge $max ]; then
+                echo "::error::'$*' failed after $max attempts"
+                return 1
+              fi
+              echo "::warning::Attempt $n failed (network?). Retrying in $((n * 30))s..."
+              sleep $((n * 30))
+              n=$((n + 1))
+            done
+          }
+
+          retry flutter pub get || exit 1
+          retry flutter build apk --release --no-pub --no-tree-shake-icons --build-number=$BUILD_NUM || exit 1
+          retry flutter build appbundle --release --no-pub --no-tree-shake-icons --build-number=$BUILD_NUM || exit 1
+
+      - name: 6. Upload Release APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ERI-release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+      - name: 7. Upload Google Play Store AAB Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ERI-google-play-aab
+          path: build/app/outputs/bundle/release/app-release.aab
