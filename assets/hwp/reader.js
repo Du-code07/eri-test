@@ -801,7 +801,7 @@ function vUpdate() {
   want.sort((a, b) => (a >= first && a <= last ? 0 : 1) - (b >= first && b <= last ? 0 : 1));
   let made = 0;
   for (const i of want) {
-    if (made >= 2) { vSchedule(); break; }
+    if (made >= (editModeOn ? 1 : 2)) { vSchedule(); break; }
     try { vMount(i); made++; } catch (error) { console.warn(error); }
   }
   if (made) applySearchHighlights();
@@ -1037,7 +1037,7 @@ function withoutZoom(fn) {
   };
 }
 
-// ── 화면 위 실시간 커서·키보드 직접 편집 (1,400페이지급 대용량 문서 무지연 로컬 편집 + 8자 분할 + 유휴 플러시 최소화) ──
+// ── 화면 위 실시간 커서·키보드 직접 편집 (로컬 고속 편집 · 서식(볼드/크기/색) · Undo/Redo · 취소 복원 · 저장 전용) ──
 let editModeOn = false;
 let editDirty = false;
 let editPaginationPending = false;
@@ -1051,6 +1051,12 @@ let lastPinchEndedAt = 0;
 let redrawRafId = 0;
 let pendingRedrawPage = -1;
 let flowFlushTimer = 0;
+let sessionBaseSnapId = null;
+let editUndoStack = [];
+let editRedoStack = [];
+let pendingFormat = {}; // { bold?, fontSizePt?, textColor? }
+const pageEngineSizeCache = new Map();
+const MAX_EDIT_UNDO = 40;
 const IME_SENTINEL = '\u200B';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -1075,6 +1081,78 @@ function resetImeBuffer() {
   try { editImeEl.setSelectionRange(1, 1); } catch (_) {}
 }
 
+function discardSnapSafe(id) {
+  if (id === null || id === undefined) return;
+  try { if (doc && typeof doc.discardSnapshot === 'function') doc.discardSnapshot(id); } catch (_) {}
+}
+
+function clearEditHistory() {
+  for (const op of editUndoStack) {
+    if (op.beforeSnap !== undefined) discardSnapSafe(op.beforeSnap);
+    if (op.afterSnap !== undefined) discardSnapSafe(op.afterSnap);
+  }
+  for (const op of editRedoStack) {
+    if (op.beforeSnap !== undefined) discardSnapSafe(op.beforeSnap);
+    if (op.afterSnap !== undefined) discardSnapSafe(op.afterSnap);
+  }
+  editUndoStack = [];
+  editRedoStack = [];
+}
+
+function readCurrentCharProps() {
+  if (!doc || disposed || !editCursor) return null;
+  const c = editCursor;
+  const probeOff = Math.max(0, c.offset > 0 ? c.offset - 1 : 0);
+  try {
+    let raw = null;
+    if (c.inTable && c.pathJson && typeof doc.getCellCharPropertiesAtByPath === 'function') {
+      raw = doc.getCellCharPropertiesAtByPath(c.sec, c.parentPara, c.pathJson, probeOff);
+    } else if (c.inTable && c.cell !== undefined && c.cell !== null && typeof doc.getCellCharPropertiesAt === 'function') {
+      raw = doc.getCellCharPropertiesAt(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara, probeOff);
+    } else if (typeof doc.getCharPropertiesAt === 'function') {
+      raw = doc.getCharPropertiesAt(c.sec, c.para, probeOff);
+    }
+    return parseJsonSafe(raw);
+  } catch (_) {
+    return null;
+  }
+}
+
+function emitEditState() {
+  const props = readCurrentCharProps();
+  const bold = pendingFormat.bold !== undefined ? Boolean(pendingFormat.bold) : Boolean(props && props.bold);
+  let fontSizePt = pendingFormat.fontSizePt;
+  if (!fontSizePt) {
+    const rawFs = Number(props && props.fontSize);
+    fontSizePt = rawFs >= 100 ? Math.round(rawFs / 100) : (rawFs > 0 ? Math.round(rawFs) : 10);
+  }
+  const textColor = pendingFormat.textColor || (props && props.textColor) || '#000000';
+  emit('editState', {
+    canUndo: editUndoStack.length > 0,
+    canRedo: editRedoStack.length > 0,
+    dirty: editDirty,
+    bold,
+    fontSizePt,
+    textColor,
+    hasCursor: Boolean(editCursor),
+  });
+}
+
+function pushUndoOp(op) {
+  editUndoStack.push(op);
+  if (editUndoStack.length > MAX_EDIT_UNDO) {
+    const dropped = editUndoStack.shift();
+    if (dropped && dropped.beforeSnap !== undefined) discardSnapSafe(dropped.beforeSnap);
+    if (dropped && dropped.afterSnap !== undefined) discardSnapSafe(dropped.afterSnap);
+  }
+  for (const r of editRedoStack) {
+    if (r.beforeSnap !== undefined) discardSnapSafe(r.beforeSnap);
+    if (r.afterSnap !== undefined) discardSnapSafe(r.afterSnap);
+  }
+  editRedoStack = [];
+  emitEditState();
+}
+
 function flushPendingPaginationNow(redrawAll) {
   if (flowFlushTimer) { clearTimeout(flowFlushTimer); flowFlushTimer = 0; }
   if (!doc || disposed) return;
@@ -1092,7 +1170,6 @@ function flushPendingPaginationNow(redrawAll) {
 }
 
 function scheduleFlowFlushIfNeeded() {
-  // 페이지 넘침(flowChanged)이 실제로 발생했을 때만 입력 멈춤 1.5초 후 1회 전체 페이지네이션 동기화
   if (flowFlushTimer) clearTimeout(flowFlushTimer);
   flowFlushTimer = setTimeout(() => {
     flowFlushTimer = 0;
@@ -1157,6 +1234,7 @@ function redrawAllVisiblePages() {
   clearPageCache();
   const newCount = Math.max(1, doc.pageCount ? doc.pageCount() : count);
   const countChanged = newCount !== count;
+  if (countChanged) pageEngineSizeCache.clear();
   count = newCount;
   if (vertical && vhost) {
     if (countChanged || vSlots.length !== count) {
@@ -1205,6 +1283,75 @@ function redrawAllVisiblePages() {
   updateCaretPos();
 }
 
+function readTextSliceAt(c, off, len) {
+  if (!doc || disposed || !c || len <= 0) return '';
+  try {
+    if (c.inTable && c.pathJson && typeof doc.getTextInCellByPath === 'function') {
+      return String(doc.getTextInCellByPath(c.sec, c.parentPara, c.pathJson, off, len) ?? '');
+    }
+    if (c.inTable && c.cell !== undefined && c.cell !== null && typeof doc.getTextInCell === 'function') {
+      return String(doc.getTextInCell(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara, off, len) ?? '');
+    }
+    if (typeof doc.getTextRange === 'function') {
+      return String(doc.getTextRange(c.sec, c.para, off, len) ?? '');
+    }
+  } catch (_) {}
+  return '';
+}
+
+function getParagraphLenAt(c) {
+  if (!doc || disposed || !c) return 0;
+  try {
+    if (c.inTable && c.pathJson && typeof doc.getCellParagraphLengthByPath === 'function') {
+      return Number(doc.getCellParagraphLengthByPath(c.sec, c.parentPara, c.pathJson) || 0);
+    }
+    if (c.inTable && c.cell !== undefined && c.cell !== null && typeof doc.getCellParagraphLength === 'function') {
+      return Number(doc.getCellParagraphLength(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara) || 0);
+    }
+    if (typeof doc.getParagraphLength === 'function') {
+      return Number(doc.getParagraphLength(c.sec, c.para) || 0);
+    }
+  } catch (_) {}
+  return 0;
+}
+
+function applyCharFormatRange(c, startOff, endOff, overrides) {
+  if (!doc || disposed || !c || endOff <= startOff) return false;
+  const base = readCurrentCharProps() || {};
+  const merged = {};
+  if (base.fontFamily) merged.fontFamily = base.fontFamily;
+  if (Number(base.fontSize) > 0) merged.fontSize = Number(base.fontSize);
+  if (base.bold !== undefined) merged.bold = Boolean(base.bold);
+  if (base.italic !== undefined) merged.italic = Boolean(base.italic);
+  if (base.underline !== undefined) merged.underline = Boolean(base.underline);
+  if (base.strikethrough !== undefined) merged.strikethrough = Boolean(base.strikethrough);
+  if (base.textColor) merged.textColor = base.textColor;
+  if (overrides.bold !== undefined) merged.bold = Boolean(overrides.bold);
+  if (overrides.fontSizePt !== undefined) merged.fontSize = Math.round(Number(overrides.fontSizePt) * 100);
+  if (overrides.textColor !== undefined) merged.textColor = String(overrides.textColor);
+  const propsJson = JSON.stringify(merged);
+  try {
+    let raw = null;
+    if (c.inTable && c.pathJson && typeof doc.applyCharFormatInCellByPath === 'function') {
+      raw = doc.applyCharFormatInCellByPath(c.sec, c.parentPara, c.pathJson, startOff, endOff, propsJson);
+    } else if (c.inTable && c.cell !== undefined && c.cell !== null && typeof doc.applyCharFormatInCell === 'function') {
+      raw = doc.applyCharFormatInCell(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara, startOff, endOff, propsJson);
+    } else if (typeof doc.applyCharFormat === 'function') {
+      raw = doc.applyCharFormat(c.sec, c.para, startOff, endOff, propsJson);
+    }
+    const res = parseJsonSafe(raw);
+    return Boolean(res && res.ok);
+  } catch (_) {
+    return false;
+  }
+}
+
+function applyPendingFormatIfAny(c, startOff, len) {
+  if (!c || len <= 0) return;
+  if (pendingFormat.bold === undefined && pendingFormat.fontSizePt === undefined && pendingFormat.textColor === undefined) return;
+  applyCharFormatRange(c, startOff, startOff + len, pendingFormat);
+}
+
 function ensureEditDom() {
   if (!editStyleInjected) {
     editStyleInjected = true;
@@ -1235,18 +1382,23 @@ function ensureEditDom() {
     editImeEl.addEventListener('compositionupdate', (e) => {
       if (!editModeOn || !editCursor) return;
       const str = String(e.data ?? '').replace(/\u200B/g, '');
-      applyDeltaFast(imeCompBase, imeCompLen, str);
+      applyDeltaFast(imeCompBase, imeCompLen, str, false);
       imeCompLen = str.length;
       editCursor.offset = imeCompBase + imeCompLen;
     });
     editImeEl.addEventListener('compositionend', (e) => {
       if (!editModeOn || !editCursor) { imeComposing = false; resetImeBuffer(); return; }
       const str = String(e.data ?? '').replace(/\u200B/g, '');
-      applyDeltaFast(imeCompBase, imeCompLen, str);
+      applyDeltaFast(imeCompBase, imeCompLen, str, false);
+      if (str.length > 0) {
+        applyPendingFormatIfAny(editCursor, imeCompBase, str.length);
+        pushUndoOp({ kind: 'text', cursor: { ...editCursor }, off: imeCompBase, oldText: '', newText: str });
+      }
       editCursor.offset = imeCompBase + str.length;
       imeComposing = false;
       imeCompLen = 0;
       resetImeBuffer();
+      scheduleFastRedraw(editCursor.pageIdx);
     });
     editImeEl.addEventListener('input', (e) => {
       if (!editModeOn || !editCursor || imeComposing) return;
@@ -1267,8 +1419,10 @@ function ensureEditDom() {
         const parts = clean.split('\n');
         for (let i = 0; i < parts.length; i++) {
           if (parts[i].length > 0) {
-            const nextOff = applyDeltaFast(editCursor.offset, 0, parts[i]);
-            editCursor.offset = nextOff !== null ? nextOff : (editCursor.offset + parts[i].length);
+            const startOff = editCursor.offset;
+            const nextOff = applyDeltaFast(startOff, 0, parts[i], true);
+            applyPendingFormatIfAny(editCursor, startOff, parts[i].length);
+            editCursor.offset = nextOff !== null ? nextOff : (startOff + parts[i].length);
           }
           if (i < parts.length - 1) handleEnter();
         }
@@ -1276,8 +1430,10 @@ function ensureEditDom() {
         return;
       }
       if (clean.length > 0) {
-        const nextOff = applyDeltaFast(editCursor.offset, 0, clean);
-        editCursor.offset = nextOff !== null ? nextOff : (editCursor.offset + clean.length);
+        const startOff = editCursor.offset;
+        const nextOff = applyDeltaFast(startOff, 0, clean, true);
+        applyPendingFormatIfAny(editCursor, startOff, clean.length);
+        editCursor.offset = nextOff !== null ? nextOff : (startOff + clean.length);
         resetImeBuffer();
       }
     });
@@ -1303,6 +1459,8 @@ function parseJsonSafe(raw) {
 }
 
 function getPageEngineSize(pIdx, svg) {
+  const cached = pageEngineSizeCache.get(pIdx);
+  if (cached) return cached;
   let w = 0, h = 0;
   try {
     const info = parseJsonSafe(doc.getPageInfo(pIdx));
@@ -1311,24 +1469,24 @@ function getPageEngineSize(pIdx, svg) {
       h = Number(info.height);
     }
   } catch (_) {}
-  if (!(w > 0 && h > 0) && svg) {
-    const vb = svg.viewBox && svg.viewBox.baseVal;
-    if (vb && vb.width > 0 && vb.height > 0) {
-      w = vb.width;
-      h = vb.height;
-    } else {
-      const r = svg.getBoundingClientRect();
-      w = r.width || 595;
-      h = r.height || 842;
-    }
+  if (w > 0 && h > 0) {
+    const sz = { w, h };
+    pageEngineSizeCache.set(pIdx, sz);
+    return sz;
   }
-  return { w, h };
+  if (svg) {
+    const vb = svg.viewBox && svg.viewBox.baseVal;
+    if (vb && vb.width > 0 && vb.height > 0) return { w: vb.width, h: vb.height };
+    const r = svg.getBoundingClientRect();
+    return { w: r.width || 595, h: r.height || 842 };
+  }
+  return { w: 595, h: 842 };
 }
 
 function markEditDirty() {
   if (!editDirty) {
     editDirty = true;
-    emit('editChanged', { dirty: true });
+    emitEditState();
   }
 }
 
@@ -1336,10 +1494,6 @@ function removeAllCarets() {
   for (const el of document.querySelectorAll('.eri-caret-rect')) el.remove();
 }
 
-/**
- * rhwp의 replaceBodyTextLocal은 줄바꿈·탭 없는 최대 8자까지만 허용하므로,
- * 삼성 키보드 등 긴 조합 문자열도 8자 단위로 나눠 100% 로컬 고속 경로(0.4ms)로 처리한다.
- */
 function replaceBodyLocalChunked(sec, para, off, del, ins) {
   if (typeof doc.replaceBodyTextLocal !== 'function') return null;
   if (/[\r\n\t]/.test(ins)) return null;
@@ -1349,7 +1503,6 @@ function replaceBodyLocalChunked(sec, para, off, del, ins) {
   let flowChanged = false;
   try {
     if (ins.length === 0) {
-      // 삭제도 8자 단위로 안전하게 처리
       while (remDel > 0) {
         const d = Math.min(8, remDel);
         lastRes = parseJsonSafe(doc.replaceBodyTextLocal(sec, para, curOff, d, ''));
@@ -1387,11 +1540,13 @@ function handleBackspace() {
   if (!doc || disposed || !editCursor) return;
   const c = editCursor;
   if (c.offset > 0) {
-    const nextOff = applyDeltaFast(c.offset - 1, 1, '');
+    const nextOff = applyDeltaFast(c.offset - 1, 1, '', true);
     c.offset = nextOff !== null ? nextOff : Math.max(0, c.offset - 1);
     return;
   }
   flushPendingPaginationNow(false);
+  const beforeSnap = typeof doc.saveSnapshot === 'function' ? doc.saveSnapshot() : undefined;
+  const beforeCursor = { ...c };
   try {
     let res = null;
     if (c.inTable && c.pathJson && typeof doc.mergeParagraphInCellByPath === 'function') {
@@ -1405,7 +1560,10 @@ function handleBackspace() {
         }
         c.offset = Number(res.charOffset ?? 0);
         markEditDirty();
+        pushUndoOp({ kind: 'snap', beforeSnap, beforeCursor, afterCursor: { ...c }, pageIdx: c.pageIdx });
         scheduleFastRedraw(c.pageIdx);
+      } else {
+        discardSnapSafe(beforeSnap);
       }
     } else if (c.inTable && c.cell !== undefined && c.cellPara > 0 && typeof doc.mergeParagraphInCell === 'function') {
       res = parseJsonSafe(doc.mergeParagraphInCell(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara));
@@ -1413,7 +1571,10 @@ function handleBackspace() {
         c.cellPara = Number(res.cellParaIndex ?? Math.max(0, c.cellPara - 1));
         c.offset = Number(res.charOffset ?? 0);
         markEditDirty();
+        pushUndoOp({ kind: 'snap', beforeSnap, beforeCursor, afterCursor: { ...c }, pageIdx: c.pageIdx });
         scheduleFastRedraw(c.pageIdx);
+      } else {
+        discardSnapSafe(beforeSnap);
       }
     } else if (!c.inTable && c.para > 0 && typeof doc.mergeParagraph === 'function') {
       res = parseJsonSafe(doc.mergeParagraph(c.sec, c.para));
@@ -1421,10 +1582,16 @@ function handleBackspace() {
         c.para = Number(res.paraIdx ?? Math.max(0, c.para - 1));
         c.offset = Number(res.charOffset ?? 0);
         markEditDirty();
+        pushUndoOp({ kind: 'snap', beforeSnap, beforeCursor, afterCursor: { ...c }, pageIdx: c.pageIdx });
         scheduleFastRedraw(c.pageIdx);
+      } else {
+        discardSnapSafe(beforeSnap);
       }
+    } else {
+      discardSnapSafe(beforeSnap);
     }
   } catch (err) {
+    discardSnapSafe(beforeSnap);
     console.warn('HWP backspace merge failed:', err);
   }
 }
@@ -1433,6 +1600,8 @@ function handleEnter() {
   if (!doc || disposed || !editCursor) return;
   flushPendingPaginationNow(false);
   const c = editCursor;
+  const beforeSnap = typeof doc.saveSnapshot === 'function' ? doc.saveSnapshot() : undefined;
+  const beforeCursor = { ...c };
   try {
     let res = null;
     if (c.inTable && c.pathJson && typeof doc.splitParagraphInCellByPath === 'function') {
@@ -1446,7 +1615,10 @@ function handleEnter() {
         }
         c.offset = 0;
         markEditDirty();
+        pushUndoOp({ kind: 'snap', beforeSnap, beforeCursor, afterCursor: { ...c }, pageIdx: c.pageIdx });
         scheduleFastRedraw(c.pageIdx);
+      } else {
+        discardSnapSafe(beforeSnap);
       }
     } else if (c.inTable && c.cell !== undefined && typeof doc.splitParagraphInCell === 'function') {
       res = parseJsonSafe(doc.splitParagraphInCell(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara, c.offset));
@@ -1454,7 +1626,10 @@ function handleEnter() {
         c.cellPara = Number(res.cellParaIndex ?? (c.cellPara + 1));
         c.offset = 0;
         markEditDirty();
+        pushUndoOp({ kind: 'snap', beforeSnap, beforeCursor, afterCursor: { ...c }, pageIdx: c.pageIdx });
         scheduleFastRedraw(c.pageIdx);
+      } else {
+        discardSnapSafe(beforeSnap);
       }
     } else if (!c.inTable && typeof doc.splitParagraph === 'function') {
       res = parseJsonSafe(doc.splitParagraph(c.sec, c.para, c.offset));
@@ -1462,21 +1637,28 @@ function handleEnter() {
         c.para = Number(res.paraIdx ?? (c.para + 1));
         c.offset = 0;
         markEditDirty();
+        pushUndoOp({ kind: 'snap', beforeSnap, beforeCursor, afterCursor: { ...c }, pageIdx: c.pageIdx });
         scheduleFastRedraw(c.pageIdx);
+      } else {
+        discardSnapSafe(beforeSnap);
       }
+    } else {
+      discardSnapSafe(beforeSnap);
     }
   } catch (err) {
+    discardSnapSafe(beforeSnap);
     console.warn('HWP enter split failed:', err);
   }
 }
 
-function applyDeltaFast(offset, delCount, insertStr) {
+function applyDeltaFast(offset, delCount, insertStr, recordUndo = false) {
   if (!doc || disposed || !editCursor) return null;
   const c = editCursor;
   const off = Math.max(0, Number(offset));
   const del = Math.max(0, Number(delCount));
   const ins = String(insertStr ?? '');
   if (del === 0 && ins.length === 0) return off;
+  const oldText = (recordUndo && del > 0) ? readTextSliceAt(c, off, del) : '';
   let lastRes = null;
   let usedDeferred = false;
   let flowChanged = false;
@@ -1505,11 +1687,12 @@ function applyDeltaFast(offset, delCount, insertStr) {
       }
     }
     markEditDirty();
+    if (recordUndo) {
+      pushUndoOp({ kind: 'text', cursor: { ...c }, off, oldText, newText: ins });
+    }
     scheduleFastRedraw(c.pageIdx);
     if (usedDeferred) {
       editPaginationPending = true;
-      // 같은 페이지 안에서 입력 중일 때는 전체 1,400페이지 재계산을 돌리지 않음!
-      // 페이지 넘침(flowChanged)이 실제로 생겼을 때만 긴 유휴(1.5초) 후 1회 동기화
       if (flowChanged) scheduleFlowFlushIfNeeded();
     }
     if (lastRes && lastRes.ok && typeof lastRes.charOffset === 'number') {
@@ -1519,6 +1702,87 @@ function applyDeltaFast(offset, delCount, insertStr) {
     console.warn('HWP applyDeltaFast failed:', err);
   }
   return null;
+}
+
+function editApplyFormat(opts) {
+  if (!editModeOn || !doc || disposed || !opts) return false;
+  if (opts.bold !== undefined) pendingFormat.bold = Boolean(opts.bold);
+  if (opts.fontSizePt !== undefined) pendingFormat.fontSizePt = Number(opts.fontSizePt);
+  if (opts.textColor !== undefined) pendingFormat.textColor = String(opts.textColor);
+  if (editCursor) {
+    const c = editCursor;
+    const paraLen = getParagraphLenAt(c);
+    if (paraLen > 0) {
+      flushPendingPaginationNow(false);
+      const beforeSnap = typeof doc.saveSnapshot === 'function' ? doc.saveSnapshot() : undefined;
+      const ok = applyCharFormatRange(c, 0, paraLen, opts);
+      if (ok) {
+        markEditDirty();
+        pushUndoOp({ kind: 'snap', beforeSnap, beforeCursor: { ...c }, afterCursor: { ...c }, pageIdx: c.pageIdx });
+        scheduleFastRedraw(c.pageIdx);
+      } else {
+        discardSnapSafe(beforeSnap);
+      }
+    }
+  }
+  emitEditState();
+  return true;
+}
+
+function editUndo() {
+  if (!editModeOn || !doc || disposed || editUndoStack.length === 0) return false;
+  const op = editUndoStack.pop();
+  if (op.kind === 'text') {
+    editCursor = { ...op.cursor };
+    applyDeltaFast(op.off, op.newText.length, op.oldText, false);
+    editCursor.offset = op.off + op.oldText.length;
+    editRedoStack.push(op);
+    scheduleFastRedraw(editCursor.pageIdx);
+  } else if (op.kind === 'snap' && op.beforeSnap !== undefined && typeof doc.restoreSnapshot === 'function') {
+    const afterSnap = typeof doc.saveSnapshot === 'function' ? doc.saveSnapshot() : undefined;
+    doc.restoreSnapshot(op.beforeSnap);
+    editCursor = { ...op.beforeCursor };
+    editRedoStack.push({ ...op, afterSnap });
+    redrawAllVisiblePages();
+  }
+  emitEditState();
+  return true;
+}
+
+function editRedo() {
+  if (!editModeOn || !doc || disposed || editRedoStack.length === 0) return false;
+  const op = editRedoStack.pop();
+  if (op.kind === 'text') {
+    editCursor = { ...op.cursor };
+    applyDeltaFast(op.off, op.oldText.length, op.newText, false);
+    editCursor.offset = op.off + op.newText.length;
+    editUndoStack.push(op);
+    scheduleFastRedraw(editCursor.pageIdx);
+  } else if (op.kind === 'snap' && op.afterSnap !== undefined && typeof doc.restoreSnapshot === 'function') {
+    doc.restoreSnapshot(op.afterSnap);
+    editCursor = { ...op.afterCursor };
+    editUndoStack.push(op);
+    redrawAllVisiblePages();
+  }
+  emitEditState();
+  return true;
+}
+
+function cancelEditSession() {
+  if (!doc || disposed) return false;
+  if (flowFlushTimer) { clearTimeout(flowFlushTimer); flowFlushTimer = 0; }
+  editPaginationPending = false;
+  if (sessionBaseSnapId !== null && typeof doc.restoreSnapshot === 'function') {
+    try { doc.restoreSnapshot(sessionBaseSnapId); } catch (_) {}
+    discardSnapSafe(sessionBaseSnapId);
+    sessionBaseSnapId = null;
+  }
+  clearEditHistory();
+  pendingFormat = {};
+  editDirty = false;
+  setEditMode(false);
+  redrawAllVisiblePages();
+  return true;
 }
 
 function findPageFrameByIndex(pIdx) {
@@ -1623,10 +1887,12 @@ function handleDirectEditClick(e) {
       cell: cellVal,
       cellPara,
     };
+    pendingFormat = {};
     imeComposing = false;
     imeCompLen = 0;
     ensureEditDom();
     updateCaretPos();
+    emitEditState();
     if (editImeEl) {
       resetImeBuffer();
       editImeEl.focus({ preventScroll: true });
@@ -1644,10 +1910,20 @@ function setEditMode(enabled) {
     try {
       if (doc && typeof doc.convertToEditable === 'function') doc.convertToEditable();
     } catch (_) {}
+    discardSnapSafe(sessionBaseSnapId);
+    sessionBaseSnapId = (doc && typeof doc.saveSnapshot === 'function') ? doc.saveSnapshot() : null;
+    clearEditHistory();
+    pendingFormat = {};
+    editDirty = false;
     document.addEventListener('click', handleDirectEditClick, true);
+    emitEditState();
   } else {
     document.removeEventListener('click', handleDirectEditClick, true);
     flushPendingPaginationNow(true);
+    discardSnapSafe(sessionBaseSnapId);
+    sessionBaseSnapId = null;
+    clearEditHistory();
+    pendingFormat = {};
     editCursor = null;
     imeComposing = false;
     imeCompLen = 0;
@@ -1692,7 +1968,7 @@ function exportEditedBytes(preferHwpx) {
 }
 
 window.freaderHwp = { setView, resetScrollZoom: vResetZoom, setScrollMarks, setScrollMemos, setScrollMemo, visibleSlots: vVisibleSlots, mostVisiblePage: vMostVisible, highlightBoxes: withoutZoom(highlightBoxes), beginDocument, pageSizes, setVertical, scrollToRatio: vScrollToRatio, appendChunk, openDocument, configure, display, next, previous, progress, highlightSelection: withoutZoom(highlightSelection), destroy,
-  search, showSearchResult, clearSearch, headingCandidates, pageText, visibleTextBoxes: withoutZoom(visibleTextBoxes), pageRect: withoutZoom(pageRect), setEditMode, exportEditedBytes,
+  search, showSearchResult, clearSearch, headingCandidates, pageText, visibleTextBoxes: withoutZoom(visibleTextBoxes), pageRect: withoutZoom(pageRect), setEditMode, exportEditedBytes, editApplyFormat, editUndo, editRedo, cancelEditSession,
   getState: () => ({ ready: readyReported, page, count, cachedPages: cache.size, cachedBytes, received, spread: options.spread, maxBytes: MAX_BYTES }) };
 window.addEventListener('pagehide', destroy, { once: true });
 

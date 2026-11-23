@@ -333,7 +333,12 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   bool _isMemoMode = false;
   bool _isHwpEditMode = false;
   bool _hwpHasEdits = false;
-  bool _hwpPersisting = false;
+  bool _hwpSaving = false;
+  bool _hwpBold = false;
+  int _hwpFontSizePt = 10;
+  Color _hwpTextColor = const Color(0xFF000000);
+  bool _hwpCanUndo = false;
+  bool _hwpCanRedo = false;
   bool get _canHwpEdit => _isHwpFile;
   bool _isEraserMode = false;
   bool _allowFingerDrawing = false;
@@ -1219,7 +1224,24 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           filePath: widget.filePath,
           controller: _hwpController,
           editMode: _isHwpEditMode,
-          onEditChanged: () => _hwpHasEdits = true,
+          onEditState: (st) {
+            if (!mounted) return;
+            Color parsed = _hwpTextColor;
+            final rawCol = st['textColor'];
+            if (rawCol is String && rawCol.startsWith('#') && rawCol.length == 7) {
+              final v = int.tryParse(rawCol.substring(1), radix: 16);
+              if (v != null) parsed = Color(0xFF000000 | v);
+            }
+            setState(() {
+              _hwpHasEdits = st['dirty'] == true;
+              _hwpCanUndo = st['canUndo'] == true;
+              _hwpCanRedo = st['canRedo'] == true;
+              _hwpBold = st['bold'] == true;
+              final fs = st['fontSizePt'];
+              if (fs is num && fs > 0) _hwpFontSizePt = fs.round();
+              _hwpTextColor = parsed;
+            });
+          },
           initialPosition: _currentCfi ?? _initialCfi,
           initialProgress: _initialProgress,
           theme: _epubBgTheme,
@@ -4256,46 +4278,86 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   }
 
   /// 지금 보고 있는 쪽(2페이지 보기면 두 쪽)의 글을 보여 주고 복사할 수 있게 함
-  Future<void> _persistHwpEdits() async {
-    if (!_isHwpFile || !_hwpHasEdits || _hwpPersisting) return;
-    _hwpPersisting = true;
+  static const List<int> _hwpFontSizeOptions = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32];
+  static const List<Color> _hwpTextColorOptions = [
+    Color(0xFF000000),
+    Color(0xFF555555),
+    Color(0xFFD32F2F),
+    Color(0xFFEF6C00),
+    Color(0xFFF9A825),
+    Color(0xFF2E7D32),
+    Color(0xFF1565C0),
+    Color(0xFF283593),
+    Color(0xFF6A1B9A),
+  ];
+
+  String _colorToHex(Color c) {
+    final int rgb = c.toARGB32() & 0x00FFFFFF;
+    return '#${rgb.toRadixString(16).padLeft(6, '0')}';
+  }
+
+  /// 저장 단추를 눌렀을 때만 파일에 수정 내용을 기록하고 편집 종료
+  Future<void> _saveHwpEdits() async {
+    if (!_isHwpFile || _hwpSaving) return;
+    setState(() => _hwpSaving = true);
     try {
-      final bool preferHwpx = widget.filePath.toLowerCase().endsWith('.hwpx');
-      final res = await _hwpController.exportEditedBytes(preferHwpx: preferHwpx);
-      if (res != null && res['ok'] == true && res['dirty'] == true && res['base64'] is String) {
-        final List<int> bytes = base64Decode(res['base64'] as String);
-        final File target = File(widget.filePath);
-        final File tmp = File('${widget.filePath}.eri_tmp');
-        await tmp.writeAsBytes(bytes, flush: true);
-        await tmp.rename(target.path);
-        _hwpHasEdits = false;
-        // 다시 열 때 수정 전 캐시 화면이 뜨지 않도록 쪽 스냅샷 정리
-        try {
-          final dir = await PageSnapshotService.documentDir(widget.filePath);
-          if (dir != null && dir.existsSync()) dir.deleteSync(recursive: true);
-        } catch (_) {}
+      if (_hwpHasEdits) {
+        final bool preferHwpx = widget.filePath.toLowerCase().endsWith('.hwpx');
+        final res = await _hwpController.exportEditedBytes(preferHwpx: preferHwpx);
+        if (res != null && res['ok'] == true && res['dirty'] == true && res['base64'] is String) {
+          final List<int> bytes = base64Decode(res['base64'] as String);
+          final File tmp = File('${widget.filePath}.eri_tmp');
+          await tmp.writeAsBytes(bytes, flush: true);
+          await tmp.rename(widget.filePath);
+          try {
+            final dir = await PageSnapshotService.documentDir(widget.filePath);
+            if (dir != null && dir.existsSync()) dir.deleteSync(recursive: true);
+          } catch (_) {}
+        }
       }
-    } catch (_) {} finally {
-      _hwpPersisting = false;
+      await _hwpController.setEditMode(false);
+      if (!mounted) return;
+      setState(() {
+        _isHwpEditMode = false;
+        _hwpHasEdits = false;
+        _hwpCanUndo = false;
+        _hwpCanRedo = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 2),
+          content: Text(_tr('저장했어요', 'Saved', '已保存', '保存しました')),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _hwpSaving = false);
     }
   }
 
-  Future<void> _finishHwpEditMode() async {
-    if (_isHwpEditMode) {
-      setState(() => _isHwpEditMode = false);
-      await _hwpController.setEditMode(false);
-    }
-    await _persistHwpEdits();
+  /// 취소 단추: 저장 전까지 편집창에서 수정한 모든 내용을 원래대로 되돌리고 편집 종료
+  Future<void> _cancelHwpEditMode() async {
+    if (!_isHwpEditMode) return;
+    await _hwpController.cancelEditSession();
+    if (!mounted) return;
+    setState(() {
+      _isHwpEditMode = false;
+      _hwpHasEdits = false;
+      _hwpCanUndo = false;
+      _hwpCanRedo = false;
+    });
   }
 
   void _toggleHwpEditMode() {
     if (!_canHwpEdit) return;
     if (_isHwpEditMode) {
-      unawaited(_finishHwpEditMode());
+      unawaited(_cancelHwpEditMode());
       return;
     }
     setState(() {
       _isHwpEditMode = true;
+      _hwpHasEdits = false;
+      _hwpCanUndo = false;
+      _hwpCanRedo = false;
       _showControls = false;
       _isMemoMode = false;
       _isEraserMode = false;
@@ -4303,42 +4365,178 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     _hwpController.setEditMode(true);
   }
 
-  Widget _buildHwpInlineEditBar(double bottomPadding) {
-    final Color sig = AppColors.of(context);
-    final double kb = MediaQuery.of(context).viewInsets.bottom;
-    return Positioned(
-      left: 16,
-      right: 16,
-      bottom: (kb > 0 ? kb + 8 : bottomPadding + 16),
-      child: Center(
-        child: Material(
-          elevation: 6,
-          borderRadius: BorderRadius.circular(28),
-          color: const Color(0xEE1F2220),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 10, 8),
-            child: Row(
+  Future<void> _showHwpFontSizePicker() async {
+    final int? picked = await showModalBottomSheet<int>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        final cs = Theme.of(ctx).colorScheme;
+        final Color sig = AppColors.of(ctx);
+        return SafeArea(
+          child: Container(
+            margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+            decoration: BoxDecoration(
+              color: cs.surface,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.touch_app_rounded, size: 17, color: sig),
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Text(
-                    _tr('수정할 자리를 터치해 바로 입력하세요', 'Tap anywhere to type directly', '点击文字位置即可直接输入', '編集する位置をタップして直接入力'),
-                    style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                TextButton(
-                  onPressed: () => unawaited(_finishHwpEditMode()),
-                  child: Text(_tr('완료', 'Done', '完成', '完了'), style: TextStyle(color: sig, fontWeight: FontWeight.w700)),
+                Text(_tr('글자 크기', 'Font size', '字号', '文字サイズ'), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _hwpFontSizeOptions.map((pt) {
+                    final bool sel = pt == _hwpFontSizePt;
+                    return ChoiceChip(
+                      label: Text('${pt}pt', style: TextStyle(fontWeight: sel ? FontWeight.w800 : FontWeight.w600)),
+                      selected: sel,
+                      selectedColor: sig.withValues(alpha: 0.2),
+                      onSelected: (_) => Navigator.pop(ctx, pt),
+                    );
+                  }).toList(),
                 ),
               ],
             ),
           ),
+        );
+      },
+    );
+    if (picked != null && mounted) {
+      setState(() => _hwpFontSizePt = picked);
+      await _hwpController.editApplyFormat({'fontSizePt': picked});
+    }
+  }
+
+  Future<void> _showHwpTextColorPicker() async {
+    final Color? picked = await showModalBottomSheet<Color>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        final cs = Theme.of(ctx).colorScheme;
+        final Color sig = AppColors.of(ctx);
+        return SafeArea(
+          child: Container(
+            margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+            decoration: BoxDecoration(
+              color: cs.surface,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(_tr('글자 색', 'Text color', '文字颜色', '文字色'), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: _hwpTextColorOptions.map((col) {
+                    final bool sel = col.toARGB32() == _hwpTextColor.toARGB32();
+                    return GestureDetector(
+                      onTap: () => Navigator.pop(ctx, col),
+                      child: Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: col,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: sel ? sig : Colors.black26, width: sel ? 3 : 1),
+                        ),
+                        child: sel ? const Icon(Icons.check, color: Colors.white, size: 18) : null,
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (picked != null && mounted) {
+      setState(() => _hwpTextColor = picked);
+      await _hwpController.editApplyFormat({'textColor': _colorToHex(picked)});
+    }
+  }
+
+  /// 문서 편집 막대: 메모 도구 모음 막대(MemoToolbar)와 동일한 형태
+  /// 순서: 볼드체 · 글자 크기 · 글자 색 · 되돌리기 · 다시 실행 · 취소 · 저장
+  Widget _buildHwpInlineEditBar(double bottomPadding) {
+    final double kb = MediaQuery.of(context).viewInsets.bottom;
+    final double bottomOffset = kb > 0 ? kb + 8.0 : math.max<double>(bottomPadding + 24.0, 28.0);
+    final List<Widget> items = [
+      MemoToolButton(
+        icon: Icons.format_bold_rounded,
+        label: _tr('볼드체', 'Bold', '粗体', '太字'),
+        active: _hwpBold,
+        onTap: () {
+          final next = !_hwpBold;
+          setState(() => _hwpBold = next);
+          unawaited(_hwpController.editApplyFormat({'bold': next}));
+        },
+      ),
+      MemoToolButton(
+        icon: Icons.format_size_rounded,
+        label: _tr('글자 크기', 'Font size', '字号', '文字サイズ'),
+        onTap: _showHwpFontSizePicker,
+      ),
+      MemoToolButton(
+        icon: Icons.format_color_text_rounded,
+        label: _tr('글자 색', 'Text color', '文字颜色', '文字色'),
+        dotColor: _hwpTextColor,
+        onTap: _showHwpTextColorPicker,
+      ),
+      MemoToolButton(
+        icon: Icons.undo,
+        label: _tr('되돌리기', 'Undo', '撤销', '元に戻す'),
+        enabled: _hwpCanUndo,
+        onTap: () => unawaited(_hwpController.editUndo()),
+      ),
+      MemoToolButton(
+        icon: Icons.redo,
+        label: _tr('다시 실행', 'Redo', '重做', 'やり直し'),
+        enabled: _hwpCanRedo,
+        onTap: () => unawaited(_hwpController.editRedo()),
+      ),
+      Semantics(
+        button: true,
+        label: _tr('취소', 'Cancel', '取消', 'キャンセル'),
+        child: InkResponse(
+          radius: 18,
+          onTap: _hwpSaving ? null : () => unawaited(_cancelHwpEditMode()),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: kMemoToolExtent, minHeight: kMemoToolExtent),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Center(
+                widthFactor: 1,
+                heightFactor: 1,
+                child: Text(
+                  _tr('취소', 'Cancel', '取消', 'キャンセル'),
+                  style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+          ),
         ),
       ),
+      MemoDoneButton(
+        label: _hwpSaving ? _tr('저장 중', 'Saving', '保存中', '保存中') : _tr('저장', 'Save', '保存', '保存'),
+        onTap: _hwpSaving ? () {} : () => unawaited(_saveHwpEdits()),
+      ),
+    ];
+
+    return Positioned(
+      key: const ValueKey('hwp_edit_toolbar'),
+      bottom: bottomOffset,
+      left: 12 + _safeSides.left,
+      right: 12 + _safeSides.right,
+      child: Center(child: MemoToolbar(children: items)),
     );
   }
 
@@ -4483,14 +4681,11 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
             : _getBgColor();
 
     return PopScope(
-      canPop: !_slideShow && !_findOpen && !_hwpHasEdits,
+      canPop: !_slideShow && !_findOpen && !_isHwpEditMode,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
-        if (_hwpHasEdits) {
-          unawaited(() async {
-            await _finishHwpEditMode();
-            if (mounted) Navigator.of(context).pop();
-          }());
+        if (_isHwpEditMode) {
+          unawaited(_cancelHwpEditMode());
           return;
         }
         if (!didPop && _findOpen) {

@@ -104,12 +104,20 @@ class HwpReaderController {
   /// 화면 위 직접 커서·키보드 편집 모드 켜기/끄기
   Future<void> setEditMode(bool enabled) async => _invoke?.call('setEditMode', [enabled]);
 
-  /// 편집한 내용을 원본 형식으로 직렬화(base64)해 현재 파일에 바로 반영
+  /// 편집한 내용을 원본 형식으로 직렬화(base64)해 저장 단추를 눌렀을 때만 반영
   Future<Map<String, Object?>?> exportEditedBytes({required bool preferHwpx}) async {
     final raw = await _query?.call('exportEditedBytes', [preferHwpx]);
     if (raw is Map) return Map<String, Object?>.from(raw);
     return null;
   }
+
+  /// 글자 서식(볼드체·글자 크기·글자 색) 적용
+  Future<void> editApplyFormat(Map<String, Object?> opts) async => _invoke?.call('editApplyFormat', [opts]);
+
+  /// 되돌리기 / 다시 실행 / 편집 세션 취소(저장 전 모든 수정 원복)
+  Future<void> editUndo() async => _invoke?.call('editUndo', []);
+  Future<void> editRedo() async => _invoke?.call('editRedo', []);
+  Future<void> cancelEditSession() async => _invoke?.call('cancelEditSession', []);
 
 
   /// PPT: 슬라이드 전체 그림(JPEG base64) — 글자가 그림으로만 된 슬라이드의 글자를 읽는 데 씀
@@ -278,7 +286,7 @@ class HwpViewer extends StatefulWidget {
   /// 스크롤 보기에서 지금 위치·전체 길이·보이는 높이 (오른쪽 회색 막대)
   final void Function(double top, double height, double client)? onScrollMetrics;
   final bool editMode;
-  final VoidCallback? onEditChanged;
+  final void Function(Map<String, Object?> state)? onEditState;
 
   const HwpViewer({
     super.key,
@@ -301,7 +309,7 @@ class HwpViewer extends StatefulWidget {
     this.vertical = false,
     this.onScrollMetrics,
     this.editMode = false,
-    this.onEditChanged,
+    this.onEditState,
   });
 
   @override
@@ -561,8 +569,8 @@ class _HwpViewerState extends State<HwpViewer> {
         widget.onPasswordNeeded?.call();
         unawaited(_requestPassword(event['incorrect'] == true));
         break;
-      case 'editChanged':
-        widget.onEditChanged?.call();
+      case 'editState':
+        widget.onEditState?.call(Map<String, Object?>.from(event));
         break;
       case 'error':
         _reportError(event['message'] ?? '$_format 문서를 표시하지 못했어요');
