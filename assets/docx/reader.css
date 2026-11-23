@@ -1,0 +1,105 @@
+@font-face { font-family: FReaderSans; src: url(../hwp/fonts/NotoSansKR-Regular.woff2); font-weight: 400; }
+@font-face { font-family: FReaderSans; src: url(../hwp/fonts/NotoSansKR-Bold.woff2); font-weight: 700; }
+@font-face { font-family: FReaderSerif; src: url(../hwp/fonts/NotoSerifKR-Regular.woff2); font-weight: 400; }
+@font-face { font-family: FReaderSerif; src: url(../hwp/fonts/NotoSerifKR-Bold.woff2); font-weight: 700; }
+@font-face { font-family: FReaderMath; src: url(../hwp/fonts/LatinModernMath-Regular.woff2); }
+html, body { margin: 0 !important; width: 100%; height: 100%; overflow: hidden; background: transparent !important; }
+body { font-family: FReaderSans, sans-serif; -webkit-text-size-adjust: 100%; }
+#pages { display: flex; align-items: center; justify-content: center; gap: calc(8px / 3); width: 100%; height: 100%; overflow: hidden; background: var(--backdrop, transparent); }
+#pages.rtl { flex-direction: row-reverse; }
+#measure { position: absolute; left: -100000px; top: 0; visibility: hidden; pointer-events: none; contain: layout style; }
+.page { flex: none; position: relative; overflow: hidden; background: var(--file-page, white); }
+/* 문서 자체 배경색(Word 페이지 색) */
+.page .odr-page-outer { background: var(--file-page, white) !important; }
+.page > .odr-page-outer { position: absolute !important; top: 0; left: 0; transform-origin: top left; }
+.odr-page-outer { display: block !important; margin: 0 !important; box-shadow: none !important; min-height: 0 !important; overflow: hidden; box-sizing: border-box; }
+.freader-content { overflow: hidden; position: absolute; }
+.freader-columns { margin: 0 !important; column-fill: auto; column-gap: 0; column-count: auto; overflow: visible; }
+.freader-columns x-p { orphans: 2; widows: 2; }
+.freader-columns tr { break-inside: avoid; }
+.freader-missing-image { display: flex; align-items: center; justify-content: center; box-sizing: border-box; border: 1px dashed #888; color: #666; font: 10pt FReaderSans, sans-serif; }
+body[data-theme="sepia"] .page > * { filter: sepia(0.23); }
+/* 다크: 쪽 내용만 뒤집음 (쪽 사이 회색 간격은 그대로) */
+body[data-theme="dark"] .page { background: #1f1f1f; }
+body[data-theme="dark"] .page > * { filter: invert(0.88) hue-rotate(180deg); }
+body[data-theme="dark"] .page img { filter: invert(1) hue-rotate(180deg); }
+::selection { background: rgba(255, 193, 7, 0.4); }
+.rtf-paper { position: relative; color: #000; background: #fff; }
+.rtf-paragraph { display: block; padding: 0; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; orphans: 2; widows: 2; }
+.rtf-paragraph > .rtf-run { position: relative; top: var(--rtf-leading, 0px); }
+.rtf-paragraph img { vertical-align: baseline; }
+.rtf-page-break { break-after: column; }
+.rtf-page-header, .rtf-page-footer { position: absolute; }
+.rtf-table { table-layout: fixed; border-collapse: collapse; }
+.rtf-table td { padding: 0; vertical-align: top; }
+
+/* OOXML-only rules: preserve the existing DOC/RTF and application UI. */
+.docx-layout x-p { overflow-wrap: break-word; }
+.docx-layout x-s { tab-size: var(--docx-tab, .5in); }
+.docx-table { border-collapse: collapse; }
+.docx-table td { box-sizing: border-box; }
+.docx-fitted-table td, .docx-fitted-table th { min-width: 0; overflow-wrap: anywhere; }
+.docx-layout img { max-width: 100%; object-fit: contain; }
+
+.docx-layout .docx-toc-entry { display: flex !important; align-items: baseline; gap: .25em; text-align: left !important; }
+.docx-toc-label { flex: 0 1 auto; }
+.docx-toc-leader { flex: 1 1 0; min-width: 0; overflow: hidden; white-space: nowrap; }
+.docx-toc-number { flex: none; white-space: nowrap; }
+
+.docx-tab { display: inline-block; width: 0; white-space: pre; overflow: hidden; vertical-align: baseline; position: relative; }
+.docx-tab[data-leader]::after { content: ''; position: absolute; left: 0; right: 0; bottom: .15em; border-bottom: 1px dotted currentColor; }
+.docx-tab[data-leader="hyphen"]::after { border-bottom-style: dashed; }
+.docx-tab[data-leader="underscore"]::after { border-bottom-style: solid; }
+/* FReader: 그림을 불러오는 동안 자리만 옅게 표시 */
+img[data-resource]:not([src]) { background: rgba(128, 128, 128, 0.12); }
+/* FReader: 각주·미주 */
+sup.docx-note-ref::after { content: attr(data-note); font-size: 0.68em; vertical-align: super; line-height: 0; }
+sup.docx-note-ref { font-size: 1em; vertical-align: baseline; line-height: 0; }
+.docx-note-area { position: absolute; z-index: 1; font: 8pt/1.35 FReaderSans, sans-serif; color: #000; white-space: pre-wrap; }
+.docx-note-area::before { content: ''; display: block; width: 33%; border-top: 0.75pt solid #000; margin-bottom: 3px; }
+.docx-note-area .docx-note sup { font-size: 0.75em; line-height: 0; }
+
+/* FReader: 파일 내 단어 검색 형광펜 */
+::highlight(freader-search) { background-color: rgba(255, 235, 59, 0.6); color: inherit; }
+::highlight(freader-search-current) { background-color: rgba(255, 193, 7, 0.95); color: inherit; }
+/* FReader: Word 수식 (MathML) */
+math.docx-math { font-family: FReaderMath, math; font-size: 1.1em; }
+math.docx-math mtext { font-family: inherit; }
+math.docx-math[display="block"] { display: block math; margin: 0.3em 0; }
+
+/* FReader 스크롤 보기: 쪽을 세로로, 쪽 사이는 살짝 띄움 */
+/* 쪽 뒤 바탕(--backdrop)은 문서 배경색 > 앱 테마 색(흰색/검은색). 쪽 사이 간격 줄(--gap)은 고정 색 */
+/* 쪽 사이 간격(스크롤 보기·두 쪽 보기)은 테마와 상관없이 밝은 회색 */
+body { --gap: #e2e2e6; }
+#pages > .page + .page { box-shadow: calc(-8px / 3) 0 0 0 var(--gap); }
+#pages.rtl > .page + .page { box-shadow: calc(8px / 3) 0 0 0 var(--gap); }
+/* 스크롤 보기: 문서 화면 자체 스크롤바는 숨김 (앱의 회색 막대만 보이게) */
+#vpages { scrollbar-width: none; }
+#vpages::-webkit-scrollbar { display: none; width: 0; height: 0; }
+/* 휴대폰에 따라 위 설정을 무시하고 문서 자체의 얇은 스크롤바가 함께 보이는 경우가 있어서 (막대 2개),
+   상자를 화면 오른쪽·아래로 30px 더 넓혀 그 스크롤바가 화면 밖에 그려지게 함 */
+#vpages { position: fixed; top: 0; left: 0; right: -30px; bottom: -30px; padding: 0 30px 30px 0; box-sizing: border-box; overflow-y: auto; overflow-x: hidden; background: var(--backdrop, var(--gap)); -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+#vpages .vslot { position: relative; margin: 0 0 6px 0; background: var(--file-page, white); overflow: hidden; box-shadow: 0 6px 0 0 var(--gap); }
+#vpages .vslot:last-child { box-shadow: none; }
+#vpages .vslot { width: var(--vw, 100%); margin-left: var(--vml, 0px); }
+body[data-theme="dark"] #vpages .vslot { background: var(--file-page, #1e1e1e); }
+
+/* FReader: 글 고르기는 앱이 직접 함 (휴대폰 기본 글 선택은 SVG·여러 겹 글에서 엉뚱하게 잡혀서 끔) */
+.page, #vpages { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+
+/* 라이트(편안한 모드 포함): 흰 쪽이 흰 바탕에 묻히지 않게 쪽마다 옅은 회색 테두리 */
+body[data-theme="white"] .page::after, body[data-theme="white"] #vpages .vslot::after { content: ''; position: absolute; inset: 0; border: 1px solid #c4c4ca; pointer-events: none; z-index: 10; }
+/* 스크롤 보기: 북마크한 쪽 왼쪽 위 책갈피 (쪽 테두리 선에서 시작) */
+/* 스크롤 보기 메모: 쪽 위에 겹쳐 그림 (누르기는 아래 쪽으로) */
+#vpages .vslot > svg.vmemo { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 9; }
+#vpages .vslot.bm::before { content: ''; position: absolute; left: min(18px, 5%); top: 0; width: 16px; height: 28px; background: #F2B01E; clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 74%, 0 100%); pointer-events: none; z-index: 11; }
+
+/* FReader 확대: 손가락이 움직이는 동안에는 그려 둔 그림을 통째로 옮기고 크기만 바꿈 (멈추면 그 배율로 다시 그림) */
+#vinner { transform-origin: 0 0; will-change: transform; }
+/* 넘겨 보기 확대: 손가락이 움직이는 동안에는 그려 둔 그림을 통째로 옮기고 크기만 바꿈 (멈추면 그 배율로 다시 그림) */
+#pages.zooming { position: relative; z-index: 1; transform-origin: 0 0; will-change: transform; background: transparent; }
+/* 넘겨 보기 확대 밑그림: 1배로 한 번 그려 둔 쪽 복사본 — 아직 안 그려진 가장자리를 같은 자리에서 채움 */
+#pages-under { position: fixed; left: 0; top: 0; z-index: 0; display: flex; align-items: center; justify-content: center; gap: calc(8px / 3); overflow: hidden; background: var(--backdrop, transparent); transform-origin: 0 0; will-change: transform; pointer-events: none; }
+#pages-under.rtl { flex-direction: row-reverse; }
+#pages-under > .page + .page { box-shadow: calc(-8px / 3) 0 0 0 var(--gap); }
+#pages-under.rtl > .page + .page { box-shadow: calc(8px / 3) 0 0 0 var(--gap); }
