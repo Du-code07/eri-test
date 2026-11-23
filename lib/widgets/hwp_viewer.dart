@@ -101,6 +101,26 @@ class HwpReaderController {
   /// 글자 선택 중 WebView 자체 세로·가로 스크롤을 즉시 잠금/해제
   void setScrollLocked(bool locked) => _setScrollLocked?.call(locked);
 
+  /// 인라인 한글 편집: 화면 상대 좌표(0..1)의 문단·표 셀 위치와 현재 글자를 조회
+  Future<Map<String, Object?>?> editHitTest(double nx, double ny) async {
+    final raw = await _query?.call('editHitTest', [nx, ny]);
+    if (raw is Map) return Map<String, Object?>.from(raw);
+    return null;
+  }
+
+  /// 인라인 한글 편집: 수정한 문단·표 셀 글자를 현재 문서에 즉시 반영하고 페이지를 다시 그림
+  Future<bool> editApply(Map<String, Object?> target, String newText) async {
+    final raw = await _query?.call('editApply', [target, newText]);
+    return raw == true;
+  }
+
+  /// 인라인 한글 편집: 수정된 문서를 원본 형식(.hwp/.hwpx) 그대로 무손실 직렬화(base64)
+  Future<Map<String, Object?>?> editExport({required bool preferHwpx}) async {
+    final raw = await _query?.call('editExport', [preferHwpx]);
+    if (raw is Map) return Map<String, Object?>.from(raw);
+    return null;
+  }
+
   /// PPT: 슬라이드 전체 그림(JPEG base64) — 글자가 그림으로만 된 슬라이드의 글자를 읽는 데 씀
   Future<String?> slideImage(int index, {int width = 1800}) async {
     final result = await _query?.call('slideImage', [index, width]);

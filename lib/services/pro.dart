@@ -4,12 +4,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../screens/pro_screen.dart';
 
 /// 이리ERI 프로: 유료 기능(문서 스캔·이미지 합치기·PDF 합치기, 앞으로 추가되는 유료 기능)
-/// - 무료 제공 기간(2027년 3월 1일 전)에는 모두 무료 (약관 제5조)
-/// - 이 버전에는 결제 기능이 없음: 판매는 2027년 3월 1일 전에 나오는 업데이트부터
+/// - 무료 제공 기간(2027년 중 유료 출시 전)에는 모두 무료 (약관 제5조)
+/// - 이 버전에는 결제 기능이 없음: 판매는 2027년 중 유료 출시 전에 나오는 업데이트부터
 ///   (그 뒤에도 이 버전을 쓰면 유료 기능이 잠기고 업데이트를 안내함)
 class Pro {
-  /// 무료 제공 기간: 이 날(2027년 3월 1일) 전까지는 유료 기능을 모두 무료로 (판매·체험 없음, 약관 제5조)
-  static final DateTime freeUntil = DateTime(2027, 3, 1);
+  /// 무료 제공 기간: 이 날(2027년 중 유료 출시) 전까지는 유료 기능을 모두 무료로 (판매·체험 없음, 약관 제5조)
+  static final DateTime freeUntil = DateTime(2028, 1, 1);
 
   /// 지금이 무료 제공 기간인지
   static bool get freePeriod => DateTime.now().isBefore(freeUntil);

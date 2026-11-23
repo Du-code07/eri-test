@@ -548,7 +548,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
               icon: Icons.workspace_premium_outlined,
               title: _t('이리ERI 프로', '이리ERI Pro', '이리ERI 专业版', '이리ERI プロ'),
               subtitle: Pro.freePeriod
-                  ? _t('2027년 3월 1일까지 무료로 쓸 수 있어요', 'Free to use until March 1, 2027', '2027年3月1日前可免费使用', '2027年3月1日まで無料で使えます')
+                  ? _t('2027년 유료 출시 전까지 무료로 쓸 수 있어요', 'Free to use until the paid launch in 2027', '在2027年付费版推出前可免费使用', '2027年の有料リリース前まで無料で使えます')
                   : _t('업데이트하면 구매할 수 있어요', 'Update the app to buy it', '更新应用后即可购买', 'アップデートすると購入できます'),
               onTap: () async {
                 await Navigator.of(context).push(PushAsideRoute(builder: (_) => ProScreen(lang: _lang)));

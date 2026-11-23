@@ -378,7 +378,7 @@ class _GuideRunnerState extends State<_GuideRunner> with TickerProviderStateMixi
               tr('EPUB 책 본문 글꼴을 바꿔요', 'Change the font for EPUB book text', '更改 EPUB 正文字体', 'EPUB本文のフォントを変えます')),
           _Step('pro', tr('이리ERI 프로', '이리ERI Pro', '이리ERI 专业版', '이리ERI プロ'),
               Pro.freePeriod
-                  ? tr('유료 기능과 무료 제공 기간(2027년 3월 1일까지)을 확인해요', 'See the paid features and the free period (until March 1, 2027)', '查看付费功能和免费提供期间（至2027年3月1日）', '有料機能と無料提供期間（2027年3月1日まで）を確認します')
+                  ? tr('유료 기능과 무료 제공 기간(2027년 출시 전까지)을 확인해요', 'See the paid features and the free period (until launch in 2027)', '查看付费功能和免费提供期间（至2027年推出前）', '有料機能と無料提供期間（2027年リリース前まで）を確認します')
                   : tr('유료 기능과 업데이트 안내를 확인해요', 'See the paid features and how to update', '查看付费功能和更新说明', '有料機能とアップデートの案内を確認します')),
           _Step('hidepaid', tr('유료 기능 숨기기', 'Hide Paid Features', '隐藏付费功能', '有料機能を隠す'),
               tr('쓸 수 없는 유료 기능을 메뉴에서 숨겨요', 'Hides paid features you cannot use from the menus', '在菜单中隐藏无法使用的付费功能', '使えない有料機能をメニューから隠します')),

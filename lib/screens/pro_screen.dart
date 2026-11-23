@@ -69,8 +69,8 @@ class ProScreen extends StatelessWidget {
           children: [
             Text(
               free
-                  ? _t('2027년 3월 1일까지 아래 기능을 모두 무료로 쓸 수 있어요', 'You can use all of these features free until March 1, 2027',
-                      '2027年3月1日前可免费使用以下全部功能', '2027年3月1日まで、以下の機能をすべて無料で使えます')
+                  ? _t('유료 출시 전까지 아래 기능을 모두 무료로 쓸 수 있어요', 'You can use all of these features free until the paid launch in 2027',
+                      '在2027年付费版推出前可免费使用以下全部功能', '2027年の有料リリース前まで、以下の機能をすべて無料で使えます')
                   : _t('무료 제공 기간이 끝났어요', 'The free period has ended', '免费提供期间已结束', '無料提供期間は終了しました'),
               style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: cs.onSurface),
             ),
@@ -90,9 +90,9 @@ class ProScreen extends StatelessWidget {
                 if (free) ...[
                   note(_t('지금은 판매하지 않아요. 결제 없이 모든 유료 기능을 쓸 수 있어요', 'Nothing is for sale right now. You can use all paid features without paying',
                       '目前不出售。无需付款即可使用全部付费功能', '現在は販売していません。支払いなしで有料機能をすべて使えます')),
-                  note(_t('2027년 3월 1일부터 이리ERI 프로(1회 구매)로 판매할 예정이에요. 판매를 시작하기 전에 앱 안에서 미리 알려 드려요',
-                      '이리ERI Pro is planned to go on sale as a one-time purchase from March 1, 2027. You will be notified in the app before sales begin',
-                      '计划从2027年3月1日起以 이리ERI 专业版（一次性购买）出售。开始出售前会在应用内提前通知', '2027年3月1日から이리ERI プロ（買い切り）として販売する予定です。販売開始前にアプリ内でお知らせします')),
+                  note(_t('2027년 중 이리ERI 프로(1회 구매)로 출시할 예정이에요. 판매를 시작하기 30일 전에 앱 안에서 미리 알려 드려요',
+                      '이리ERI Pro is planned to launch as a one-time purchase in 2027. You will be notified in the app 30 days before sales begin',
+                      '计划于2027年内以 이리ERI 专业版（一次性购买）推出。开始出售前30天会在应用内提前通知', '2027年中に이리ERI プロ（買い切り）としてリリースする予定です。販売開始の30日前にアプリ内でお知らせします')),
                 ] else
                   note(_t('이 버전에서는 이리ERI 프로를 구매할 수 없어요. 앱을 업데이트하면 구매할 수 있어요',
                       '이리ERI Pro cannot be bought in this version. Update the app to buy it',

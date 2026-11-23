@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../widgets/app_colors.dart';
 
-/// 시작 화면: 책 읽는 이리 애니메이션(assets/splash/splash_anim.webp)이
-/// 네모 테두리 없이 크림 배경에서 앱 배경색으로 자연스럽게 스며들며 재생된 뒤 사라짐
+/// 시작 화면: 투명 배경의 책 읽는 이리 애니메이션(assets/splash/splash_anim.webp)이
+/// 현재 테마 배경색(라이트·편안함·다크) 위에서 바로 재생된 뒤 사라짐
 class SplashOverlay extends StatefulWidget {
   const SplashOverlay({super.key, required this.onDone});
   final VoidCallback onDone;
@@ -19,7 +19,6 @@ class _SplashOverlayState extends State<SplashOverlay> with SingleTickerProvider
   static const int _totalMs = 3100;
   static const String _animAsset = 'assets/splash/splash_anim.webp';
   static const String _stillAsset = 'assets/splash/splash_still.webp';
-  static const Color _creamBg = Color(0xFFEFE0C1);
 
   late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(milliseconds: _totalMs));
 
@@ -69,9 +68,7 @@ class _SplashOverlayState extends State<SplashOverlay> with SingleTickerProvider
   Widget build(BuildContext context) {
     final Color bg = Theme.of(context).scaffoldBackgroundColor;
     final Color fg = Theme.of(context).colorScheme.onSurface;
-    final bool dark = Theme.of(context).brightness == Brightness.dark;
-    const double animSize = 290;
-    const double haloSize = 340;
+    const double animSize = 210;
     final String assetPath = Anim.off.value ? _stillAsset : _animAsset;
 
     return Material(
@@ -98,58 +95,18 @@ class _SplashOverlayState extends State<SplashOverlay> with SingleTickerProvider
                         child: Transform.scale(
                           scale: (0.90 + 0.10 * intro) * (1 + 0.04 * out),
                           child: SizedBox(
-                            width: haloSize,
-                            height: haloSize,
-                            child: Stack(
-                              alignment: Alignment.center,
-                              children: [
-                                // 크림 배경이 앱 뒷배경색으로 부드럽게 동화되도록 넓게 퍼지는 그라데이션
-                                IgnorePointer(
-                                  child: Container(
-                                    width: haloSize,
-                                    height: haloSize,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      gradient: RadialGradient(
-                                        colors: [
-                                          _creamBg.withValues(alpha: dark ? 0.34 : 0.72),
-                                          _creamBg.withValues(alpha: dark ? 0.14 : 0.32),
-                                          bg.withValues(alpha: 0.0),
-                                        ],
-                                        stops: const [0.0, 0.62, 1.0],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                // 네모 테두리 없이 가장자리 크림 배경이 방사형으로 투명하게 스며듦
-                                SizedBox(
-                                  width: animSize,
-                                  height: animSize,
-                                  child: ShaderMask(
-                                    blendMode: BlendMode.dstIn,
-                                    shaderCallback: (Rect bounds) => const RadialGradient(
-                                      colors: [
-                                        Colors.white,
-                                        Colors.white,
-                                        Color(0x78FFFFFF),
-                                        Colors.transparent,
-                                      ],
-                                      stops: [0.0, 0.68, 0.86, 1.0],
-                                    ).createShader(bounds),
-                                    child: Image.asset(
-                                      assetPath,
-                                      fit: BoxFit.contain,
-                                      filterQuality: FilterQuality.high,
-                                      gaplessPlayback: true,
-                                    ),
-                                  ),
-                                ),
-                              ],
+                            width: animSize,
+                            height: animSize,
+                            child: Image.asset(
+                              assetPath,
+                              fit: BoxFit.contain,
+                              filterQuality: FilterQuality.high,
+                              gaplessPlayback: true,
                             ),
                           ),
                         ),
                       ),
-                      const SizedBox(height: 6),
+                      const SizedBox(height: 14),
                       Opacity(
                         opacity: name.clamp(0.0, 1.0),
                         child: Transform.translate(

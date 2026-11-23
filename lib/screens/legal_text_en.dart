@@ -23,13 +23,13 @@ const List<(String, List<String>)> termsEn = [
   ]),
   ('Article 4 (Services and Device Permissions)', [
     'The App lets Users open and view files in many formats on their device, including PDF, Hangul (HWP, HWPX), Word, PowerPoint, Excel, EPUB, TXT and image files, and provides tools such as notes, bookmarks, scanning and file merging.',
-    'The basic features of the App are provided free of charge. Some advanced features are Paid Features, but under Article 5 the Paid Features are also provided free of charge to all Users until March 1, 2027.',
+    'The basic features of the App are provided free of charge. Some advanced features are Paid Features, but under Article 5 the Paid Features are also provided free of charge to all Users until the paid launch planned in 2027.',
     'Because the App converts and displays documents on the User\'s device, fonts, formatting and layout may look different from the program that originally created the file.',
     'To provide its core features, the App uses access to files and folders chosen by the User (through the system file picker and Folders to Search) and some optional device permissions (camera access for document scanning, biometrics for unlocking, etc.). If a User does not allow an optional permission or access is restricted by changes in Android OS policy, the related feature may not work.',
   ]),
   ('Article 5 (Free Provision and Future Sale of Paid Features)', [
-    'Free period: Until March 1, 2027 (through February 28, 2027), the Operator provides all Paid Features, such as Scan Document, Merge Images and Merge PDFs, free of charge to all Users. During this period the App accepts no payments, and the Operator earns no revenue of any kind, including sales, advertising or donations.',
-    'Future sale: The Operator plans to sell the Paid Features as a one-time in-app purchase of "이리ERI Pro" after March 1, 2027. When sales begin, the Operator will announce amended Terms covering the sale (price, payment and restoring purchases, free trial, withdrawal and refunds) together with the Operator (seller) information required by applicable law, from 30 days before the effective date under Article 3.',
+    'Free period: Until the paid launch planned in 2027, the Operator provides all Paid Features, such as Scan Document, Merge Images and Merge PDFs, free of charge to all Users. During this period the App accepts no payments, and the Operator earns no revenue of any kind, including sales, advertising or donations.',
+    'Future sale: The Operator plans to sell the Paid Features as a one-time in-app purchase of "이리ERI Pro" during 2027. When sales begin, the Operator will announce amended Terms covering the sale (price, payment and restoring purchases, free trial, withdrawal and refunds) together with the Operator (seller) information required by applicable law, from 30 days before the effective date under Article 3.',
     'After sales begin, Users who have not purchased 이리ERI Pro may no longer be able to use the Paid Features. Even then, the basic features of the App, files created by scanning or merging during the free period, and User Files, notes and bookmarks remain available.',
     'The Operator may postpone the start of sales or extend the free period, in which case it will announce this in the App.',
   ]),
@@ -115,7 +115,7 @@ const List<(String, List<String>)> privacyEn = [
     '- How to refuse and its effect: Users can reduce this processing by not using the features that find, copy or build tables of contents from text on image-based pages, and all other features of the App remain available.',
   ]),
   ('5. In-App Purchases', [
-    'Until March 1, 2027, the Paid Features are provided free of charge and no payments are made in the App, so the payment and purchase information and the free trial record in this section are not processed. Once paid sales begin, they will be processed as follows, and this policy will be announced again under Section 12 beforehand.',
+    'Until the paid launch planned in 2027, the Paid Features are provided free of charge and no payments are made in the App, so the payment and purchase information and the free trial record in this section are not processed. Once paid sales begin, they will be processed as follows, and this policy will be announced again under Section 12 beforehand.',
     'Purchases of 이리ERI Pro (Paid Features) are processed only through the Google Play billing system.',
     'Payment information (such as credit card numbers) is processed directly by Google, and the Operator does not receive or store it. To provide Paid Features and confirm purchases, the App processes the product ID, price, purchase state and purchase token (the purchase token is used only to ask Google Play to acknowledge the purchase and is not sent to the Operator).',
     '- Stored on the device: whether the purchase has been made (so Paid Features can be used without internet access) and the start date of the free trial. These are deleted when the data is cleared or the App is deleted, and the purchase can be restored with the same Google account.',

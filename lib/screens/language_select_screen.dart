@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/storage_service.dart';
 import '../widgets/app_colors.dart';
+import '../widgets/file_type_icon.dart';
 
 /// 언어 선택지 이름: 각 언어로 표시. '기본 시스템'은 휴대폰(시스템) 언어로 표시한다.
 String languageOptionLabel(String code) {
@@ -91,7 +92,7 @@ class _LanguageSelectScreenState extends State<LanguageSelectScreen> {
                   CircleAvatar(
                     radius: 22,
                     backgroundColor: cs.primaryContainer,
-                    child: Icon(Icons.translate, color: cs.onPrimaryContainer, shadows: AppColors.sigShadows(context)),
+                    child: LanguageGlyphIcon(size: 23, color: cs.onPrimaryContainer),
                   ),
                   const SizedBox(width: 14),
                   Expanded(
@@ -138,7 +139,7 @@ class _LanguageSelectScreenState extends State<LanguageSelectScreen> {
                         ),
                         title: Text(languageOptionLabel(code), style: TextStyle(fontWeight: code == _selected ? FontWeight.w700 : FontWeight.w600, shadows: code == _selected ? AppColors.sigShadows(context) : null)),
                         // 기본 시스템: 지금 휴대폰 언어에 따라 어떤 언어로 보일지
-                        subtitle: code == 'system' ? Text(languageOptionLabel(StorageService.resolveSystemLanguage())) : null,
+                        subtitle: code == 'system' ? Text(languageOptionLabel(StorageService.resolveSystemLanguage()), style: TextStyle(shadows: code == _selected ? AppColors.sigShadows(context) : null)) : null,
                         trailing: Icon(
                           code == _selected ? Icons.check_circle : Icons.radio_button_unchecked,
                           color: code == _selected ? cs.onSecondaryContainer : cs.outline,

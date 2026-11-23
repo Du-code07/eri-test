@@ -1033,8 +1033,139 @@ function withoutZoom(fn) {
     try { return fn.apply(this, args); } finally { zoomDrawn = keep; zoomRedraw(); }
   };
 }
+
+// ── 인라인 한글 편집 (rhwp MIT 엔진 직접 호출: 원본 표·서식·도장·이미지 100% 보존) ──
+function clearPageCache() {
+  for (const e of cache.values()) releaseEntry(e);
+  cache.clear();
+  cachedBytes = 0;
+}
+
+function editHitTest(nx, ny) {
+  if (!doc || disposed || options.spread || vertical) return { ok: false, reason: 'mode' };
+  const svg = host.querySelector('.page svg');
+  if (!svg) return { ok: false, reason: 'no_svg' };
+  const rect = svg.getBoundingClientRect();
+  if (!(rect.width > 0 && rect.height > 0)) return { ok: false, reason: 'no_rect' };
+  const vx = Number(nx) * window.innerWidth;
+  const vy = Number(ny) * window.innerHeight;
+  if (vx < rect.left || vx > rect.right || vy < rect.top || vy > rect.bottom) {
+    return { ok: false, reason: 'outside' };
+  }
+  const vb = svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width > 0
+    ? svg.viewBox.baseVal
+    : { x: 0, y: 0, width: rect.width, height: rect.height };
+  const xPt = vb.x + ((vx - rect.left) / rect.width) * vb.width;
+  const yPt = vb.y + ((vy - rect.top) / rect.height) * vb.height;
+  let hit = null;
+  try {
+    const raw = doc.hitTest(page, xPt, yPt);
+    hit = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch (e) {
+    return { ok: false, reason: 'hit_err', error: String(e) };
+  }
+  if (!hit || hit.hit === false) return { ok: false, reason: 'miss' };
+  const sec = Number(hit.sectionIndex ?? hit.sectionIdx ?? 0);
+  const para = Number(hit.paragraphIndex ?? hit.paraIndex ?? hit.parentParaIdx ?? hit.paraIdx ?? 0);
+  const inTable = Boolean(hit.inTable || hit.cellPath || hit.cellIndex !== undefined || hit.cellIdx !== undefined);
+  let text = '';
+  let target = { sec, para, inTable };
+  try {
+    if (inTable && hit.cellPath && typeof doc.getCellParagraphLengthByPath === 'function') {
+      const pathJson = typeof hit.cellPath === 'string' ? hit.cellPath : JSON.stringify(hit.cellPath);
+      const cellPara = Number(hit.cellParagraphIndex ?? hit.cellParaIdx ?? 0);
+      const len = doc.getCellParagraphLengthByPath(sec, para, pathJson, cellPara);
+      text = len > 0 ? doc.getTextInCellByPath(sec, para, pathJson, cellPara, 0, len) : '';
+      target = { sec, para, inTable: true, pathJson, cellPara, oldLen: len };
+    } else if (inTable && (hit.cellIndex !== undefined || hit.cellIdx !== undefined)) {
+      const ctrl = Number(hit.controlIndex ?? hit.controlIdx ?? 0);
+      const cell = Number(hit.cellIndex ?? hit.cellIdx ?? 0);
+      const cellPara = Number(hit.cellParagraphIndex ?? hit.cellParaIdx ?? 0);
+      const len = doc.getCellParagraphLength(sec, para, ctrl, cell, cellPara);
+      text = len > 0 ? doc.getTextInCell(sec, para, ctrl, cell, cellPara, 0, len) : '';
+      target = { sec, para, inTable: true, ctrl, cell, cellPara, oldLen: len };
+    } else {
+      const len = doc.getParagraphLength(sec, para);
+      text = len > 0 ? doc.getTextRange(sec, para, 0, len) : '';
+      target = { sec, para, inTable: false, oldLen: len };
+    }
+  } catch (e) {
+    return { ok: false, reason: 'read_err', error: String(e) };
+  }
+  return { ok: true, target, text: String(text ?? ''), inTable };
+}
+
+async function editApply(target, newText) {
+  if (!doc || disposed || !target) return false;
+  const txt = String(newText ?? '');
+  try {
+    const sec = Number(target.sec ?? 0);
+    const para = Number(target.para ?? 0);
+    if (target.inTable && target.pathJson) {
+      const cellPara = Number(target.cellPara ?? 0);
+      const curLen = doc.getCellParagraphLengthByPath(sec, para, target.pathJson, cellPara);
+      if (curLen > 0) doc.deleteTextInCellByPath(sec, para, target.pathJson, cellPara, 0, curLen);
+      if (txt.length > 0) doc.insertTextInCellByPath(sec, para, target.pathJson, cellPara, 0, txt);
+    } else if (target.inTable && target.cell !== undefined) {
+      const ctrl = Number(target.ctrl ?? 0);
+      const cell = Number(target.cell ?? 0);
+      const cellPara = Number(target.cellPara ?? 0);
+      const curLen = doc.getCellParagraphLength(sec, para, ctrl, cell, cellPara);
+      if (curLen > 0) doc.deleteTextInCell(sec, para, ctrl, cell, cellPara, 0, curLen);
+      if (txt.length > 0) doc.insertTextInCell(sec, para, ctrl, cell, cellPara, 0, txt);
+    } else {
+      const curLen = doc.getParagraphLength(sec, para);
+      if (typeof doc.replaceText === 'function') {
+        doc.replaceText(sec, para, 0, curLen, txt);
+      } else {
+        if (curLen > 0) doc.deleteText(sec, para, 0, curLen);
+        if (txt.length > 0) doc.insertText(sec, para, 0, txt);
+      }
+    }
+    clearPageCache();
+    count = Math.max(1, doc.pageCount ? doc.pageCount() : count);
+    if (page >= count) page = count - 1;
+    await render();
+    reportLocation();
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function uint8ToBase64(bytes) {
+  let out = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    out += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(out);
+}
+
+function editExport(preferHwpx) {
+  if (!doc || disposed) return { ok: false, error: 'no_doc' };
+  try {
+    let bytes = null;
+    let ext = preferHwpx ? 'hwpx' : 'hwp';
+    if (preferHwpx) {
+      bytes = doc.exportHwpx();
+    } else {
+      try {
+        bytes = doc.exportHwp();
+      } catch (_) {
+        bytes = doc.exportHwpx();
+        ext = 'hwpx';
+      }
+    }
+    if (!bytes || !bytes.length) return { ok: false, error: 'empty_export' };
+    return { ok: true, ext, base64: uint8ToBase64(bytes) };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
 window.freaderHwp = { setView, resetScrollZoom: vResetZoom, setScrollMarks, setScrollMemos, setScrollMemo, visibleSlots: vVisibleSlots, mostVisiblePage: vMostVisible, highlightBoxes: withoutZoom(highlightBoxes), beginDocument, pageSizes, setVertical, scrollToRatio: vScrollToRatio, appendChunk, openDocument, configure, display, next, previous, progress, highlightSelection: withoutZoom(highlightSelection), destroy,
-  search, showSearchResult, clearSearch, headingCandidates, pageText, visibleTextBoxes: withoutZoom(visibleTextBoxes), pageRect: withoutZoom(pageRect),
+  search, showSearchResult, clearSearch, headingCandidates, pageText, visibleTextBoxes: withoutZoom(visibleTextBoxes), pageRect: withoutZoom(pageRect), editHitTest: withoutZoom(editHitTest), editApply, editExport,
   getState: () => ({ ready: readyReported, page, count, cachedPages: cache.size, cachedBytes, received, spread: options.spread, maxBytes: MAX_BYTES }) };
 window.addEventListener('pagehide', destroy, { once: true });
 
