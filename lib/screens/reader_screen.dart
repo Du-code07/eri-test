@@ -4194,7 +4194,8 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       if (!_pageModeScroll || _docVertical)
       QuickToolItem(
         id: 'memo',
-        icon: MemoToolIcon(kind: 'memo', color: _isMemoMode ? AppColors.signature : Colors.white, size: 22),
+        icon: const MemoToolIcon(kind: 'memo', color: Colors.white, size: 22),
+        active: _isMemoMode,
         tooltip: _tr('메모', 'Memo', '笔记', 'メモ'),
         onTap: () {
           setState(() {
@@ -4279,7 +4280,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   }
 
   /// 지금 보고 있는 쪽(2페이지 보기면 두 쪽)의 글을 보여 주고 복사할 수 있게 함
-  static const List<int> _hwpFontSizeOptions = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32];
+  static final List<int> _hwpFontSizeOptions = List<int>.generate(43, (i) => i + 6); // 6pt ~ 48pt
   static const List<Color> _hwpTextColorOptions = [
     Color(0xFF000000),
     Color(0xFF555555),
@@ -4316,6 +4317,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           } catch (_) {}
         }
       }
+      FocusManager.instance.primaryFocus?.unfocus();
       await _hwpController.setEditMode(false);
       if (!mounted) return;
       setState(() {
@@ -4346,6 +4348,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       _hwpCanRedo = false;
       _hwpSubPanel = null;
     });
+    FocusManager.instance.primaryFocus?.unfocus();
     unawaited(_hwpController.cancelEditSession());
   }
 
@@ -4368,53 +4371,95 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     _hwpController.setEditMode(true);
   }
 
-  /// 글자 크기 / 글자 색 설정 패널: 자판에 가려지지 않도록 편집 막대 바로 위에 표시
+  Widget _hwpTextColorBarIcon(Color iconColor, Color barColor) {
+    return SizedBox(
+      width: 22,
+      height: 22,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            'A',
+            style: TextStyle(
+              color: iconColor,
+              fontSize: 13.5,
+              fontWeight: FontWeight.w800,
+              height: 1.0,
+            ),
+          ),
+          const SizedBox(height: 1.5),
+          Container(
+            width: 15,
+            height: 4,
+            decoration: BoxDecoration(
+              color: barColor,
+              borderRadius: BorderRadius.circular(2),
+              border: Border.all(color: Colors.white70, width: 0.9),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 글자 크기(스크롤 휠) / 글자 색 설정 패널: 자판에 가려지지 않도록 편집 막대 바로 위에 표시
   Widget _buildHwpSubPanel() {
     final Color sig = AppColors.of(context);
     if (_hwpSubPanel == 'size') {
+      final int initIdx = _hwpFontSizeOptions.indexOf(_hwpFontSizePt).clamp(0, _hwpFontSizeOptions.length - 1);
       return Material(
         color: Colors.black87,
         borderRadius: BorderRadius.circular(20),
         elevation: 6,
         clipBehavior: Clip.antiAlias,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: _hwpFontSizeOptions.map((pt) {
-                final bool sel = pt == _hwpFontSizePt;
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 2),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(14),
-                    onTap: () {
-                      setState(() {
-                        _hwpFontSizePt = pt;
-                        _hwpSubPanel = null;
-                      });
-                      unawaited(_hwpController.editApplyFormat({'fontSizePt': pt}));
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: sel ? sig : Colors.white12,
-                        borderRadius: BorderRadius.circular(14),
-                      ),
+        child: SizedBox(
+          width: 92,
+          height: 118,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              IgnorePointer(
+                child: Container(
+                  width: 72,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: sig.withValues(alpha: 0.22),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: sig.withValues(alpha: 0.7), width: 1.2),
+                  ),
+                ),
+              ),
+              ListWheelScrollView.useDelegate(
+                controller: FixedExtentScrollController(initialItem: initIdx),
+                itemExtent: 32,
+                diameterRatio: 1.4,
+                physics: const FixedExtentScrollPhysics(),
+                onSelectedItemChanged: (idx) {
+                  final int pt = _hwpFontSizeOptions[idx];
+                  if (pt != _hwpFontSizePt) {
+                    setState(() => _hwpFontSizePt = pt);
+                    unawaited(_hwpController.editApplyFormat({'fontSizePt': pt}));
+                  }
+                },
+                childDelegate: ListWheelChildBuilderDelegate(
+                  childCount: _hwpFontSizeOptions.length,
+                  builder: (ctx, idx) {
+                    final int pt = _hwpFontSizeOptions[idx];
+                    final bool sel = pt == _hwpFontSizePt;
+                    return Center(
                       child: Text(
-                        '$pt',
+                        '${pt}pt',
                         style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: sel ? FontWeight.w800 : FontWeight.w600,
+                          color: sel ? Colors.white : Colors.white54,
+                          fontSize: sel ? 14.5 : 13,
+                          fontWeight: sel ? FontWeight.w800 : FontWeight.w500,
                         ),
                       ),
-                    ),
-                  ),
-                );
-              }).toList(),
-            ),
+                    );
+                  },
+                ),
+              ),
+            ],
           ),
         ),
       );
@@ -4450,8 +4495,8 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                         color: col,
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: sel ? sig : Colors.white54,
-                          width: sel ? 2.6 : 1.2,
+                          color: sel ? sig : Colors.white70,
+                          width: sel ? 2.6 : 1.0,
                         ),
                       ),
                       child: sel ? const Icon(Icons.check, color: Colors.white, size: 14) : null,
@@ -4493,9 +4538,8 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
         onTap: () => setState(() => _hwpSubPanel = _hwpSubPanel == 'size' ? null : 'size'),
       ),
       MemoToolButton(
-        icon: Icons.format_color_text_rounded,
+        iconBuilder: (c) => _hwpTextColorBarIcon(c, _hwpTextColor),
         label: _tr('글자 색', 'Text color', '文字颜色', '文字色'),
-        dotColor: _hwpTextColor,
         active: _hwpSubPanel == 'color',
         onTap: () => setState(() => _hwpSubPanel = _hwpSubPanel == 'color' ? null : 'color'),
       ),

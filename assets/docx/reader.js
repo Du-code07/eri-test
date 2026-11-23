@@ -860,11 +860,27 @@ function vDrawMemo(i) {
     const kind = s.k || 'pen';
     if (kind === 'tape') {
       const pts = [];
+      const minStep = Math.max(5, w * 0.22);
       for (let k = 0; k < xs.length; k++) {
         const px = xs[k] * 1000, py = ys[k] * H;
-        if (!pts.length || Math.hypot(px - pts[pts.length - 1][0], py - pts[pts.length - 1][1]) >= 0.4) {
+        if (!pts.length || Math.hypot(px - pts[pts.length - 1][0], py - pts[pts.length - 1][1]) >= minStep) {
           pts.push([px, py]);
         }
+      }
+      if (xs.length >= 2) {
+        const lx = xs[xs.length - 1] * 1000, ly = ys[ys.length - 1] * H;
+        if (Math.hypot(lx - pts[pts.length - 1][0], ly - pts[pts.length - 1][1]) >= 1.5) pts.push([lx, ly]);
+      }
+      const endSafe = Math.max(w * 0.6, 12);
+      while (pts.length >= 3 && Math.hypot(pts[pts.length - 1][0] - pts[pts.length - 2][0], pts[pts.length - 1][1] - pts[pts.length - 2][1]) < endSafe) {
+        const a = pts[pts.length - 3], b = pts[pts.length - 2], c = pts[pts.length - 1];
+        if ((b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1]) < 0) pts.pop();
+        else pts.splice(pts.length - 2, 1);
+      }
+      while (pts.length >= 3 && Math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]) < endSafe) {
+        const a = pts[0], b = pts[1], c = pts[2];
+        if ((b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1]) < 0) pts.shift();
+        else pts.splice(1, 1);
       }
       if (!pts.length) return '';
       if (pts.length === 1) {

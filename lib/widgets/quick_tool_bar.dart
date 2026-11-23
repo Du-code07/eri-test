@@ -14,6 +14,7 @@ class QuickToolItem {
     this.enabled = true,
     this.id = '',
     this.label,
+    this.active = false,
   });
 
   /// 도구 모음 설정에서 쓰는 이름표 ('find', 'memo' …)
@@ -43,6 +44,9 @@ class QuickToolItem {
 
   /// 누른 뒤 메뉴를 닫을지 여부 (파일 이동처럼 화면이 바뀌는 기능)
   final bool closeAfterTap;
+
+  /// 켜진 상태 표시: 아이콘 색을 바꾸지 않고 왼쪽에 시그니처 세로 선 표시
+  final bool active;
 }
 
 /// [trigger] 값이 바뀔 때마다 아이콘을 살짝 흔든다 (눌렀다는 반응 표시)
@@ -127,7 +131,25 @@ class QuickToolBar extends StatelessWidget {
                   padding: EdgeInsets.zero,
                   icon: Opacity(
                     opacity: it.enabled ? 1 : 0.3,
-                    child: IconTheme.merge(data: const IconThemeData(color: Colors.white, size: 20), child: it.icon),
+                    child: Stack(
+                      alignment: Alignment.center,
+                      clipBehavior: Clip.none,
+                      children: [
+                        if (it.active && it.enabled)
+                          Positioned(
+                            left: -7,
+                            child: Container(
+                              width: 3.5,
+                              height: 16.5,
+                              decoration: BoxDecoration(
+                                color: AppColors.signature,
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                            ),
+                          ),
+                        IconTheme.merge(data: const IconThemeData(color: Colors.white, size: 20), child: it.icon),
+                      ],
+                    ),
                   ),
                   tooltip: it.tooltip,
                   onPressed: it.enabled

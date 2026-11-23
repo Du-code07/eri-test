@@ -524,38 +524,41 @@ void paintMemoLine(Canvas canvas, List<Offset> pts, {required String kind, requi
 
 /// 테이프: 끝을 손으로 뜯은 것처럼 항상 뾰족뾰족하게. 길게 눌러 미세 떨림이 생겨도 끝 톱니가 뭉개지지 않게 정리
 void _paintTape(Canvas canvas, List<Offset> pts, Path body, Color color, double width) {
-  // 1) 길게 누를 때 끝부분에 쌓이는 미세 떨림 점(겹침·되돌아옴)을 정리해 둥근 이음매가 톱니를 덮지 않게 함
+  // 1) 빠르게 그리다 뗄 때 끝부분에 생기는 짧은 꺾임·미세 꼬리를 정리해 둥근 이음매가 뒷부분 톱니를 덮지 않게 함
   final List<Offset> clean = <Offset>[pts.first];
-  const double minStep = 3.0;
+  final double minStep = math.max(4.0, width * 0.22);
   for (int i = 1; i < pts.length; i++) {
     if ((pts[i] - clean.last).distance >= minStep) {
       clean.add(pts[i]);
     }
   }
-  // 끝부분에서 아주 짧게 되돌아온 미세 꼬리 제거 (strokeJoin.round가 톱니를 뭉개는 현상 방지)
-  final double tailCut = math.max(width * 0.35, 4.0);
-  while (clean.length >= 3) {
+  if (pts.length >= 2 && (pts.last - clean.last).distance >= 1.5) {
+    clean.add(pts.last);
+  }
+  // 끝부분 바로 앞 선분이 테이프 반폭(width * 0.55)보다 짧으면 StrokeJoin.round가 끝 톱니를 덮어 뭉개므로 중간 꼭짓점을 정리
+  final double endSafe = math.max(width * 0.6, 8.0);
+  while (clean.length >= 3 && (clean.last - clean[clean.length - 2]).distance < endSafe) {
     final Offset a = clean[clean.length - 3];
     final Offset b = clean[clean.length - 2];
     final Offset c = clean.last;
     final Offset ab = b - a;
     final Offset bc = c - b;
-    if (bc.distance <= tailCut && (ab.dx * bc.dx + ab.dy * bc.dy) < 0) {
-      clean.removeLast();
+    if ((ab.dx * bc.dx + ab.dy * bc.dy) < 0) {
+      clean.removeLast(); // 되돌아온 꼬리는 버림
     } else {
-      break;
+      clean.removeAt(clean.length - 2); // 짧은 끝 마디를 합쳐 매끄럽게 뻗게 함
     }
   }
-  while (clean.length >= 3) {
+  while (clean.length >= 3 && (clean[1] - clean[0]).distance < endSafe) {
     final Offset a = clean[0];
     final Offset b = clean[1];
     final Offset c = clean[2];
     final Offset ab = b - a;
     final Offset bc = c - b;
-    if (ab.distance <= tailCut && (ab.dx * bc.dx + ab.dy * bc.dy) < 0) {
+    if ((ab.dx * bc.dx + ab.dy * bc.dy) < 0) {
       clean.removeAt(0);
     } else {
-      break;
+      clean.removeAt(1);
     }
   }
 

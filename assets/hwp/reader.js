@@ -621,11 +621,27 @@ function vDrawMemo(i) {
     const kind = s.k || 'pen';
     if (kind === 'tape') {
       const pts = [];
+      const minStep = Math.max(5, w * 0.22);
       for (let k = 0; k < xs.length; k++) {
         const px = xs[k] * 1000, py = ys[k] * H;
-        if (!pts.length || Math.hypot(px - pts[pts.length - 1][0], py - pts[pts.length - 1][1]) >= 0.4) {
+        if (!pts.length || Math.hypot(px - pts[pts.length - 1][0], py - pts[pts.length - 1][1]) >= minStep) {
           pts.push([px, py]);
         }
+      }
+      if (xs.length >= 2) {
+        const lx = xs[xs.length - 1] * 1000, ly = ys[ys.length - 1] * H;
+        if (Math.hypot(lx - pts[pts.length - 1][0], ly - pts[pts.length - 1][1]) >= 1.5) pts.push([lx, ly]);
+      }
+      const endSafe = Math.max(w * 0.6, 12);
+      while (pts.length >= 3 && Math.hypot(pts[pts.length - 1][0] - pts[pts.length - 2][0], pts[pts.length - 1][1] - pts[pts.length - 2][1]) < endSafe) {
+        const a = pts[pts.length - 3], b = pts[pts.length - 2], c = pts[pts.length - 1];
+        if ((b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1]) < 0) pts.pop();
+        else pts.splice(pts.length - 2, 1);
+      }
+      while (pts.length >= 3 && Math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]) < endSafe) {
+        const a = pts[0], b = pts[1], c = pts[2];
+        if ((b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1]) < 0) pts.shift();
+        else pts.splice(1, 1);
       }
       if (!pts.length) return '';
       if (pts.length === 1) {
@@ -1116,6 +1132,7 @@ let sessionBaseSnapId = null;
 let editUndoStack = [];
 let editRedoStack = [];
 let pendingFormat = {}; // { bold?, fontSizePt?, textColor? }
+let editSpanStart = null;
 const pageEngineSizeCache = new Map();
 const MAX_EDIT_UNDO = 40;
 const IME_SENTINEL = '\u200B';
@@ -1467,9 +1484,12 @@ function ensureEditDom() {
     editImeEl.addEventListener('compositionupdate', (e) => {
       if (!editModeOn || !editCursor) return;
       const str = String(e.data ?? '').replace(/\u200B/g, '');
+      if (editSpanStart === null) editSpanStart = imeCompBase;
       applyDeltaFast(imeCompBase, imeCompLen, str, false);
+      if (str.length > 0) applyPendingFormatIfAny(editCursor, imeCompBase, str.length);
       imeCompLen = str.length;
       editCursor.offset = imeCompBase + imeCompLen;
+      scheduleFastRedraw(editCursor.pageIdx);
     });
     editImeEl.addEventListener('compositionend', (e) => {
       if (!editModeOn || !editCursor) { imeComposing = false; resetImeBuffer(); return; }
@@ -1516,9 +1536,11 @@ function ensureEditDom() {
       }
       if (clean.length > 0) {
         const startOff = editCursor.offset;
+        if (editSpanStart === null) editSpanStart = startOff;
         const nextOff = applyDeltaFast(startOff, 0, clean, true);
         applyPendingFormatIfAny(editCursor, startOff, clean.length);
         editCursor.offset = nextOff !== null ? nextOff : (startOff + clean.length);
+        scheduleFastRedraw(editCursor.pageIdx);
         resetImeBuffer();
       }
     });
@@ -1789,12 +1811,50 @@ function applyDeltaFast(offset, delCount, insertStr, recordUndo = false) {
   return null;
 }
 
+function findWordRangeAt(c) {
+  const paraLen = getParagraphLenAt(c);
+  if (paraLen <= 0) return null;
+  if (editSpanStart !== null && c.offset > editSpanStart && c.offset <= paraLen) {
+    return [Math.max(0, editSpanStart), c.offset];
+  }
+  const winStart = Math.max(0, c.offset - 24);
+  const winEnd = Math.min(paraLen, c.offset + 24);
+  const slice = readTextSliceAt(c, winStart, winEnd - winStart);
+  if (!slice) return null;
+  const rel = c.offset - winStart;
+  const isSep = (ch) => !ch || /\s/.test(ch);
+  let l = rel;
+  while (l > 0 && !isSep(slice[l - 1])) l--;
+  let r = rel;
+  while (r < slice.length && !isSep(slice[r])) r++;
+  if (l === r && rel > 0 && !isSep(slice[rel - 1])) {
+    l = rel - 1;
+    while (l > 0 && !isSep(slice[l - 1])) l--;
+    r = rel;
+  }
+  const absL = winStart + l;
+  const absR = winStart + r;
+  return absR > absL ? [absL, absR] : null;
+}
+
 function editApplyFormat(opts) {
   if (!editModeOn || !doc || disposed || !opts) return false;
-  // 볼드체·글자 크기·글자 색은 전체 문단을 덮어쓰지 않고 커서 위치에서 새로 입력/수정하는 문구에만 적용
   if (opts.bold !== undefined) pendingFormat.bold = Boolean(opts.bold);
   if (opts.fontSizePt !== undefined) pendingFormat.fontSizePt = Number(opts.fontSizePt);
   if (opts.textColor !== undefined) pendingFormat.textColor = String(opts.textColor);
+  // 수정 중인 문구(방금 입력한 구간 또는 커서가 놓인 단어)에 즉시 적용해 다른 곳을 터치하지 않아도 바로 보이게 함
+  if (editCursor) {
+    const c = editCursor;
+    const range = findWordRangeAt(c);
+    if (range) {
+      const ok = applyCharFormatRange(c, range[0], range[1], opts);
+      if (ok) {
+        markEditDirty();
+        redrawSinglePage(c.pageIdx);
+        updateCaretPos();
+      }
+    }
+  }
   emitEditState();
   return true;
 }
@@ -1959,6 +2019,7 @@ function handleDirectEditClick(e) {
       cellPara,
     };
     pendingFormat = {};
+    editSpanStart = null;
     imeComposing = false;
     imeCompLen = 0;
     ensureEditDom();
@@ -1986,6 +2047,10 @@ function setEditMode(enabled) {
     clearEditHistory();
     pendingFormat = {};
     editDirty = false;
+    if (editImeEl) {
+      editImeEl.disabled = false;
+      editImeEl.style.display = '';
+    }
     document.addEventListener('click', handleDirectEditClick, true);
     emitEditState();
   } else {
@@ -1999,7 +2064,13 @@ function setEditMode(enabled) {
     imeComposing = false;
     imeCompLen = 0;
     removeAllCarets();
-    if (editImeEl) { editImeEl.value = ''; editImeEl.blur(); }
+    editSpanStart = null;
+    if (editImeEl) {
+      editImeEl.value = '';
+      editImeEl.blur();
+      editImeEl.disabled = true;
+      editImeEl.style.display = 'none';
+    }
   }
   return editModeOn;
 }
