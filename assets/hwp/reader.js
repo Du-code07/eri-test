@@ -1037,9 +1037,10 @@ function withoutZoom(fn) {
   };
 }
 
-// ── 화면 위 실시간 커서·키보드 직접 편집 (rhwp MIT 엔진: 본문·표 셀 실시간 입력/삭제, 정확한 커서 좌표, 자동 저장) ──
+// ── 화면 위 실시간 커서·키보드 직접 편집 (rhwp MIT 고속 로컬/지연 페이지네이션 + 1페이지 rAF 합산 렌더) ──
 let editModeOn = false;
 let editDirty = false;
+let editPaginationPending = false;
 let editCursor = null; // { pageIdx, sec, para, parentPara, offset, inTable, pathJson, ctrl, cell, cellPara }
 let editImeEl = null;
 let editStyleInjected = false;
@@ -1047,6 +1048,9 @@ let imeComposing = false;
 let imeCompBase = 0;
 let imeCompLen = 0;
 let lastPinchEndedAt = 0;
+let redrawRafId = 0;
+let pendingRedrawPage = -1;
+let idleFlushTimer = 0;
 const IME_SENTINEL = '\u200B';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -1056,10 +1060,148 @@ function clearPageCache() {
   cachedBytes = 0;
 }
 
+function evictSinglePageCache(pIdx) {
+  const e = cache.get(pIdx);
+  if (e) {
+    cache.delete(pIdx);
+    cachedBytes = Math.max(0, cachedBytes - (e.size || 0));
+    releaseEntry(e);
+  }
+}
+
 function resetImeBuffer() {
   if (!editImeEl) return;
   editImeEl.value = IME_SENTINEL;
   try { editImeEl.setSelectionRange(1, 1); } catch (_) {}
+}
+
+function flushPendingPaginationNow(redrawAll) {
+  if (idleFlushTimer) { clearTimeout(idleFlushTimer); idleFlushTimer = 0; }
+  if (!doc || disposed) return;
+  if (editPaginationPending) {
+    editPaginationPending = false;
+    try {
+      if (typeof doc.flushDeferredPagination === 'function') {
+        doc.flushDeferredPagination();
+      }
+    } catch (_) {}
+    if (redrawAll) {
+      redrawAllVisiblePages();
+    }
+  }
+}
+
+function scheduleIdlePaginationFlush() {
+  if (idleFlushTimer) clearTimeout(idleFlushTimer);
+  idleFlushTimer = setTimeout(() => {
+    idleFlushTimer = 0;
+    flushPendingPaginationNow(true);
+  }, 380);
+}
+
+function scheduleFastRedraw(pIdx) {
+  pendingRedrawPage = pIdx;
+  if (redrawRafId) return;
+  redrawRafId = requestAnimationFrame(() => {
+    redrawRafId = 0;
+    const target = pendingRedrawPage;
+    pendingRedrawPage = -1;
+    if (!doc || disposed) return;
+    if (target >= 0) {
+      redrawSinglePage(target);
+    }
+    updateCaretPos();
+  });
+}
+
+function redrawSinglePage(pIdx) {
+  if (!doc || disposed) return;
+  evictSinglePageCache(pIdx);
+  if (vertical && vhost) {
+    const m = vMounted.get(pIdx);
+    if (!m || !m.frame) return;
+    const entry = svgForPage(pIdx);
+    const newSvg = entry.template.cloneNode(true);
+    const oldSvg = m.frame.querySelector(':scope > svg');
+    if (oldSvg) {
+      if (oldSvg.style.cssText) newSvg.style.cssText = oldSvg.style.cssText;
+      oldSvg.replaceWith(newSvg);
+    } else {
+      m.frame.prepend(newSvg);
+    }
+    const prevEntry = m.entry;
+    m.entry = entry;
+    activeEntries.add(entry);
+    if (prevEntry && prevEntry !== entry && ![...vMounted.values()].some(o => o.entry === prevEntry)) {
+      activeEntries.delete(prevEntry);
+      releaseIfUnused(prevEntry);
+    }
+  } else {
+    const frame = findPageFrameByIndex(pIdx);
+    if (!frame) return;
+    const entry = svgForPage(pIdx);
+    const newSvg = entry.template.cloneNode(true);
+    const oldSvg = frame.querySelector(':scope > svg');
+    if (oldSvg) {
+      if (oldSvg.style.cssText) newSvg.style.cssText = oldSvg.style.cssText;
+      oldSvg.replaceWith(newSvg);
+    } else {
+      frame.prepend(newSvg);
+    }
+  }
+}
+
+function redrawAllVisiblePages() {
+  if (!doc || disposed) return;
+  clearPageCache();
+  const newCount = Math.max(1, doc.pageCount ? doc.pageCount() : count);
+  const countChanged = newCount !== count;
+  count = newCount;
+  if (vertical && vhost) {
+    if (countChanged || vSlots.length !== count) {
+      vLayout(true);
+    }
+    for (const [idx, m] of [...vMounted.entries()]) {
+      if (idx >= count) { vUnmount(idx); continue; }
+      const entry = svgForPage(idx);
+      const newSvg = entry.template.cloneNode(true);
+      const oldSvg = m.frame.querySelector(':scope > svg');
+      if (oldSvg) {
+        if (oldSvg.style.cssText) newSvg.style.cssText = oldSvg.style.cssText;
+        oldSvg.replaceWith(newSvg);
+      } else {
+        m.frame.prepend(newSvg);
+      }
+      const prevEntry = m.entry;
+      m.entry = entry;
+      activeEntries.add(entry);
+      if (prevEntry && prevEntry !== entry && ![...vMounted.values()].some(o => o.entry === prevEntry)) {
+        activeEntries.delete(prevEntry);
+        releaseIfUnused(prevEntry);
+      }
+    }
+  } else {
+    const frames = [...host.querySelectorAll(':scope > .page')];
+    if (frames.length > 0 && !countChanged) {
+      for (const frame of frames) {
+        const idx = Number(frame.dataset.page);
+        if (!Number.isFinite(idx) || idx < 0 || idx >= count) continue;
+        const entry = svgForPage(idx);
+        const newSvg = entry.template.cloneNode(true);
+        const oldSvg = frame.querySelector(':scope > svg');
+        if (oldSvg) {
+          if (oldSvg.style.cssText) newSvg.style.cssText = oldSvg.style.cssText;
+          oldSvg.replaceWith(newSvg);
+        } else {
+          frame.prepend(newSvg);
+        }
+      }
+    } else {
+      void render().then(updateCaretPos);
+      return;
+    }
+  }
+  updateCaretPos();
 }
 
 function ensureEditDom() {
@@ -1089,35 +1231,33 @@ function ensureEditDom() {
       imeCompBase = editCursor.offset;
       imeCompLen = 0;
     });
-    editImeEl.addEventListener('compositionupdate', async (e) => {
+    editImeEl.addEventListener('compositionupdate', (e) => {
       if (!editModeOn || !editCursor) return;
       const str = String(e.data ?? '').replace(/\u200B/g, '');
-      await applyDeltaAt(imeCompBase, imeCompLen, str);
+      applyDeltaFast(imeCompBase, imeCompLen, str);
       imeCompLen = str.length;
       editCursor.offset = imeCompBase + imeCompLen;
-      updateCaretPos();
     });
-    editImeEl.addEventListener('compositionend', async (e) => {
+    editImeEl.addEventListener('compositionend', (e) => {
       if (!editModeOn || !editCursor) { imeComposing = false; resetImeBuffer(); return; }
       const str = String(e.data ?? '').replace(/\u200B/g, '');
-      await applyDeltaAt(imeCompBase, imeCompLen, str);
+      applyDeltaFast(imeCompBase, imeCompLen, str);
       editCursor.offset = imeCompBase + str.length;
       imeComposing = false;
       imeCompLen = 0;
       resetImeBuffer();
-      updateCaretPos();
     });
-    editImeEl.addEventListener('input', async (e) => {
+    editImeEl.addEventListener('input', (e) => {
       if (!editModeOn || !editCursor || imeComposing) return;
       const it = e.inputType || '';
       const rawVal = editImeEl.value || '';
       if (it === 'deleteContentBackward' || rawVal.length === 0) {
-        await handleBackspace();
+        handleBackspace();
         resetImeBuffer();
         return;
       }
       if (it === 'insertLineBreak' || it === 'insertParagraph') {
-        await handleEnter();
+        handleEnter();
         resetImeBuffer();
         return;
       }
@@ -1126,31 +1266,29 @@ function ensureEditDom() {
         const parts = clean.split('\n');
         for (let i = 0; i < parts.length; i++) {
           if (parts[i].length > 0) {
-            const nextOff = await applyDeltaAt(editCursor.offset, 0, parts[i]);
+            const nextOff = applyDeltaFast(editCursor.offset, 0, parts[i]);
             editCursor.offset = nextOff !== null ? nextOff : (editCursor.offset + parts[i].length);
           }
-          if (i < parts.length - 1) await handleEnter();
+          if (i < parts.length - 1) handleEnter();
         }
         resetImeBuffer();
-        updateCaretPos();
         return;
       }
       if (clean.length > 0) {
-        const nextOff = await applyDeltaAt(editCursor.offset, 0, clean);
+        const nextOff = applyDeltaFast(editCursor.offset, 0, clean);
         editCursor.offset = nextOff !== null ? nextOff : (editCursor.offset + clean.length);
         resetImeBuffer();
-        updateCaretPos();
       }
     });
-    editImeEl.addEventListener('keydown', async (e) => {
+    editImeEl.addEventListener('keydown', (e) => {
       if (!editModeOn || !editCursor || imeComposing) return;
       if (e.key === 'Backspace') {
         e.preventDefault();
-        await handleBackspace();
+        handleBackspace();
         resetImeBuffer();
       } else if (e.key === 'Enter') {
         e.preventDefault();
-        await handleEnter();
+        handleEnter();
         resetImeBuffer();
       }
     });
@@ -1197,15 +1335,15 @@ function removeAllCarets() {
   for (const el of document.querySelectorAll('.eri-caret-rect')) el.remove();
 }
 
-async function handleBackspace() {
+function handleBackspace() {
   if (!doc || disposed || !editCursor) return;
   const c = editCursor;
   if (c.offset > 0) {
-    const nextOff = await applyDeltaAt(c.offset - 1, 1, '');
+    const nextOff = applyDeltaFast(c.offset - 1, 1, '');
     c.offset = nextOff !== null ? nextOff : Math.max(0, c.offset - 1);
-    updateCaretPos();
     return;
   }
+  flushPendingPaginationNow(false);
   try {
     let res = null;
     if (c.inTable && c.pathJson && typeof doc.mergeParagraphInCellByPath === 'function') {
@@ -1219,7 +1357,7 @@ async function handleBackspace() {
         }
         c.offset = Number(res.charOffset ?? 0);
         markEditDirty();
-        await redrawAfterEdit();
+        scheduleFastRedraw(c.pageIdx);
       }
     } else if (c.inTable && c.cell !== undefined && c.cellPara > 0 && typeof doc.mergeParagraphInCell === 'function') {
       res = parseJsonSafe(doc.mergeParagraphInCell(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara));
@@ -1227,7 +1365,7 @@ async function handleBackspace() {
         c.cellPara = Number(res.cellParaIndex ?? Math.max(0, c.cellPara - 1));
         c.offset = Number(res.charOffset ?? 0);
         markEditDirty();
-        await redrawAfterEdit();
+        scheduleFastRedraw(c.pageIdx);
       }
     } else if (!c.inTable && c.para > 0 && typeof doc.mergeParagraph === 'function') {
       res = parseJsonSafe(doc.mergeParagraph(c.sec, c.para));
@@ -1235,7 +1373,7 @@ async function handleBackspace() {
         c.para = Number(res.paraIdx ?? Math.max(0, c.para - 1));
         c.offset = Number(res.charOffset ?? 0);
         markEditDirty();
-        await redrawAfterEdit();
+        scheduleFastRedraw(c.pageIdx);
       }
     }
   } catch (err) {
@@ -1243,8 +1381,9 @@ async function handleBackspace() {
   }
 }
 
-async function handleEnter() {
+function handleEnter() {
   if (!doc || disposed || !editCursor) return;
+  flushPendingPaginationNow(false);
   const c = editCursor;
   try {
     let res = null;
@@ -1259,7 +1398,7 @@ async function handleEnter() {
         }
         c.offset = 0;
         markEditDirty();
-        await redrawAfterEdit();
+        scheduleFastRedraw(c.pageIdx);
       }
     } else if (c.inTable && c.cell !== undefined && typeof doc.splitParagraphInCell === 'function') {
       res = parseJsonSafe(doc.splitParagraphInCell(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara, c.offset));
@@ -1267,7 +1406,7 @@ async function handleEnter() {
         c.cellPara = Number(res.cellParaIndex ?? (c.cellPara + 1));
         c.offset = 0;
         markEditDirty();
-        await redrawAfterEdit();
+        scheduleFastRedraw(c.pageIdx);
       }
     } else if (!c.inTable && typeof doc.splitParagraph === 'function') {
       res = parseJsonSafe(doc.splitParagraph(c.sec, c.para, c.offset));
@@ -1275,7 +1414,7 @@ async function handleEnter() {
         c.para = Number(res.paraIdx ?? (c.para + 1));
         c.offset = 0;
         markEditDirty();
-        await redrawAfterEdit();
+        scheduleFastRedraw(c.pageIdx);
       }
     }
   } catch (err) {
@@ -1283,83 +1422,69 @@ async function handleEnter() {
   }
 }
 
-async function redrawAfterEdit() {
-  if (!doc || disposed) return;
-  clearPageCache();
-  const newCount = Math.max(1, doc.pageCount ? doc.pageCount() : count);
-  const countChanged = newCount !== count;
-  count = newCount;
-  if (vertical && vhost) {
-    if (countChanged || vSlots.length !== count) {
-      vLayout(true);
-    }
-    for (const [idx, m] of [...vMounted.entries()]) {
-      if (idx >= count) { vUnmount(idx); continue; }
-      const entry = svgForPage(idx);
-      const newSvg = entry.template.cloneNode(true);
-      const oldSvg = m.frame.querySelector(':scope > svg');
-      if (oldSvg) {
-        if (oldSvg.style.cssText) newSvg.style.cssText = oldSvg.style.cssText;
-        oldSvg.replaceWith(newSvg);
-      } else {
-        m.frame.prepend(newSvg);
-      }
-      const prevEntry = m.entry;
-      m.entry = entry;
-      activeEntries.add(entry);
-      if (prevEntry && prevEntry !== entry && ![...vMounted.values()].some(o => o.entry === prevEntry)) {
-        activeEntries.delete(prevEntry);
-        releaseIfUnused(prevEntry);
-      }
-    }
-  } else {
-    const frames = [...host.querySelectorAll(':scope > .page')];
-    if (frames.length > 0 && !countChanged) {
-      for (const frame of frames) {
-        const idx = Number(frame.dataset.page);
-        if (!Number.isFinite(idx) || idx < 0 || idx >= count) continue;
-        const entry = svgForPage(idx);
-        const newSvg = entry.template.cloneNode(true);
-        const oldSvg = frame.querySelector(':scope > svg');
-        if (oldSvg) {
-          if (oldSvg.style.cssText) newSvg.style.cssText = oldSvg.style.cssText;
-          oldSvg.replaceWith(newSvg);
-        } else {
-          frame.prepend(newSvg);
-        }
-      }
-    } else {
-      await render();
-    }
-  }
-  updateCaretPos();
-}
-
-async function applyDeltaAt(offset, delCount, insertStr) {
+/**
+ * 고속 동기 편집:
+ * - 본문: replaceBodyTextLocal (전체 페이지네이션 생략, 현재 페이지만 즉시 갱신)
+ * - 표 셀: replaceTextInCellDeferredPagination / delete/insertDeferredPagination (전체 페이지네이션은 idle 시 1회)
+ * - 화면 렌더: requestAnimationFrame으로 합산해 현재 1페이지만 교체 (지우기 꾹 눌러도 밀림 제로)
+ */
+function applyDeltaFast(offset, delCount, insertStr) {
   if (!doc || disposed || !editCursor) return null;
   const c = editCursor;
   const off = Math.max(0, Number(offset));
   const del = Math.max(0, Number(delCount));
   const ins = String(insertStr ?? '');
+  if (del === 0 && ins.length === 0) return off;
   let lastRes = null;
+  let usedDeferred = false;
   try {
     if (c.inTable && c.pathJson) {
       if (del > 0) lastRes = parseJsonSafe(doc.deleteTextInCellByPath(c.sec, c.parentPara, c.pathJson, off, del));
       if (ins.length > 0) lastRes = parseJsonSafe(doc.insertTextInCellByPath(c.sec, c.parentPara, c.pathJson, off, ins));
     } else if (c.inTable && c.cell !== undefined && c.cell !== null) {
-      if (del > 0) lastRes = parseJsonSafe(doc.deleteTextInCell(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara, off, del));
-      if (ins.length > 0) lastRes = parseJsonSafe(doc.insertTextInCell(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara, off, ins));
+      if (typeof doc.replaceTextInCellDeferredPagination === 'function') {
+        lastRes = parseJsonSafe(doc.replaceTextInCellDeferredPagination(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara, off, del, ins));
+        usedDeferred = true;
+      } else {
+        if (del > 0 && typeof doc.deleteTextInCellDeferredPagination === 'function') {
+          lastRes = parseJsonSafe(doc.deleteTextInCellDeferredPagination(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara, off, del));
+          usedDeferred = true;
+        } else if (del > 0) {
+          lastRes = parseJsonSafe(doc.deleteTextInCell(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara, off, del));
+        }
+        if (ins.length > 0 && typeof doc.insertTextInCellDeferredPagination === 'function') {
+          lastRes = parseJsonSafe(doc.insertTextInCellDeferredPagination(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara, off, ins));
+          usedDeferred = true;
+        } else if (ins.length > 0) {
+          lastRes = parseJsonSafe(doc.insertTextInCell(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara, off, ins));
+        }
+      }
     } else {
-      if (del > 0) lastRes = parseJsonSafe(doc.deleteText(c.sec, c.para, off, del));
-      if (ins.length > 0) lastRes = parseJsonSafe(doc.insertText(c.sec, c.para, off, ins));
+      if (typeof doc.replaceBodyTextLocal === 'function') {
+        lastRes = parseJsonSafe(doc.replaceBodyTextLocal(c.sec, c.para, off, del, ins));
+        if (lastRes && lastRes.ok) {
+          usedDeferred = true;
+        } else {
+          // 페이지 경계를 넘겨 로컬 갱신이 불가능한 경우에만 일반 경로로 폴백
+          if (del > 0) lastRes = parseJsonSafe(doc.deleteText(c.sec, c.para, off, del));
+          if (ins.length > 0) lastRes = parseJsonSafe(doc.insertText(c.sec, c.para, off, ins));
+        }
+      } else {
+        if (del > 0) lastRes = parseJsonSafe(doc.deleteText(c.sec, c.para, off, del));
+        if (ins.length > 0) lastRes = parseJsonSafe(doc.insertText(c.sec, c.para, off, ins));
+      }
     }
-    if (del > 0 || ins.length > 0) markEditDirty();
-    await redrawAfterEdit();
+    markEditDirty();
+    scheduleFastRedraw(c.pageIdx);
+    if (usedDeferred) {
+      editPaginationPending = true;
+      scheduleIdlePaginationFlush();
+    }
     if (lastRes && lastRes.ok && typeof lastRes.charOffset === 'number') {
       return lastRes.charOffset;
     }
   } catch (err) {
-    console.warn('HWP applyDeltaAt failed:', err);
+    console.warn('HWP applyDeltaFast failed:', err);
   }
   return null;
 }
@@ -1403,8 +1528,6 @@ function updateCaretPos() {
       ? svg.viewBox.baseVal
       : { x: 0, y: 0, width: parseFloat(frame.dataset.width) || 595, height: parseFloat(frame.dataset.height) || 842 };
     const { w: engW, h: engH } = getPageEngineSize(c.pageIdx, svg);
-    // 엔진 좌표(engW×engH) → SVG viewBox 좌표로 정확히 변환해 <svg> 안에 직접 배치
-    // (여백 자르기 tx/ty, 핀치 줌, 스크롤 모두 SVG와 100% 함께 움직임)
     const sx = vb.width / engW;
     const sy = vb.height / engH;
     const rectPx = svg.getBoundingClientRect();
@@ -1425,6 +1548,7 @@ function updateCaretPos() {
 function handleDirectEditClick(e) {
   if (!editModeOn || !doc || disposed) return;
   if (Date.now() - lastPinchEndedAt < 350) return;
+  flushPendingPaginationNow(false);
   const targetPageEl = e.target && e.target.closest ? e.target.closest('.page, .vslot') : null;
   const frame = targetPageEl && targetPageEl.classList.contains('page')
     ? targetPageEl
@@ -1491,6 +1615,7 @@ function setEditMode(enabled) {
     document.addEventListener('click', handleDirectEditClick, true);
   } else {
     document.removeEventListener('click', handleDirectEditClick, true);
+    flushPendingPaginationNow(true);
     editCursor = null;
     imeComposing = false;
     imeCompLen = 0;
@@ -1511,6 +1636,7 @@ function uint8ToBase64(bytes) {
 
 function exportEditedBytes(preferHwpx) {
   if (!doc || disposed) return { ok: false, dirty: false };
+  flushPendingPaginationNow(false);
   if (!editDirty) return { ok: true, dirty: false };
   try {
     let bytes = null;
