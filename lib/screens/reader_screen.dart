@@ -2012,47 +2012,49 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
             child: viewerPanel(
               ctx,
               width: 280,
-              padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    _tr('글자 크기', 'Font Size', '字体大小', '文字サイズ'),
-                    style: TextStyle(color: cs.onSurface, fontSize: 16, fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 14),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      IconButton(
-                        icon: Icon(Icons.text_decrease, color: _fontSize <= 12 ? cs.onSurfaceVariant.withValues(alpha: 0.35) : cs.onSurface, size: 24),
-                        onPressed: _fontSize <= 12
-                            ? null
-                            : () {
-                                _changeFontSize(-2);
-                                setDlg(() {});
-                              },
-                      ),
-                      SizedBox(
-                        width: 72,
-                        child: Text(
-                          '${_fontSize}pt',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: cs.onSurface, fontSize: 18, fontWeight: FontWeight.w800),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _tr('글자 크기', 'Font Size', '字体大小', '文字サイズ'),
+                      style: TextStyle(color: cs.onSurface, fontSize: 16, fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        IconButton(
+                          icon: Icon(Icons.text_decrease, color: _fontSize <= 12 ? cs.onSurfaceVariant.withValues(alpha: 0.35) : cs.onSurface, size: 24),
+                          onPressed: _fontSize <= 12
+                              ? null
+                              : () {
+                                  _changeFontSize(-2);
+                                  setDlg(() {});
+                                },
                         ),
-                      ),
-                      IconButton(
-                        icon: Icon(Icons.text_increase, color: _fontSize >= 32 ? cs.onSurfaceVariant.withValues(alpha: 0.35) : cs.onSurface, size: 24),
-                        onPressed: _fontSize >= 32
-                            ? null
-                            : () {
-                                _changeFontSize(2);
-                                setDlg(() {});
-                              },
-                      ),
-                    ],
-                  ),
-                ],
+                        SizedBox(
+                          width: 72,
+                          child: Text(
+                            '${_fontSize}pt',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: cs.onSurface, fontSize: 18, fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                        IconButton(
+                          icon: Icon(Icons.text_increase, color: _fontSize >= 32 ? cs.onSurfaceVariant.withValues(alpha: 0.35) : cs.onSurface, size: 24),
+                          onPressed: _fontSize >= 32
+                              ? null
+                              : () {
+                                  _changeFontSize(2);
+                                  setDlg(() {});
+                                },
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
           );
