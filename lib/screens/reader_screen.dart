@@ -1997,36 +1997,67 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
         setState(() => _progressBarHidden = val);
       },
       onReset: _resetViewerSettings,
-      // EPUB: 글자 크기
-      extra: _isOfflineDocument
-          ? null
-          : (setDlg) => Builder(builder: (ctx) {
-                final cs = Theme.of(ctx).colorScheme;
-                return toolbarSettingsRow(
-                  ctx,
-                  icon: Icon(Icons.format_size, color: cs.onSurface, size: 20),
-                  label: _tr('글자 크기', 'Font Size', '字体大小', '文字サイズ'),
-                  trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                    IconButton(
-                      visualDensity: VisualDensity.compact,
-                      icon: Icon(Icons.text_decrease, color: cs.onSurfaceVariant, size: 20),
-                      onPressed: () {
-                        _changeFontSize(-2);
-                        setDlg(() {});
-                      },
-                    ),
-                    Text('${_fontSize}pt', style: TextStyle(color: cs.onSurface, fontWeight: FontWeight.bold)),
-                    IconButton(
-                      visualDensity: VisualDensity.compact,
-                      icon: Icon(Icons.text_increase, color: cs.onSurfaceVariant, size: 20),
-                      onPressed: () {
-                        _changeFontSize(2);
-                        setDlg(() {});
-                      },
-                    ),
-                  ]),
-                );
-              }),
+    );
+  }
+
+  /// EPUB 전용 글자 크기 조절 창 (도구 모음 막대의 글자 크기 단추)
+  Future<void> _showEpubFontSizeDialog() async {
+    if (_isOfflineDocument) return;
+    await showViewerDialog<void>(
+      context,
+      (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) {
+          final cs = Theme.of(ctx).colorScheme;
+          return Center(
+            child: viewerPanel(
+              ctx,
+              width: 280,
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    _tr('글자 크기', 'Font Size', '字体大小', '文字サイズ'),
+                    style: TextStyle(color: cs.onSurface, fontSize: 16, fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      IconButton(
+                        icon: Icon(Icons.text_decrease, color: _fontSize <= 12 ? cs.onSurfaceVariant.withValues(alpha: 0.35) : cs.onSurface, size: 24),
+                        onPressed: _fontSize <= 12
+                            ? null
+                            : () {
+                                _changeFontSize(-2);
+                                setDlg(() {});
+                              },
+                      ),
+                      SizedBox(
+                        width: 72,
+                        child: Text(
+                          '${_fontSize}pt',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: cs.onSurface, fontSize: 18, fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.text_increase, color: _fontSize >= 32 ? cs.onSurfaceVariant.withValues(alpha: 0.35) : cs.onSurface, size: 24),
+                        onPressed: _fontSize >= 32
+                            ? null
+                            : () {
+                                _changeFontSize(2);
+                                setDlg(() {});
+                              },
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -2915,7 +2946,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     final stageBox = _book.layerKey.currentContext?.findRenderObject() as RenderBox?;
     if (stageBox == null || !stageBox.hasSize || stageBox.size.isEmpty) return img;
     final Size stage = stageBox.size;
-    final List<MemoStroke> strokes = _docVertical ? const [] : _memoStrokes;
+    final List<MemoStroke> strokes = (_docVertical || _isHwpEditMode) ? const [] : _memoStrokes;
     final bool ribbon = !_pageModeScroll && _isCurrentPageBookmarked && _epubZoomScale <= 1.03;
     if (strokes.isEmpty && !ribbon) return img;
     final rec = ui.PictureRecorder();
@@ -3226,7 +3257,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
         content,
         // 저장된 메모: 넘기는 종이 밑 (넘길 때 함께 넘어가고, 새 쪽 메모는 드러나는 만큼만 보임).
         // 한글·워드 스크롤 보기는 문서가 쪽 위에 직접 그림 (쪽과 함께 스크롤)
-        if (_memoStrokes.isNotEmpty && !_docVertical && !_slideShow)
+        if (_memoStrokes.isNotEmpty && !_docVertical && !_slideShow && !_isHwpEditMode)
           Positioned.fill(
             child: IgnorePointer(
               child: LayoutBuilder(
@@ -4283,6 +4314,14 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           }
         },
       ),
+      if (!_isOfflineDocument)
+        QuickToolItem(
+          id: 'fontsize',
+          icon: const Icon(Icons.format_size_rounded, color: Colors.white, size: 19),
+          tooltip: _tr('글자 크기', 'Font Size', '字体大小', '文字サイズ'),
+          onTap: () => unawaited(_showEpubFontSizeDialog()),
+          closeAfterTap: true,
+        ),
       // 메모를 쓸 수 없는 보기(한글·워드 밖의 스크롤 모드)에서는 메모 단추를 숨김
       if (!_pageModeScroll || _docVertical)
       QuickToolItem(
@@ -4420,6 +4459,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       FocusManager.instance.primaryFocus?.unfocus();
       await _hwpController.setKeyboardInset(0);
       await _hwpController.setEditMode(false);
+      if (_docVertical) unawaited(_hwpController.setScrollMemos({for (final e in _scrollMemos.entries) e.key: _jsStrokes(e.value)}));
       if (!mounted) return;
       setState(() {
         _isHwpEditMode = false;
@@ -4449,6 +4489,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     FocusManager.instance.primaryFocus?.unfocus();
     unawaited(_hwpController.setKeyboardInset(0));
     unawaited(_hwpController.cancelEditSession());
+    if (_docVertical) unawaited(_hwpController.setScrollMemos({for (final e in _scrollMemos.entries) e.key: _jsStrokes(e.value)}));
   }
 
   void _toggleHwpEditMode() {
@@ -4467,6 +4508,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       _isMemoMode = false;
       _isEraserMode = false;
     });
+    if (_docVertical) unawaited(_hwpController.setScrollMemos(const {}));
     _hwpController.setEditMode(true);
   }
 

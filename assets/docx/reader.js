@@ -1407,28 +1407,37 @@ let docxRedoStack = [];
 let docxLastSnap = null;
 let docxKbInset = 0;
 
-function docxPageRoots() {
-  if (vertical && vinner) {
-    const list = [...vinner.querySelectorAll('.page')];
-    if (list.length > 0) return list;
+function docxUniqueSources() {
+  const seen = new Set();
+  const out = [];
+  for (const entry of pages) {
+    const src = entry && entry.source && typeof entry.source.querySelectorAll === 'function' ? entry.source : null;
+    if (src && !seen.has(src)) {
+      seen.add(src);
+      out.push(src);
+    }
   }
-  const list = [...host.querySelectorAll(':scope > .page')];
-  return list.length > 0 ? list : pages;
+  return out;
+}
+
+function docxPageRoots() {
+  const out = [];
+  if (vertical && vinner) {
+    for (const el of vinner.querySelectorAll('.page')) out.push(el);
+  }
+  for (const el of host.querySelectorAll(':scope > .page')) out.push(el);
+  return out;
 }
 
 function docxSnapshotPages() {
-  return pages.map(p => p.innerHTML);
+  return docxUniqueSources().map(src => src.innerHTML);
 }
 
 function docxApplySnapshot(snap) {
   if (!Array.isArray(snap)) return;
-  for (let i = 0; i < Math.min(pages.length, snap.length); i++) {
-    pages[i].innerHTML = snap[i];
-  }
-  if (vertical && vinner) {
-    vMounted.forEach((el, idx) => {
-      if (pages[idx] && el !== pages[idx]) el.innerHTML = pages[idx].innerHTML;
-    });
+  const srcs = docxUniqueSources();
+  for (let i = 0; i < Math.min(srcs.length, snap.length); i++) {
+    srcs[i].innerHTML = snap[i];
   }
 }
 
@@ -1502,11 +1511,11 @@ function docxOnSelectionChange() {
 }
 
 function docxSetEditableOnPages(on) {
-  const all = new Set([...pages, ...docxPageRoots()]);
+  const all = new Set([...docxUniqueSources(), ...docxPageRoots()]);
   for (const p of all) {
-    if (!p) continue;
+    if (!p || !p.style) continue;
     p.contentEditable = on ? 'true' : 'false';
-    p.setAttribute('spellcheck', 'false');
+    if (typeof p.setAttribute === 'function') p.setAttribute('spellcheck', 'false');
     p.style.userSelect = on ? 'text' : '';
     p.style.webkitUserSelect = on ? 'text' : '';
     p.style.outline = on ? 'none' : '';
@@ -1532,8 +1541,8 @@ function setEditMode(enabled) {
   if (docxEditMode) {
     docxEditOrigHtml = docxSnapshotPages();
     docxOrigParaTexts = [];
-    for (const p of pages) {
-      for (const el of p.querySelectorAll('p')) {
+    for (const src of docxUniqueSources()) {
+      for (const el of src.querySelectorAll('p')) {
         docxOrigParaTexts.push((el.textContent || '').replace(/\s+/g, ' ').trim());
       }
     }
@@ -1682,8 +1691,8 @@ function exportEditedBytes() {
   if (!docxEditDirty) return { ok: true, dirty: false };
   const edits = [];
   let idx = 0;
-  for (const p of pages) {
-    for (const el of p.querySelectorAll('p')) {
+  for (const src of docxUniqueSources()) {
+    for (const el of src.querySelectorAll('p')) {
       const origText = idx < docxOrigParaTexts.length ? docxOrigParaTexts[idx] : '';
       const runs = docxCollectRuns(el);
       edits.push({ index: idx, origText, runs });

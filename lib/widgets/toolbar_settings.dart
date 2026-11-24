@@ -28,7 +28,7 @@ class ToolbarLayout {
   static const String _key = 'toolbar_layout_v1';
 
   static const List<String> defaultTop = ['find', 'slideshow', 'theme', 'toc'];
-  static const List<String> defaultBar = ['prev', 'next', 'rotate', 'display', 'mode', 'direction', 'memo', 'edit', 'copy', 'bookmark'];
+  static const List<String> defaultBar = ['prev', 'next', 'rotate', 'display', 'mode', 'direction', 'fontsize', 'memo', 'edit', 'copy', 'bookmark'];
 
   /// 지금 쓰는 배치 (뷰어들이 함께 보고, 바뀌면 다시 그림)
   static final ValueNotifier<ToolbarLayout> current = ValueNotifier<ToolbarLayout>(ToolbarLayout.defaults());
@@ -82,6 +82,7 @@ Widget toolbarCatalogIcon(String id, Color color, {double size = 20}) => switch 
       'display' => pageDisplayGlyph('auto', size: size, color: color),
       'mode' => PageModeIcon(mode: 'tap', size: size, color: color),
       'direction' => Icon(Icons.swap_horiz_rounded, color: color, size: size + 1),
+      'fontsize' => Icon(Icons.format_size_rounded, color: color, size: size),
       'memo' => MemoToolIcon(kind: 'memo', color: color, size: size + 2),
       'edit' => Icon(Icons.edit_note_rounded, color: color, size: size + 2),
       'copy' => Icon(Icons.copy_all_outlined, color: color, size: size),
@@ -100,6 +101,7 @@ String toolbarCatalogLabel(String id, String Function(String ko, String en, Stri
       'display' => tr('페이지 표시', 'Page Display', '页面显示', 'ページ表示'),
       'mode' => tr('페이지 이동', 'Page Turning', '翻页', 'ページ移動'),
       'direction' => tr('읽기 방향', 'Reading Direction', '阅读方向', '読む方向'),
+      'fontsize' => tr('글자 크기', 'Font Size', '字体大小', '文字サイズ'),
       'memo' => tr('메모', 'Memo', '笔记', 'メモ'),
       'edit' => tr('문서 편집', 'Edit Document', '编辑文档', '文書編集'),
       'copy' => tr('글자 복사', 'Copy Text', '复制文字', '文字をコピー'),
