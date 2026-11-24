@@ -162,23 +162,8 @@ class PushAsideRoute<T> extends PageRoute<T> {
 
   @override
   bool didPop(T? result) {
-    final bool done = super.didPop(result); // 여기서 닫히는 움직임이 시작되고 아래 화면이 보이게 됨
-    final AnimationController? c = controller;
-    if (c != null && !Anim.off.value && c.value >= 1.0 && !_linear) {
-      c.stop(canceled: false);
-      _holding = true;
-      // 아래 화면을 배치·그리는 장면이 끝난 다음 장면부터 움직임
-      SchedulerBinding.instance.addPostFrameCallback((_) {
-        SchedulerBinding.instance.addPostFrameCallback((_) {
-          if (!_holding) return;
-          _holding = false;
-          c.reverse();
-        });
-        SchedulerBinding.instance.scheduleFrame();
-      });
-      SchedulerBinding.instance.scheduleFrame();
-    }
-    return done;
+    // 2프레임 정지 후 재시작하면 닫힐 때 흰 화면이 번쩍일 수 있어 즉시 자연스럽게 역재생
+    return super.didPop(result);
   }
 
   @override
@@ -196,21 +181,22 @@ class PushAsideRoute<T> extends PageRoute<T> {
 
   @override
   Widget buildTransitions(BuildContext context, Animation<double> animation, Animation<double> secondaryAnimation, Widget child) {
-    // 들어올 때: 다음 파일·일반은 오른쪽 → 제자리, 이전 파일(fromLeft)은 왼쪽 → 제자리
-    // 뒤로 가기(reverse)로 서재로 돌아갈 때는 항상 오른쪽으로 빠져나감
-    // 위에 같은 방식의 화면이 열리면: 다음 화면 방향에 맞춰 왼쪽 또는 오른쪽으로 밀려남
+    if (Anim.off.value) return child;
     final bool linear = _linear;
     final bool popping = animation.status == AnimationStatus.reverse;
     final Offset enterBegin = (fromLeft && !popping) ? const Offset(-1, 0) : const Offset(1, 0);
     final Offset exitEnd = _exitToRight ? const Offset(1, 0) : const Offset(-1, 0);
+    final Animation<double> mainAnim = linear ? animation : CurvedAnimation(parent: animation, curve: _in, reverseCurve: _out);
+    final Animation<double> secAnim = linear ? secondaryAnimation : CurvedAnimation(parent: secondaryAnimation, curve: _in, reverseCurve: _out);
+    // WebView/PlatformView 전환 시 흰 바탕 번쩍임을 막기 위해 테마 배경색으로 감싸고 부드럽게 이동
     return SlideTransition(
-      position: Tween<Offset>(begin: enterBegin, end: Offset.zero)
-          .animate(linear ? animation : CurvedAnimation(parent: animation, curve: _in, reverseCurve: _out)),
+      position: Tween<Offset>(begin: enterBegin, end: Offset.zero).animate(mainAnim),
       child: SlideTransition(
-        position: Tween<Offset>(begin: Offset.zero, end: exitEnd)
-            .animate(linear ? secondaryAnimation : CurvedAnimation(parent: secondaryAnimation, curve: _in, reverseCurve: _out)),
-        // 움직이는 동안 파일 화면을 다시 그리지 않고 옮기기만
-        child: RepaintBoundary(child: child),
+        position: Tween<Offset>(begin: Offset.zero, end: exitEnd).animate(secAnim),
+        child: ColoredBox(
+          color: Theme.of(context).scaffoldBackgroundColor,
+          child: child,
+        ),
       ),
     );
   }

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../services/system_bars.dart';
+import 'app_colors.dart';
 
 OverlayEntry? _activeAppToast;
 Timer? _activeAppToastTimer;
@@ -90,8 +91,8 @@ class _AppToastOverlay extends StatefulWidget {
 class _AppToastOverlayState extends State<_AppToastOverlay> with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 380),
-    reverseDuration: const Duration(milliseconds: 360),
+    duration: Anim.off.value ? Duration.zero : const Duration(milliseconds: 380),
+    reverseDuration: Anim.off.value ? Duration.zero : const Duration(milliseconds: 360),
   );
   late final Animation<Offset> _slide = Tween<Offset>(
     begin: widget.fromTop ? const Offset(0, -1.25) : const Offset(0, 1.15),

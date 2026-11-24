@@ -1044,7 +1044,7 @@ class _DocumentScannerScreenState extends State<DocumentScannerScreen>
                         onTap: _currentEditIndex > 0
                             ? () {
                                 _pageController.previousPage(
-                                  duration: const Duration(milliseconds: 200),
+                                  duration: Anim.ms(200),
                                   curve: Curves.easeOut,
                                 );
                               }
@@ -1078,7 +1078,7 @@ class _DocumentScannerScreenState extends State<DocumentScannerScreen>
                         onTap: _currentEditIndex < _pages.length - 1
                             ? () {
                                 _pageController.nextPage(
-                                  duration: const Duration(milliseconds: 200),
+                                  duration: Anim.ms(200),
                                   curve: Curves.easeOut,
                                 );
                               }

@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import '../widgets/app_colors.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -140,7 +141,8 @@ class AppLock {
     if (!fileLock.value || !hasSecret) return true;
     final bool? ok = await Navigator.of(context).push<bool>(PageRouteBuilder<bool>(
       opaque: true,
-      transitionDuration: const Duration(milliseconds: 180),
+      transitionDuration: Anim.off.value ? Duration.zero : const Duration(milliseconds: 180),
+      reverseTransitionDuration: Anim.off.value ? Duration.zero : const Duration(milliseconds: 180),
       reverseTransitionDuration: const Duration(milliseconds: 140),
       pageBuilder: (_, __, ___) => lockPage(),
       transitionsBuilder: (_, a, __, child) => FadeTransition(opacity: a, child: child),

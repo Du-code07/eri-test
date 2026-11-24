@@ -319,7 +319,7 @@ class _PinPadState extends State<PinPad> {
         children: [
           for (int i = 0; i < dots; i++)
             AnimatedContainer(
-              duration: const Duration(milliseconds: 120),
+              duration: Anim.ms(120),
               margin: const EdgeInsets.symmetric(horizontal: 7),
               width: 14,
               height: 14,

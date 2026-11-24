@@ -108,7 +108,7 @@ class _GuideRunnerState extends State<_GuideRunner> with TickerProviderStateMixi
   Rect? _to;
   late final AnimationController _move = AnimationController(vsync: this, duration: Anim.ms(320))..addListener(() => setState(() {}));
   // 누르는 흉내: 단추 둘레로 퍼지는 고리
-  late final AnimationController _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 1400));
+  late final AnimationController _pulse = AnimationController(vsync: this, duration: Anim.off.value ? const Duration(milliseconds: 1) : const Duration(milliseconds: 1400));
   late final bool _simple = StorageService.simpleStyle;
 
   _Tr get tr => widget.tr;
@@ -264,10 +264,10 @@ class _GuideRunnerState extends State<_GuideRunner> with TickerProviderStateMixi
           _Step('ribbon', tr('즐겨찾기 띠', 'Favorite Ribbon', '收藏带', 'お気に入りリボン'),
               tr('누르거나 아래로 당기면 즐겨찾기에 넣거나 뺄 수 있어요', 'Tap or pull down to add or remove from favorites', '点击或向下拉即可加入或移出收藏', 'タップするか下に引くとお気に入りに追加・解除できます')),
           _Step('card', tr('파일', 'File', '文件', 'ファイル'),
-              tr('파일을 길게 눌러 여러 개를 고른 뒤 한꺼번에 옮길 수 있어요',
-                  'Long-press to select multiple files and move them all at once',
-                  '长按可多选文件并一次性移动',
-                  '長押しで複数のファイルを選び、まとめて移動できます')),
+              tr('파일을 길게 눌러 여러 개를 고른 뒤 한꺼번에 옮길 수 있어요\n(파일 표시 방식이 목록형인 경우 개별 파일을 왼쪽으로 밀면 삭제, 오른쪽으로 밀면 즐겨찾기 할 수 있어요)',
+                  'Long-press to select multiple files and move them all at once\n(In list view, swipe a file left to delete or right to favorite)',
+                  '长按可多选文件并一次性移动\n（列表视图下，向左滑动单个文件可删除，向右滑动可收藏）',
+                  '長押しで複数のファイルを選び、まとめて移動できます\n（リスト表示ではファイルを左にスワイプで削除、右にスワイプでお気に入り登録できます）')),
           _Step('more', tr('파일 메뉴', 'File Menu', '文件菜单', 'ファイルメニュー'),
               tr('파일을 관리하는 여러 메뉴를 열 수 있어요',
                   'Open menus to manage your file',
@@ -1019,7 +1019,16 @@ class _ViewerMock extends StatelessWidget {
           left: 12,
           right: 12,
           bottom: 24 + MediaQuery.paddingOf(context).bottom,
-          child: Center(child: FittedBox(fit: BoxFit.scaleDown, child: bar)),
+          child: Center(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(24),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                physics: const ClampingScrollPhysics(),
+                child: bar,
+              ),
+            ),
+          ),
         ),
       ],
     );
@@ -1051,25 +1060,29 @@ class _MemoMock extends StatelessWidget {
           right: 12,
           bottom: 28 + MediaQuery.paddingOf(context).bottom,
           child: Center(
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              child: MemoToolbar(children: [
-                b('finger', (c) => FingerDrawIcon(color: c, size: 22)),
-                b('pen', (c) => MemoToolIcon(kind: 'pen', color: c, accent: const Color(0xFFE53935), size: 22), active: true),
-                b('hl', (c) => MemoToolIcon(kind: 'hl', color: c, accent: const Color(0xFFFFD60A), size: 22)),
-                b('tape', (c) => MemoToolIcon(kind: 'tape', color: c, accent: const Color(0xFFFF7043), size: 22)),
-                b('eraser', (c) => EraserIcon(color: c)),
-                b('undo', (c) => Icon(Icons.undo, color: c, size: 16)),
-                b('redo', (c) => Icon(Icons.redo, color: Colors.white30, size: 16)),
-                SizedBox(
-                  key: k('done'),
-                  height: kMemoToolExtent,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 11),
-                    child: Center(child: Text(tr('완료', 'Done', '完成', '完了'), style: const TextStyle(color: AppColors.signature, fontSize: 14, fontWeight: FontWeight.w600))),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(24),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                physics: const ClampingScrollPhysics(),
+                child: MemoToolbar(children: [
+                  b('finger', (c) => FingerDrawIcon(color: c, size: 22)),
+                  b('pen', (c) => MemoToolIcon(kind: 'pen', color: c, accent: const Color(0xFFE53935), size: 22), active: true),
+                  b('hl', (c) => MemoToolIcon(kind: 'hl', color: c, accent: const Color(0xFFFFD60A), size: 22)),
+                  b('tape', (c) => MemoToolIcon(kind: 'tape', color: c, accent: const Color(0xFFFF7043), size: 22)),
+                  b('eraser', (c) => EraserIcon(color: c)),
+                  b('undo', (c) => Icon(Icons.undo, color: c, size: 16)),
+                  b('redo', (c) => Icon(Icons.redo, color: Colors.white30, size: 16)),
+                  SizedBox(
+                    key: k('done'),
+                    height: kMemoToolExtent,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 11),
+                      child: Center(child: Text(tr('완료', 'Done', '完成', '完了'), style: const TextStyle(color: AppColors.signature, fontSize: 14, fontWeight: FontWeight.w600))),
+                    ),
                   ),
-                ),
-              ]),
+                ]),
+              ),
             ),
           ),
         ),
@@ -1129,33 +1142,37 @@ class _DocEditMock extends StatelessWidget {
           right: 12,
           bottom: 28 + MediaQuery.paddingOf(context).bottom,
           child: Center(
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              child: MemoToolbar(children: [
-                b('bold', const Icon(Icons.format_bold_rounded, color: Colors.white, size: 16), active: true),
-                b('italic', const Icon(Icons.format_italic_rounded, color: Colors.white, size: 16)),
-                b('underline', const Icon(Icons.format_underlined_rounded, color: Colors.white, size: 16)),
-                b('size', const Icon(Icons.format_size_rounded, color: Colors.white, size: 16)),
-                b('color', colorBarIcon),
-                b('undo', const Icon(Icons.undo, color: Colors.white, size: 16)),
-                b('redo', const Icon(Icons.redo, color: Colors.white30, size: 16)),
-                SizedBox(
-                  key: k('cancel'),
-                  height: kMemoToolExtent,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    child: Center(child: Text(tr('취소', 'Cancel', '取消', 'キャンセル'), style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600))),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(24),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                physics: const ClampingScrollPhysics(),
+                child: MemoToolbar(children: [
+                  b('bold', const Icon(Icons.format_bold_rounded, color: Colors.white, size: 16), active: true),
+                  b('italic', const Icon(Icons.format_italic_rounded, color: Colors.white, size: 16)),
+                  b('underline', const Icon(Icons.format_underlined_rounded, color: Colors.white, size: 16)),
+                  b('size', const Icon(Icons.format_size_rounded, color: Colors.white, size: 16)),
+                  b('color', colorBarIcon),
+                  b('undo', const Icon(Icons.undo, color: Colors.white, size: 16)),
+                  b('redo', const Icon(Icons.redo, color: Colors.white30, size: 16)),
+                  SizedBox(
+                    key: k('cancel'),
+                    height: kMemoToolExtent,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: Center(child: Text(tr('취소', 'Cancel', '取消', 'キャンセル'), style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600))),
+                    ),
                   ),
-                ),
-                SizedBox(
-                  key: k('save'),
-                  height: kMemoToolExtent,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 11),
-                    child: Center(child: Text(tr('저장', 'Save', '保存', '保存'), style: const TextStyle(color: AppColors.signature, fontSize: 14, fontWeight: FontWeight.w600))),
+                  SizedBox(
+                    key: k('save'),
+                    height: kMemoToolExtent,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 11),
+                      child: Center(child: Text(tr('저장', 'Save', '保存', '保存'), style: const TextStyle(color: AppColors.signature, fontSize: 14, fontWeight: FontWeight.w600))),
+                    ),
                   ),
-                ),
-              ]),
+                ]),
+              ),
             ),
           ),
         ),

@@ -65,7 +65,7 @@ class _TapZoneScreenState extends State<TapZoneScreen> {
         borderRadius: BorderRadius.circular(10),
         onTap: () => _tapCell(i),
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
+          duration: Anim.ms(160),
           decoration: BoxDecoration(
             color: look.bg,
             borderRadius: BorderRadius.circular(10),

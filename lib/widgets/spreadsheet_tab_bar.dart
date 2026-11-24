@@ -34,7 +34,7 @@ class _SpreadsheetTabBarState extends State<SpreadsheetTabBar> {
       final tabContext = _keys[widget.selectedIndex].currentContext;
       if (tabContext != null) {
         Scrollable.ensureVisible(tabContext,
-            alignment: .5, duration: const Duration(milliseconds: 180));
+            alignment: .5, duration: Anim.ms(180));
       }
     });
   }

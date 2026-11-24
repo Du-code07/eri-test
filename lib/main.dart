@@ -460,7 +460,7 @@ class _MyEbookAppState extends State<MyEbookApp> with SingleTickerProviderStateM
               listenable: Listenable.merge([ComfortTint.viewers, ComfortTint.fileShown]),
               builder: (context, _) => AnimatedOpacity(
                 opacity: ComfortTint.appShown ? 1 : 0,
-                duration: const Duration(milliseconds: 220),
+                duration: Anim.ms(220),
                 child: const ColoredBox(color: ComfortTint.color),
               ),
             ),
@@ -2563,7 +2563,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
     SystemChrome.setPreferredOrientations([]);
 
     // 파일 화면이 닫히는 움직임이 끝난 뒤에 목록을 새로 읽음 (닫히는 도중에 목록을 다시 그리면 버벅임)
-    await Future<void>.delayed(const Duration(milliseconds: 360));
+    if (!Anim.off.value) await Future<void>.delayed(const Duration(milliseconds: 300));
     if (mounted) _loadLibrary();
   }
 
@@ -3039,20 +3039,19 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
   /// 막대의 꺼내 둔 그룹을 끌 때 손가락이 잡은 자리 (화면 크기 조절 중에도 끄는 칸이 손가락을 따라오게)
   Offset _railGrab = Offset.zero;
 
-  /// 와이드: 막대 가운데 [+] → 그룹 꺼내기 (누를 때마다 넣었다 뺐다)
+  /// 와이드: 막대 가운데 [+] → 그룹 꺼내기 (화면 가운데에서 '파일 추가'와 동일한 애니메이션으로 열림)
   Future<void> _showRailGroupPicker() async {
     _closeSearch();
-    final box = _railAddGroupKey.currentContext?.findRenderObject() as RenderBox?;
-    if (box == null || !box.hasSize) return;
-    final RenderObject? overlayBox = Navigator.of(context).overlay?.context.findRenderObject();
-    final Rect anchor = box.localToGlobal(Offset.zero, ancestor: overlayBox) & box.size;
     final List<String> groups = _groups.where((g) => g != '전체').toList();
-    await Navigator.of(context).push<void>(PopPanelRoute<void>(
-      anchor: anchor,
-      width: 320,
-      beside: true,
-      barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
-      builder: (ctx) => StatefulBuilder(
+    await showViewerDialog<void>(
+      context,
+      (ctx) => Center(
+        child: viewerPanel(
+          ctx,
+          color: Theme.of(ctx).colorScheme.surfaceContainerLow,
+          elevation: 6,
+          width: math.min(440, MediaQuery.sizeOf(ctx).width - 40),
+          child: StatefulBuilder(
         builder: (ctx, setPanel) {
           final cs = Theme.of(ctx).colorScheme;
           return ConstrainedBox(
@@ -3101,8 +3100,10 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
             ),
           );
         },
+          ),
+        ),
       ),
-    ));
+    );
   }
 
   /// 심플 스타일: 검색을 열면 파일 위에 펼쳐지는 검색 줄
@@ -3625,6 +3626,113 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
 
   /// [☰ 그룹] 단추를 눌렀을 때: 바로 아래로 그룹 목록 (고르기·끌어 순서 바꾸기·꾹 눌러 이름 수정/삭제·추가)
   Future<void> _showGroupJumpMenu() async {
+    if (StorageService.simpleStyle) {
+      final List<String> groups = _groups.where((g) => g != '전체').toList();
+      final String? picked = await showViewerDialog<String>(
+        context,
+        (ctx) => Center(
+          child: viewerPanel(
+            ctx,
+            color: Theme.of(ctx).colorScheme.surfaceContainerLow,
+            elevation: 6,
+            width: math.min(440, MediaQuery.sizeOf(ctx).width - 40),
+            child: StatefulBuilder(
+              builder: (ctx, setPanel) {
+                final cs = Theme.of(ctx).colorScheme;
+                return ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(ctx).height * 0.65),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 18, 12, 8),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                _tr('그룹 목록', 'Groups', '分组列表', 'グループ一覧'),
+                                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                              ),
+                            ),
+                            TextButton.icon(
+                              onPressed: () => Navigator.of(ctx).pop('__add__'),
+                              icon: const Icon(Icons.add, size: 18),
+                              label: Text(_tr('그룹 추가', 'Add Group', '添加分组', 'グループ追加')),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Flexible(
+                        child: ListView(
+                          shrinkWrap: true,
+                          padding: const EdgeInsets.only(bottom: 12),
+                          children: [
+                            ListTile(
+                              leading: const FolderDocsIcon(size: 20),
+                              title: Text(_localizeGroupName('전체'), style: const TextStyle(fontWeight: FontWeight.w600)),
+                              trailing: !_favoritesOnly && _selectedGroup == '전체' ? Icon(Icons.check, color: AppColors.mark(ctx)) : null,
+                              onTap: () => Navigator.of(ctx).pop('전체'),
+                            ),
+                            for (final g in groups)
+                              ListTile(
+                                leading: _groupLeading(g, 20),
+                                title: Text(_localizeGroupName(g), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (!_favoritesOnly && _selectedGroup == g) Icon(Icons.check, color: AppColors.mark(ctx)),
+                                    if (g != '미분류')
+                                      PopupMenuButton<String>(
+                                        icon: Icon(Icons.more_horiz, size: 20, color: cs.onSurfaceVariant),
+                                        onSelected: (act) async {
+                                          if (act == 'rename') {
+                                            final next = await _renameGroupDialog(g);
+                                            if (next != null) {
+                                              final i = groups.indexOf(g);
+                                              if (i >= 0) groups[i] = next;
+                                              setPanel(() {});
+                                            }
+                                          } else if (act == 'delete') {
+                                            final ok = await _confirmDeleteGroup(g);
+                                            if (ok) {
+                                              groups.remove(g);
+                                              setPanel(() {});
+                                            }
+                                          }
+                                        },
+                                        itemBuilder: (_) => [
+                                          PopupMenuItem(value: 'rename', child: Text(_tr('이름 수정', 'Rename', '重命名', '名前を変更'))),
+                                          PopupMenuItem(value: 'delete', child: Text(_tr('그룹 삭제', 'Delete Group', '删除分组', 'グループ削除'))),
+                                        ],
+                                      ),
+                                  ],
+                                ),
+                                onTap: () => Navigator.of(ctx).pop(g),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      );
+      if (!mounted || picked == null) return;
+      if (picked == '__add__') {
+        await _createNewGroupDialog();
+        return;
+      }
+      setState(() {
+        _closeSearch();
+        _favoritesOnly = false;
+        _selectedGroup = picked;
+      });
+      return;
+    }
     final box = _allGroupChipKey.currentContext?.findRenderObject() as RenderBox?;
     if (box == null || !box.hasSize) return;
     // 앱 전체를 크게 보는 태블릿에서도 단추 바로 아래에 오도록 (메뉴가 놓이는 화면 기준 좌표)
@@ -3888,21 +3996,8 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
   Future<void> _showTrashBinDialog() async {
     await _loadLibrary();
     if (!mounted) return;
-    // 정렬 창처럼 휴지통 단추 아래에서 커져 나옴 (닫으면 단추로 들어감)
-    final box = _trashBtnKey.currentContext?.findRenderObject() as RenderBox?;
-    if (box == null || !box.hasSize) return;
-    final RenderObject? overlayBox = Navigator.of(context).overlay?.context.findRenderObject();
-    final Rect anchor = box.localToGlobal(Offset.zero, ancestor: overlayBox) & box.size;
-    final double panelH = MediaQuery.of(context).size.height * 0.6;
-    setState(() => _trashPanelOpen = true);
-    await Navigator.of(context).push<void>(PopPanelRoute<void>(
-      anchor: anchor,
-      width: 400,
-      // 기본 스타일(아래 막대): 같은 창이 밑에서 위로 / 심플(왼쪽 막대): 단추 오른쪽 옆으로
-      fromBottom: !StorageService.simpleStyle,
-      beside: StorageService.simpleStyle,
-      barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
-      builder: (ctx) => StatefulBuilder(
+    final double panelH = MediaQuery.of(context).size.height * 0.62;
+    Widget buildTrashContent(BuildContext ctx) => StatefulBuilder(
         builder: (ctx, setModalState) => SizedBox(
             height: panelH,
             child: Column(
@@ -4070,9 +4165,36 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
               ],
             ),
           ),
+        );
+    setState(() => _trashPanelOpen = true);
+    if (StorageService.simpleStyle) {
+      await showViewerDialog<void>(
+        context,
+        (ctx) => Center(
+          child: viewerPanel(
+            ctx,
+            color: Theme.of(ctx).colorScheme.surfaceContainerLow,
+            elevation: 6,
+            width: math.min(500, MediaQuery.sizeOf(ctx).width - 40),
+            child: buildTrashContent(ctx),
+          ),
         ),
-      ),
-    );
+      );
+    } else {
+      final box = _trashBtnKey.currentContext?.findRenderObject() as RenderBox?;
+      if (box != null && box.hasSize) {
+        final RenderObject? overlayBox = Navigator.of(context).overlay?.context.findRenderObject();
+        final Rect anchor = box.localToGlobal(Offset.zero, ancestor: overlayBox) & box.size;
+        await Navigator.of(context).push<void>(PopPanelRoute<void>(
+          anchor: anchor,
+          width: 400,
+          fromBottom: true,
+          beside: false,
+          barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
+          builder: buildTrashContent,
+        ));
+      }
+    }
     if (mounted) setState(() => _trashPanelOpen = false);
   }
 

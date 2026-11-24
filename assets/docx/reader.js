@@ -1845,6 +1845,33 @@ function docxBuildRangeFromPts(p1, p2) {
   return range;
 }
 
+let docxActiveHandleSide = null;
+let docxHandleFixedPt = null;
+
+function docxOnHandleMove(ev) {
+  if (!docxActiveHandleSide || !docxHandleFixedPt || !ev.touches.length) return;
+  ev.stopPropagation();
+  ev.preventDefault();
+  const t = ev.touches[0];
+  const pt = docxCaretPointAt(t.clientX, t.clientY - 18);
+  if (!pt) return;
+  const next = docxBuildRangeFromPts(docxHandleFixedPt, pt);
+  if (next && !next.collapsed) {
+    docxSelRange = next;
+    docxRenderSelection();
+  }
+}
+
+function docxOnHandleEnd(ev) {
+  if (!docxActiveHandleSide) return;
+  docxActiveHandleSide = null;
+  docxHandleFixedPt = null;
+  docxSelJustEndedAt = Date.now();
+  ev.stopPropagation();
+  docxFocusIme();
+  docxEmitEditState(false);
+}
+
 function docxMountSelHandle(pageEl, side, relX, relY) {
   if (!pageEl) return;
   const h = document.createElement('div');
@@ -1852,37 +1879,15 @@ function docxMountSelHandle(pageEl, side, relX, relY) {
   h.dataset.side = side;
   h.style.left = `${relX - 14}px`;
   h.style.top = `${relY}px`;
-  let dragging = false;
   h.addEventListener('touchstart', (ev) => {
-    if (ev.touches.length !== 1) return;
-    dragging = true;
-    ev.stopPropagation();
-    ev.preventDefault();
-  }, { passive: false });
-  h.addEventListener('touchmove', (ev) => {
-    if (!dragging || ev.touches.length !== 1 || !docxSelRange) return;
-    ev.stopPropagation();
-    ev.preventDefault();
-    const t = ev.touches[0];
-    const pt = docxCaretPointAt(t.clientX, t.clientY - 18);
-    if (!pt) return;
-    const fixed = side === 'start'
+    if (ev.touches.length !== 1 || !docxSelRange) return;
+    docxActiveHandleSide = side;
+    docxHandleFixedPt = side === 'start'
       ? { node: docxSelRange.endContainer, offset: docxSelRange.endOffset }
       : { node: docxSelRange.startContainer, offset: docxSelRange.startOffset };
-    const next = docxBuildRangeFromPts(fixed, pt);
-    if (next && !next.collapsed) {
-      docxSelRange = next;
-      docxRenderSelection();
-    }
-  }, { passive: false });
-  h.addEventListener('touchend', (ev) => {
-    if (!dragging) return;
-    dragging = false;
     ev.stopPropagation();
-    docxSelJustEndedAt = Date.now();
-    docxFocusIme();
-    docxEmitEditState(false);
-  }, { passive: true });
+    ev.preventDefault();
+  }, { passive: false });
   pageEl.appendChild(h);
 }
 
@@ -1891,8 +1896,28 @@ function docxRenderSelection() {
   if (!docxEditMode || !docxSelRange || docxSelRange.collapsed) return;
   docxRemoveCaret();
   try {
-    const rects = [...docxSelRange.getClientRects()].filter(r => r.width > 0.5 && r.height > 0.5);
-    if (rects.length === 0) return;
+    const rawRects = [...docxSelRange.getClientRects()]
+      .filter(r => r.width > 0.5 && r.height > 0.5)
+      .map(r => ({ left: r.left, right: r.right, top: r.top, bottom: r.bottom, midY: (r.top + r.bottom) * 0.5 }))
+      .sort((a, b) => a.midY - b.midY || a.left - b.left);
+    if (rawRects.length === 0) return;
+
+    // 같은 줄에 중복 생성되는 인라인 사각형을 하나로 병합해 하이라이트 겹침(진해짐) 제거
+    const merged = [];
+    for (const r of rawRects) {
+      const prev = merged.length > 0 ? merged[merged.length - 1] : null;
+      const minH = prev ? Math.min(prev.bottom - prev.top, r.bottom - r.top) : 0;
+      if (prev && Math.abs(r.midY - prev.midY) <= Math.max(4, minH * 0.55)) {
+        prev.left = Math.min(prev.left, r.left);
+        prev.right = Math.max(prev.right, r.right);
+        prev.top = Math.min(prev.top, r.top);
+        prev.bottom = Math.max(prev.bottom, r.bottom);
+        prev.midY = (prev.top + prev.bottom) * 0.5;
+      } else {
+        merged.push({ ...r });
+      }
+    }
+
     const pageEls = [...document.querySelectorAll('.page')];
     const findPageForRect = (rc) => {
       const cx = (rc.left + rc.right) * 0.5;
@@ -1904,7 +1929,7 @@ function docxRenderSelection() {
       return pageEls[0] ? { p: pageEls[0], pr: pageEls[0].getBoundingClientRect() } : null;
     };
     let firstHandle = null, lastHandle = null;
-    for (const rc of rects) {
+    for (const rc of merged) {
       const hit = findPageForRect(rc);
       if (!hit) continue;
       const { p, pr } = hit;
@@ -1912,8 +1937,8 @@ function docxRenderSelection() {
       box.className = 'eri-docx-sel-rect';
       box.style.left = `${rc.left - pr.left}px`;
       box.style.top = `${rc.top - pr.top}px`;
-      box.style.width = `${rc.width}px`;
-      box.style.height = `${rc.height}px`;
+      box.style.width = `${Math.max(2, rc.right - rc.left)}px`;
+      box.style.height = `${Math.max(8, rc.bottom - rc.top)}px`;
       p.appendChild(box);
       if (!firstHandle) firstHandle = { p, x: rc.left - pr.left, y: rc.bottom - pr.top - 2 };
       lastHandle = { p, x: rc.right - pr.left, y: rc.bottom - pr.top - 2 };
@@ -2113,6 +2138,8 @@ function setEditMode(enabled) {
     document.addEventListener('contextmenu', docxPreventContext, true);
     document.addEventListener('dblclick', docxOnDblClick, true);
     document.addEventListener('touchstart', docxOnTouchStart, { passive: true, capture: true });
+    document.addEventListener('touchmove', docxOnHandleMove, { passive: false, capture: true });
+    document.addEventListener('touchend', docxOnHandleEnd, { passive: true, capture: true });
     document.addEventListener('touchmove', docxOnTouchMove, { passive: false, capture: true });
     document.addEventListener('touchend', docxOnTouchEnd, { passive: true, capture: true });
     document.addEventListener('click', docxOnClick, true);
@@ -2128,7 +2155,11 @@ function setEditMode(enabled) {
     docxClearSelectionOverlays();
     document.removeEventListener('contextmenu', docxPreventContext, true);
     document.removeEventListener('dblclick', docxOnDblClick, true);
+    docxActiveHandleSide = null;
+    docxHandleFixedPt = null;
     document.removeEventListener('touchstart', docxOnTouchStart, true);
+    document.removeEventListener('touchmove', docxOnHandleMove, true);
+    document.removeEventListener('touchend', docxOnHandleEnd, true);
     document.removeEventListener('touchmove', docxOnTouchMove, true);
     document.removeEventListener('touchend', docxOnTouchEnd, true);
     document.removeEventListener('click', docxOnClick, true);
@@ -2181,14 +2212,35 @@ function docxApplyStyleToRange(range, opts) {
     if (endOff <= startOff) continue;
     if (endOff < target.nodeValue.length) target.splitText(endOff);
     if (startOff > 0) target = target.splitText(startOff);
-    const span = document.createElement('span');
+    // CSS에서 부모 <span>의 text-decoration: underline은 자식의 none으로 지워지지 않으므로,
+    // 밑줄 해제 시 조상 <span>의 밑줄을 직접 해제하고, 단일 자식 <span>은 중첩 대신 재사용함
+    if (opts.underline === false) {
+      let anc = target.parentElement;
+      while (anc && anc !== root && anc.tagName === 'SPAN') {
+        const td = (anc.style.textDecoration || anc.style.textDecorationLine || '').toLowerCase();
+        if (td.includes('underline')) {
+          anc.style.textDecoration = 'none';
+          anc.style.textDecorationLine = 'none';
+        }
+        anc = anc.parentElement;
+      }
+    }
+    let span;
+    if (target.parentElement && target.parentElement.tagName === 'SPAN' && target.parentElement.childNodes.length === 1) {
+      span = target.parentElement;
+    } else {
+      span = document.createElement('span');
+      target.parentNode.insertBefore(span, target);
+      span.appendChild(target);
+    }
     if (opts.bold !== undefined) span.style.fontWeight = opts.bold ? 'bold' : 'normal';
     if (opts.italic !== undefined) span.style.fontStyle = opts.italic ? 'italic' : 'normal';
-    if (opts.underline !== undefined) span.style.textDecoration = opts.underline ? 'underline' : 'none';
+    if (opts.underline !== undefined) {
+      span.style.textDecoration = opts.underline ? 'underline' : 'none';
+      span.style.textDecorationLine = opts.underline ? 'underline' : 'none';
+    }
     if (opts.fontSizePt !== undefined) span.style.fontSize = `${Math.max(6, Math.min(48, Number(opts.fontSizePt) || 11))}pt`;
     if (opts.textColor !== undefined) span.style.color = String(opts.textColor);
-    target.parentNode.insertBefore(span, target);
-    span.appendChild(target);
     if (!firstSpan) firstSpan = span;
     lastSpan = span;
   }

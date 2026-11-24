@@ -1900,6 +1900,35 @@ function removeAllSelRects() {
   for (const el of document.querySelectorAll('.eri-sel-handle')) el.remove();
 }
 
+let selHandleDragging = false;
+
+function handleSelHandleDocMove(e) {
+  if (!selHandleDragging || !selAnchorHit || !e.touches.length) return;
+  e.stopPropagation();
+  e.preventDefault();
+  const t = e.touches[0];
+  const hit = hitTestClientPoint(t.clientX, t.clientY - 18);
+  if (!hit || !sameSelContainer(selAnchorHit, hit)) return;
+  const cmp = compareEditPos(selAnchorHit, hit);
+  const st = cmp <= 0 ? { ...selAnchorHit } : { ...hit };
+  const en = cmp <= 0 ? { ...hit } : { ...selAnchorHit };
+  editSelection = { start: st, end: en };
+  renderEditSelection();
+}
+
+function handleSelHandleDocEnd(e) {
+  if (!selHandleDragging) return;
+  selHandleDragging = false;
+  selDragActive = false;
+  selJustFinishedAt = Date.now();
+  e.stopPropagation();
+  if (editImeEl) {
+    resetImeBuffer();
+    editImeEl.focus({ preventScroll: true });
+  }
+  emitEditState();
+}
+
 function mountSelHandle(frame, kind, leftPx, topPx) {
   if (!frame) return;
   const h = document.createElement('div');
@@ -1918,32 +1947,10 @@ function mountSelHandle(frame, kind, leftPx, topPx) {
     e.stopPropagation();
     e.preventDefault();
     if (!editSelection) return;
+    selHandleDragging = true;
     selDragActive = true;
     selAnchorHit = kind === 'start' ? { ...editSelection.end } : { ...editSelection.start };
   }, { passive: false });
-  h.addEventListener('touchmove', (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    if (!selDragActive || !selAnchorHit || !e.touches.length) return;
-    const t = e.touches[0];
-    const hit = hitTestClientPoint(t.clientX, t.clientY - 18);
-    if (!hit || !sameSelContainer(selAnchorHit, hit)) return;
-    const cmp = compareEditPos(selAnchorHit, hit);
-    const st = cmp <= 0 ? { ...selAnchorHit } : { ...hit };
-    const en = cmp <= 0 ? { ...hit } : { ...selAnchorHit };
-    editSelection = { start: st, end: en };
-    renderEditSelection();
-  }, { passive: false });
-  h.addEventListener('touchend', (e) => {
-    e.stopPropagation();
-    selDragActive = false;
-    selJustFinishedAt = Date.now();
-    if (editImeEl) {
-      resetImeBuffer();
-      editImeEl.focus({ preventScroll: true });
-    }
-    emitEditState();
-  }, { passive: true });
   frame.appendChild(h);
 }
 
@@ -2569,12 +2576,17 @@ function setEditMode(enabled) {
     }
     document.addEventListener('click', handleDirectEditClick, true);
     document.addEventListener('touchstart', handleEditTouchStart, { passive: true, capture: true });
+    document.addEventListener('touchmove', handleSelHandleDocMove, { passive: false, capture: true });
+    document.addEventListener('touchend', handleSelHandleDocEnd, { passive: true, capture: true });
     document.addEventListener('touchmove', handleEditTouchMove, { passive: false, capture: true });
     document.addEventListener('touchend', handleEditTouchEnd, { passive: true, capture: true });
     emitEditState();
   } else {
     document.removeEventListener('click', handleDirectEditClick, true);
     document.removeEventListener('touchstart', handleEditTouchStart, true);
+    selHandleDragging = false;
+    document.removeEventListener('touchmove', handleSelHandleDocMove, true);
+    document.removeEventListener('touchend', handleSelHandleDocEnd, true);
     document.removeEventListener('touchmove', handleEditTouchMove, true);
     document.removeEventListener('touchend', handleEditTouchEnd, true);
     editSelection = null;
