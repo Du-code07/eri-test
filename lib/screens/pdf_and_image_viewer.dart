@@ -1653,6 +1653,17 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
       _deleteSharpFiles(made.values.map((e) => e.$2));
       return;
     }
+    // 새 고해상도 타일을 미리 디코딩해 둔 뒤 한 번에 교체해, 이동 후 깜빡임·늘어짐이 없도록 함
+    for (final entry in made.values) {
+      if (!mounted || seq != _sharpSeq) break;
+      try {
+        await precacheImage(FileImage(File(entry.$2)), context);
+      } catch (_) {}
+    }
+    if (!mounted || seq != _sharpSeq) {
+      _deleteSharpFiles(made.values.map((e) => e.$2));
+      return;
+    }
     final old = _sharpTiles.values.map((e) => e.$2).toList();
     setState(() => _sharpTiles
       ..clear()
@@ -2043,15 +2054,16 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
                 ),
               ),
             ),
-            // 확대해서 볼 때: 보이는 부분을 선명하게 다시 그린 그림
+            // 확대해서 볼 때: 보이는 부분을 선명하게 다시 그린 그림 (precacheImage 완료 후 교체되므로 ValueKey로 즉시 전환)
             if (sharp != null)
               Positioned(
+                key: ValueKey(sharp.$2),
                 left: drawLeft + sharp.$1.left * drawWidth,
                 top: drawTop + sharp.$1.top * drawHeight,
                 width: sharp.$1.width * drawWidth,
                 height: sharp.$1.height * drawHeight,
                 child: IgnorePointer(
-                  child: Image.file(File(sharp.$2), fit: BoxFit.fill, gaplessPlayback: true, filterQuality: FilterQuality.high),
+                  child: Image.file(File(sharp.$2), fit: BoxFit.fill, filterQuality: FilterQuality.high),
                 ),
               ),
             // 라이트·편안한 모드: 흰 쪽이 흰 바탕에 묻히지 않게 쪽마다 옅은 회색 테두리

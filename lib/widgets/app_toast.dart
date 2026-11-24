@@ -90,13 +90,16 @@ class _AppToastOverlay extends StatefulWidget {
 class _AppToastOverlayState extends State<_AppToastOverlay> with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 260),
-    reverseDuration: const Duration(milliseconds: 260),
+    duration: const Duration(milliseconds: 380),
+    reverseDuration: const Duration(milliseconds: 360),
   );
   late final Animation<Offset> _slide = Tween<Offset>(
-    begin: widget.fromTop ? const Offset(0, -1.5) : const Offset(0, 1.35),
+    begin: widget.fromTop ? const Offset(0, -1.25) : const Offset(0, 1.15),
     end: Offset.zero,
-  ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic));
+  ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutQuart, reverseCurve: Curves.easeInOutCubic));
+  late final Animation<double> _fade = Tween<double>(begin: 0.35, end: 1.0).animate(
+    CurvedAnimation(parent: _ctrl, curve: Curves.easeOut, reverseCurve: Curves.easeIn),
+  );
 
   bool _dismissing = false;
 
@@ -200,7 +203,7 @@ class _AppToastOverlayState extends State<_AppToastOverlay> with SingleTickerPro
             padding: const EdgeInsets.fromLTRB(4, 12, 4, 10),
             child: SlideTransition(
               position: _slide,
-              child: pill,
+              child: FadeTransition(opacity: _fade, child: pill),
             ),
           ),
         ),

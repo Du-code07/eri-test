@@ -643,9 +643,12 @@ class _HwpViewerState extends State<HwpViewer> {
             oldWidget.vertical != widget.vertical)) {
       unawaited(_invoke('configure', [_options]));
     }
-    // 스크롤 보기: 문서 화면 안에서 위아래로 굴릴 수 있게
-    if (oldWidget.vertical != widget.vertical) {
-      unawaited(_web?.setSettings(settings: InAppWebViewSettings(disableVerticalScroll: false, disableHorizontalScroll: !_isSpreadsheet && !widget.vertical)));
+    // 스크롤 보기·문서 편집 모드: Android가 ACTION_MOVE를 삼키지 않게 스크롤 잠금을 풀어 드래그 선택이 동작하게 함
+    if (oldWidget.vertical != widget.vertical || oldWidget.editMode != widget.editMode) {
+      unawaited(_web?.setSettings(settings: InAppWebViewSettings(
+        disableVerticalScroll: false,
+        disableHorizontalScroll: !_isSpreadsheet && !widget.vertical && !widget.editMode,
+      )));
     }
   }
 
@@ -772,8 +775,8 @@ class _HwpViewerState extends State<HwpViewer> {
             // Android consumes ACTION_MOVE when both flags are true. That
             // prevents the canvas from receiving either drag or pinch events.
             // Excel controls its own viewport; CSS prevents page scrolling.
-            disableHorizontalScroll: !_isSpreadsheet && !widget.vertical,
-            disableVerticalScroll: !_isSpreadsheet && !widget.vertical,
+            disableHorizontalScroll: !_isSpreadsheet && !widget.vertical && !widget.editMode,
+            disableVerticalScroll: false,
             horizontalScrollBarEnabled: false,
             verticalScrollBarEnabled: false,
             allowFileAccess: false,
@@ -858,7 +861,7 @@ class _HwpViewerState extends State<HwpViewer> {
 
 /// 켜져 있을 때만 길게 누르기(260ms)를 문서 화면(WebView)이 직접 받아 드래그 선택 가능 (일반 탭·핀치 줌 방해 없음)
 class _ModeLongPressRecognizer extends LongPressGestureRecognizer {
-  _ModeLongPressRecognizer(this.active) : super(duration: const Duration(milliseconds: 260));
+  _ModeLongPressRecognizer(this.active) : super(duration: const Duration(milliseconds: 220));
   final bool Function() active;
 
   @override

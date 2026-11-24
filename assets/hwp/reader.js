@@ -1930,12 +1930,149 @@ function collectSelRects(st, en) {
   return out;
 }
 
+function getCursorRectForPos(c) {
+  if (!doc || !c) return null;
+  try {
+    let raw = null;
+    if (c.inTable && c.pathJson && typeof doc.getCursorRectByPath === 'function') {
+      raw = doc.getCursorRectByPath(c.sec, c.parentPara, c.pathJson, c.offset);
+    } else if (c.inTable && c.cell !== undefined && c.cell !== null && typeof doc.getCursorRectInCell === 'function') {
+      raw = doc.getCursorRectInCell(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara, c.offset);
+    } else if (typeof doc.getCursorRect === 'function') {
+      raw = doc.getCursorRect(c.sec, c.para, c.offset);
+    }
+    const r = parseJsonSafe(raw);
+    if (r && Number.isFinite(r.x) && Number.isFinite(r.y)) return r;
+  } catch (_) {}
+  return null;
+}
+
+function renderBodySelectionBySvgLines(st, en) {
+  const sc = getCursorRectForPos(st);
+  const ec = getCursorRectForPos(en);
+  if (!sc || !ec) return false;
+  const pStart = typeof sc.pageIndex === 'number' && Number.isFinite(sc.pageIndex) ? sc.pageIndex : st.pageIdx;
+  const pEnd = typeof ec.pageIndex === 'number' && Number.isFinite(ec.pageIndex) ? ec.pageIndex : en.pageIdx;
+  if (pEnd < pStart) return false;
+
+  let drawn = 0;
+  let firstHandle = null, lastHandle = null;
+
+  for (let p = pStart; p <= pEnd; p++) {
+    const frame = findPageFrameByIndex(p);
+    const svg = frame ? frame.querySelector(':scope > svg') : null;
+    if (!frame || !svg) continue;
+    const vb = svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width > 0
+      ? svg.viewBox.baseVal
+      : { x: 0, y: 0, width: parseFloat(frame.dataset.width) || 595, height: parseFloat(frame.dataset.height) || 842 };
+    const { w: engW, h: engH } = getPageEngineSize(p, svg);
+    const sx = vb.width / engW, sy = vb.height / engH;
+
+    const sX = vb.x + sc.x * sx, sY = vb.y + sc.y * sy, sH = Math.max(10, (sc.height > 0 ? sc.height : 12) * sy);
+    const eX = vb.x + ec.x * sx, eY = vb.y + ec.y * sy, eH = Math.max(10, (ec.height > 0 ? ec.height : 12) * sy);
+
+    const addRect = (rx, ry, rw, rh) => {
+      if (!(rw > 0 && rh > 0)) return;
+      const el = document.createElementNS(SVG_NS, 'rect');
+      el.setAttribute('class', 'eri-sel-rect');
+      el.setAttribute('x', String(rx));
+      el.setAttribute('y', String(ry));
+      el.setAttribute('width', String(rw));
+      el.setAttribute('height', String(rh));
+      el.setAttribute('rx', '2');
+      svg.appendChild(el);
+      drawn++;
+    };
+
+    const fRect = frame.getBoundingClientRect();
+    const sRect = svg.getBoundingClientRect();
+    const toFramePt = (vx, vy) => {
+      if (!(sRect.width > 0 && sRect.height > 0)) return null;
+      return {
+        frame,
+        x: (sRect.left - fRect.left) + ((vx - vb.x) / vb.width) * sRect.width,
+        y: (sRect.top - fRect.top) + ((vy - vb.y) / vb.height) * sRect.height,
+      };
+    };
+
+    if (p === pStart && p === pEnd && Math.abs((sY + sH * 0.5) - (eY + eH * 0.5)) < Math.max(6, Math.min(sH, eH) * 0.65)) {
+      const rx = Math.min(sX, eX);
+      const rw = Math.max(2, Math.abs(eX - sX));
+      const ry = Math.min(sY, eY);
+      const rh = Math.max(sH, eH);
+      addRect(rx, ry, rw, rh);
+      firstHandle = toFramePt(rx, ry + rh - 2);
+      lastHandle = toFramePt(rx + rw, ry + rh - 2);
+      continue;
+    }
+
+    // SVG 내 실제 <text> 요소들을 시각적 줄 단위로 묶어 중간 줄이 절대 누락되지 않게 그림
+    const boxes = [];
+    for (const tEl of svg.querySelectorAll('text')) {
+      if (!tEl.textContent || !tEl.textContent.trim()) continue;
+      try {
+        const b = tEl.getBBox();
+        if (b && b.width > 0 && b.height > 0) {
+          boxes.push({ left: b.x, right: b.x + b.width, top: b.y, bottom: b.y + b.height, midY: b.y + b.height * 0.5 });
+        }
+      } catch (_) {}
+    }
+    if (boxes.length === 0) continue;
+    boxes.sort((a, b) => a.midY - b.midY || a.left - b.left);
+
+    const lines = [];
+    for (const b of boxes) {
+      const prev = lines.length > 0 ? lines[lines.length - 1] : null;
+      if (prev && Math.abs(b.midY - prev.midY) <= Math.max(4, Math.min(prev.bottom - prev.top, b.bottom - b.top) * 0.55)) {
+        prev.left = Math.min(prev.left, b.left);
+        prev.right = Math.max(prev.right, b.right);
+        prev.top = Math.min(prev.top, b.top);
+        prev.bottom = Math.max(prev.bottom, b.bottom);
+        prev.midY = (prev.top + prev.bottom) * 0.5;
+      } else {
+        lines.push({ ...b });
+      }
+    }
+
+    const sMid = sY + sH * 0.5;
+    const eMid = eY + eH * 0.5;
+    for (const ln of lines) {
+      const lnH = Math.max(8, ln.bottom - ln.top);
+      const tolS = Math.max(4, Math.max(sH, lnH) * 0.55);
+      const tolE = Math.max(4, Math.max(eH, lnH) * 0.55);
+      const isStartLine = p === pStart && Math.abs(ln.midY - sMid) <= tolS;
+      const isEndLine = p === pEnd && Math.abs(ln.midY - eMid) <= tolE;
+      if (p === pStart && !isStartLine && ln.midY < sMid) continue;
+      if (p === pEnd && !isEndLine && ln.midY > eMid) continue;
+
+      let x1 = ln.left;
+      let x2 = ln.right;
+      if (isStartLine) x1 = Math.max(ln.left, Math.min(sX, ln.right));
+      if (isEndLine) x2 = Math.min(ln.right, Math.max(eX, ln.left));
+      if (x2 <= x1) {
+        if (isStartLine) x2 = Math.max(ln.right, x1 + 4);
+        else if (isEndLine) x1 = Math.min(ln.left, x2 - 4);
+      }
+      addRect(x1, ln.top, Math.max(2, x2 - x1), lnH);
+    }
+
+    if (p === pStart) firstHandle = toFramePt(sX, sY + sH - 2);
+    if (p === pEnd) lastHandle = toFramePt(eX, eY + eH - 2);
+  }
+
+  if (drawn === 0) return false;
+  if (firstHandle) mountSelHandle(firstHandle.frame, 'start', firstHandle.x, firstHandle.y);
+  if (lastHandle) mountSelHandle(lastHandle.frame, 'end', lastHandle.x, lastHandle.y);
+  return true;
+}
+
 function renderEditSelection() {
   removeAllSelRects();
   if (!editModeOn || !doc || !editSelection) return;
   const st = editSelection.start, en = editSelection.end;
   if (!st || !en || compareEditPos(st, en) >= 0) return;
   try {
+    if (!st.inTable && renderBodySelectionBySvgLines(st, en)) return;
     const rects = collectSelRects(st, en);
     let firstHandle = null, lastHandle = null;
     for (const r of rects) {
