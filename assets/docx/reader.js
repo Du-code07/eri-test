@@ -1394,7 +1394,306 @@ function withoutZoom(fn) {
     try { return fn.apply(this, args); } finally { zoomDrawn = keep; zoomRedraw(); }
   };
 }
-window.freaderDocx = { setView, resetScrollZoom: vResetZoom, setScrollMarks, setScrollMemos, setScrollMemo, visibleSlots: vVisibleSlots, mostVisiblePage: vMostVisible, highlightBoxes: withoutZoom(highlightBoxes), beginDocument, appendChunk, openDocument, configure, display, next, previous, progress, highlightSelection: withoutZoom(highlightSelection), destroy, setVertical, scrollToRatio: vScrollToRatio,
+
+// ============================================================
+// Word (.docx) 문서 직접 편집 기능 (볼드·기울임·밑줄·글자 크기·글자 색·선택 삭제·되돌리기/다시 실행·원본 저장)
+// ============================================================
+let docxEditMode = false;
+let docxEditDirty = false;
+let docxEditOrigHtml = [];
+let docxOrigParaTexts = [];
+let docxUndoStack = [];
+let docxRedoStack = [];
+let docxLastSnap = null;
+let docxKbInset = 0;
+
+function docxPageRoots() {
+  if (vertical && vinner) {
+    const list = [...vinner.querySelectorAll('.page')];
+    if (list.length > 0) return list;
+  }
+  const list = [...host.querySelectorAll(':scope > .page')];
+  return list.length > 0 ? list : pages;
+}
+
+function docxSnapshotPages() {
+  return pages.map(p => p.innerHTML);
+}
+
+function docxApplySnapshot(snap) {
+  if (!Array.isArray(snap)) return;
+  for (let i = 0; i < Math.min(pages.length, snap.length); i++) {
+    pages[i].innerHTML = snap[i];
+  }
+  if (vertical && vinner) {
+    vMounted.forEach((el, idx) => {
+      if (pages[idx] && el !== pages[idx]) el.innerHTML = pages[idx].innerHTML;
+    });
+  }
+}
+
+function docxRgbToHex(rgb) {
+  if (!rgb) return '#000000';
+  if (rgb.startsWith('#')) return rgb.length === 7 ? rgb : '#000000';
+  const m = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(rgb);
+  if (!m) return '#000000';
+  const h = n => Math.max(0, Math.min(255, Number(n))).toString(16).padStart(2, '0');
+  return `#${h(m[1])}${h(m[2])}${h(m[3])}`;
+}
+
+function docxReadSelectionState() {
+  let bold = false, italic = false, underline = false, fontSizePt = 11, textColor = '#000000', hasCursor = false;
+  try {
+    bold = document.queryCommandState('bold');
+    italic = document.queryCommandState('italic');
+    underline = document.queryCommandState('underline');
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) {
+      hasCursor = true;
+      let node = sel.anchorNode;
+      if (node && node.nodeType === 3) node = node.parentElement;
+      if (node && node.nodeType === 1) {
+        const cs = getComputedStyle(node);
+        const px = parseFloat(cs.fontSize);
+        if (Number.isFinite(px) && px > 0) fontSizePt = Math.max(6, Math.min(48, Math.round(px * 0.75)));
+        if (cs.color) textColor = docxRgbToHex(cs.color);
+      }
+    }
+  } catch (_) {}
+  return { bold, italic, underline, fontSizePt, textColor, hasCursor };
+}
+
+function docxEmitEditState(typed = false) {
+  const st = docxReadSelectionState();
+  emit('editState', {
+    canUndo: docxUndoStack.length > 0,
+    canRedo: docxRedoStack.length > 0,
+    dirty: docxEditDirty,
+    bold: st.bold,
+    italic: st.italic,
+    underline: st.underline,
+    fontSizePt: st.fontSizePt,
+    textColor: st.textColor,
+    hasCursor: st.hasCursor,
+    typed: Boolean(typed),
+  });
+}
+
+function docxPushUndo() {
+  const cur = docxSnapshotPages();
+  if (docxLastSnap) {
+    docxUndoStack.push(docxLastSnap);
+    if (docxUndoStack.length > 40) docxUndoStack.shift();
+  }
+  docxLastSnap = cur;
+  docxRedoStack = [];
+  docxEditDirty = true;
+}
+
+function docxOnInput() {
+  if (!docxEditMode || disposed) return;
+  docxPushUndo();
+  docxEmitEditState(true);
+}
+
+function docxOnSelectionChange() {
+  if (!docxEditMode || disposed) return;
+  docxEmitEditState(false);
+}
+
+function docxSetEditableOnPages(on) {
+  const all = new Set([...pages, ...docxPageRoots()]);
+  for (const p of all) {
+    if (!p) continue;
+    p.contentEditable = on ? 'true' : 'false';
+    p.setAttribute('spellcheck', 'false');
+    p.style.userSelect = on ? 'text' : '';
+    p.style.webkitUserSelect = on ? 'text' : '';
+    p.style.outline = on ? 'none' : '';
+  }
+}
+
+function setKeyboardInset(px) {
+  docxKbInset = Math.max(0, Number(px) || 0);
+  if (vinner) {
+    vinner.style.paddingBottom = docxKbInset > 0 ? `${docxKbInset + 80}px` : '';
+  }
+  if (docxKbInset === 0 && vertical && vhost) {
+    const maxTop = Math.max(0, vhost.scrollHeight - vhost.clientHeight);
+    if (vhost.scrollTop > maxTop) vhost.scrollTop = maxTop;
+    vUpdate();
+    vReportMetrics();
+  }
+  return docxKbInset;
+}
+
+function setEditMode(enabled) {
+  docxEditMode = Boolean(enabled);
+  if (docxEditMode) {
+    docxEditOrigHtml = docxSnapshotPages();
+    docxOrigParaTexts = [];
+    for (const p of pages) {
+      for (const el of p.querySelectorAll('p')) {
+        docxOrigParaTexts.push((el.textContent || '').replace(/\s+/g, ' ').trim());
+      }
+    }
+    docxUndoStack = [];
+    docxRedoStack = [];
+    docxLastSnap = docxSnapshotPages();
+    docxEditDirty = false;
+    docxSetEditableOnPages(true);
+    document.addEventListener('input', docxOnInput, true);
+    document.addEventListener('selectionchange', docxOnSelectionChange, true);
+    docxEmitEditState(false);
+  } else {
+    document.removeEventListener('input', docxOnInput, true);
+    document.removeEventListener('selectionchange', docxOnSelectionChange, true);
+    docxSetEditableOnPages(false);
+    try { window.getSelection()?.removeAllRanges(); } catch (_) {}
+    if (document.activeElement && typeof document.activeElement.blur === 'function') {
+      document.activeElement.blur();
+    }
+    setKeyboardInset(0);
+    if (vertical && vhost) {
+      if (vinner) vinner.style.paddingBottom = '';
+      const maxTop = Math.max(0, vhost.scrollHeight - vhost.clientHeight);
+      if (maxTop <= 1 || vhost.scrollTop > maxTop) vhost.scrollTop = Math.min(vhost.scrollTop, maxTop);
+      vUpdate();
+      vReportMetrics();
+    }
+    docxUndoStack = [];
+    docxRedoStack = [];
+    docxLastSnap = null;
+  }
+  return docxEditMode;
+}
+
+function editApplyFormat(opts) {
+  if (!docxEditMode || disposed || !opts) return false;
+  try {
+    document.execCommand('styleWithCSS', false, true);
+    if (opts.bold !== undefined) {
+      document.execCommand('bold', false, null);
+    }
+    if (opts.italic !== undefined) {
+      document.execCommand('italic', false, null);
+    }
+    if (opts.underline !== undefined) {
+      document.execCommand('underline', false, null);
+    }
+    if (opts.textColor !== undefined) {
+      document.execCommand('foreColor', false, String(opts.textColor));
+    }
+    if (opts.fontSizePt !== undefined) {
+      const pt = Math.max(6, Math.min(48, Number(opts.fontSizePt) || 11));
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
+        const range = sel.getRangeAt(0);
+        const span = document.createElement('span');
+        span.style.fontSize = `${pt}pt`;
+        try {
+          range.surroundContents(span);
+        } catch (_) {
+          const frag = range.extractContents();
+          span.appendChild(frag);
+          range.insertNode(span);
+        }
+        sel.removeAllRanges();
+        const nr = document.createRange();
+        nr.selectNodeContents(span);
+        sel.addRange(nr);
+      }
+    }
+    docxPushUndo();
+    docxEmitEditState(false);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function editUndo() {
+  if (!docxEditMode || docxUndoStack.length === 0) return false;
+  const prev = docxUndoStack.pop();
+  if (docxLastSnap) docxRedoStack.push(docxLastSnap);
+  docxLastSnap = prev;
+  docxApplySnapshot(prev);
+  docxEditDirty = docxUndoStack.length > 0;
+  docxEmitEditState(false);
+  return true;
+}
+
+function editRedo() {
+  if (!docxEditMode || docxRedoStack.length === 0) return false;
+  const next = docxRedoStack.pop();
+  if (docxLastSnap) docxUndoStack.push(docxLastSnap);
+  docxLastSnap = next;
+  docxApplySnapshot(next);
+  docxEditDirty = true;
+  docxEmitEditState(false);
+  return true;
+}
+
+function cancelEditSession() {
+  if (docxEditOrigHtml.length > 0) {
+    docxApplySnapshot(docxEditOrigHtml);
+  }
+  docxEditDirty = false;
+  setEditMode(false);
+  return true;
+}
+
+function docxCollectRuns(el) {
+  const runs = [];
+  const walk = (node) => {
+    if (node.nodeType === 3) {
+      const text = node.nodeValue || '';
+      if (!text) return;
+      const parent = node.parentElement || el;
+      const cs = getComputedStyle(parent);
+      const fw = parseInt(cs.fontWeight, 10);
+      const bold = cs.fontWeight === 'bold' || (Number.isFinite(fw) && fw >= 600);
+      const italic = cs.fontStyle === 'italic' || cs.fontStyle === 'oblique';
+      const td = (cs.textDecorationLine || cs.textDecoration || '').toLowerCase();
+      const underline = td.includes('underline');
+      const px = parseFloat(cs.fontSize);
+      const fontSizePt = Number.isFinite(px) && px > 0 ? Math.round(px * 0.75 * 10) / 10 : null;
+      const colorHex = docxRgbToHex(cs.color);
+      const prev = runs.length > 0 ? runs[runs.length - 1] : null;
+      if (prev && prev.bold === bold && prev.italic === italic && prev.underline === underline && prev.fontSizePt === fontSizePt && prev.colorHex === colorHex) {
+        prev.text += text;
+      } else {
+        runs.push({ text, bold, italic, underline, fontSizePt, colorHex });
+      }
+    } else if (node.nodeType === 1) {
+      if (node.tagName === 'BR') {
+        if (runs.length > 0) runs[runs.length - 1].text += '\n';
+        else runs.push({ text: '\n', bold: false, italic: false, underline: false, fontSizePt: null, colorHex: '#000000' });
+        return;
+      }
+      for (const child of node.childNodes) walk(child);
+    }
+  };
+  walk(el);
+  return runs;
+}
+
+function exportEditedBytes() {
+  if (!docxEditDirty) return { ok: true, dirty: false };
+  const edits = [];
+  let idx = 0;
+  for (const p of pages) {
+    for (const el of p.querySelectorAll('p')) {
+      const origText = idx < docxOrigParaTexts.length ? docxOrigParaTexts[idx] : '';
+      const runs = docxCollectRuns(el);
+      edits.push({ index: idx, origText, runs });
+      idx++;
+    }
+  }
+  return { ok: true, dirty: true, kind: 'docx_edits', edits };
+}
+
+window.freaderDocx = { setView, resetScrollZoom: vResetZoom, setScrollMarks, setScrollMemos, setScrollMemo, visibleSlots: vVisibleSlots, mostVisiblePage: vMostVisible, highlightBoxes: withoutZoom(highlightBoxes), beginDocument, appendChunk, openDocument, configure, display, next, previous, progress, highlightSelection: withoutZoom(highlightSelection), destroy, setVertical, scrollToRatio: vScrollToRatio, setEditMode, editApplyFormat, editUndo, editRedo, cancelEditSession, setKeyboardInset, exportEditedBytes,
   search, showSearchResult, clearSearch, headingCandidates, pageText, visibleTextBoxes: withoutZoom(visibleTextBoxes), pageRect: withoutZoom(pageRect), pageSizes,
   getState: () => ({ ready, page, count: pages.length, received, spread: options.spread, awaitingPassword, unavailableImages, imageCacheBytes, cachedImages: imageCache.size, visibleImages: activeImagePaths.size, maxBytes: MAX_BYTES, format: detectedFormat }) };
 window.addEventListener('pagehide', destroy, { once: true });

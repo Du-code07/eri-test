@@ -20,6 +20,7 @@ import '../services/outline_cache.dart';
 import '../widgets/outline_progress.dart';
 import '../widgets/text_copy_sheet.dart';
 import '../widgets/text_select.dart';
+import '../services/docx_save_service.dart';
 import '../services/page_snapshot_service.dart';
 import '../services/user_fonts.dart';
 import '../services/epub_validation.dart';
@@ -171,6 +172,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   bool get _isPresentation => RegExp(r'\.pptx?$', caseSensitive: false).hasMatch(widget.filePath);
   bool get _isSpreadsheet => RegExp(r'\.xls[xm]?$', caseSensitive: false).hasMatch(widget.filePath);
   bool get _isHwpFile => RegExp(r'\.hwpx?$', caseSensitive: false).hasMatch(widget.filePath);
+  bool get _isDocxFile => widget.filePath.toLowerCase().endsWith('.docx');
   String get _documentPositionPrefix {
     final lower = widget.filePath.toLowerCase();
     if (_isTxt) return 'txt';
@@ -336,6 +338,8 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   bool _hwpHasEdits = false;
   bool _hwpSaving = false;
   bool _hwpBold = false;
+  bool _hwpItalic = false;
+  bool _hwpUnderline = false;
   int _hwpFontSizePt = 10;
   Color _hwpTextColor = const Color(0xFF000000);
   bool _hwpCanUndo = false;
@@ -343,7 +347,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   String? _hwpSubPanel; // 'size' | 'color' | null
   double _lastSlideEditKb = 0.0;
   double _lastHwpKbInset = 0;
-  bool get _canHwpEdit => _isHwpFile;
+  bool get _canHwpEdit => _isHwpFile || _isDocxFile;
   bool _isEraserMode = false;
   bool _allowFingerDrawing = false;
   bool _isStylusDown = false;
@@ -1241,6 +1245,8 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
               _hwpCanUndo = st['canUndo'] == true;
               _hwpCanRedo = st['canRedo'] == true;
               _hwpBold = st['bold'] == true;
+              _hwpItalic = st['italic'] == true;
+              _hwpUnderline = st['underline'] == true;
               final fs = st['fontSizePt'];
               if (fs is num && fs > 0) _hwpFontSizePt = fs.round();
               _hwpTextColor = parsed;
@@ -4386,17 +4392,25 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
 
   /// 저장 단추를 눌렀을 때만 파일에 수정 내용을 기록하고 편집 종료
   Future<void> _saveHwpEdits() async {
-    if (!_isHwpFile || _hwpSaving) return;
+    if (!_canHwpEdit || _hwpSaving) return;
     setState(() => _hwpSaving = true);
     try {
       if (_hwpHasEdits) {
         final bool preferHwpx = widget.filePath.toLowerCase().endsWith('.hwpx');
         final res = await _hwpController.exportEditedBytes(preferHwpx: preferHwpx);
-        if (res != null && res['ok'] == true && res['dirty'] == true && res['base64'] is String) {
-          final List<int> bytes = base64Decode(res['base64'] as String);
-          final File tmp = File('${widget.filePath}.eri_tmp');
-          await tmp.writeAsBytes(bytes, flush: true);
-          await tmp.rename(widget.filePath);
+        bool savedFile = false;
+        if (res != null && res['ok'] == true && res['dirty'] == true) {
+          if (res['kind'] == 'docx_edits' && res['edits'] is List) {
+            savedFile = await DocxSaveService.applyEditsToFile(widget.filePath, res['edits'] as List<dynamic>);
+          } else if (res['base64'] is String) {
+            final List<int> bytes = base64Decode(res['base64'] as String);
+            final File tmp = File('${widget.filePath}.eri_tmp');
+            await tmp.writeAsBytes(bytes, flush: true);
+            await tmp.rename(widget.filePath);
+            savedFile = true;
+          }
+        }
+        if (savedFile) {
           try {
             final dir = await PageSnapshotService.documentDir(widget.filePath);
             if (dir != null && dir.existsSync()) dir.deleteSync(recursive: true);
@@ -4404,6 +4418,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
         }
       }
       FocusManager.instance.primaryFocus?.unfocus();
+      await _hwpController.setKeyboardInset(0);
       await _hwpController.setEditMode(false);
       if (!mounted) return;
       setState(() {
@@ -4432,6 +4447,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       _lastHwpKbInset = 0;
     });
     FocusManager.instance.primaryFocus?.unfocus();
+    unawaited(_hwpController.setKeyboardInset(0));
     unawaited(_hwpController.cancelEditSession());
   }
 
@@ -4616,6 +4632,32 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
             _hwpSubPanel = null;
           });
           unawaited(_hwpController.editApplyFormat({'bold': next}));
+        },
+      ),
+      MemoToolButton(
+        icon: Icons.format_italic_rounded,
+        label: _tr('기울임', 'Italic', '斜体', '斜体'),
+        active: _hwpItalic,
+        onTap: () {
+          final next = !_hwpItalic;
+          setState(() {
+            _hwpItalic = next;
+            _hwpSubPanel = null;
+          });
+          unawaited(_hwpController.editApplyFormat({'italic': next}));
+        },
+      ),
+      MemoToolButton(
+        icon: Icons.format_underlined_rounded,
+        label: _tr('밑줄', 'Underline', '下划线', '下線'),
+        active: _hwpUnderline,
+        onTap: () {
+          final next = !_hwpUnderline;
+          setState(() {
+            _hwpUnderline = next;
+            _hwpSubPanel = null;
+          });
+          unawaited(_hwpController.editApplyFormat({'underline': next}));
         },
       ),
       MemoToolButton(

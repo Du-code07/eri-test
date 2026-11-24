@@ -1208,6 +1208,8 @@ function readCurrentCharProps() {
 function emitEditState(typed = false) {
   const props = readCurrentCharProps();
   const bold = pendingFormat.bold !== undefined ? Boolean(pendingFormat.bold) : Boolean(props && props.bold);
+  const italic = pendingFormat.italic !== undefined ? Boolean(pendingFormat.italic) : Boolean(props && props.italic);
+  const underline = pendingFormat.underline !== undefined ? Boolean(pendingFormat.underline) : Boolean(props && props.underline);
   let fontSizePt = pendingFormat.fontSizePt;
   if (!fontSizePt) {
     const rawFs = Number(props && props.fontSize);
@@ -1219,6 +1221,8 @@ function emitEditState(typed = false) {
     canRedo: editRedoStack.length > 0,
     dirty: editDirty,
     bold,
+    italic,
+    underline,
     fontSizePt,
     textColor,
     hasCursor: Boolean(editCursor),
@@ -1428,19 +1432,15 @@ function getParagraphLenAt(c) {
 }
 
 function applyCharFormatRange(c, startOff, endOff, overrides) {
-  if (!doc || disposed || !c || endOff <= startOff) return false;
-  const base = readCurrentCharProps() || {};
+  if (!doc || disposed || !c || endOff <= startOff || !overrides) return false;
+  // 요청된 속성만 전달해 서로 다른 볼드체·기울임·밑줄·글자 크기가 섞인 영역에서 다른 속성이 통일되지 않게 보존
   const merged = {};
-  if (base.fontFamily) merged.fontFamily = base.fontFamily;
-  if (Number(base.fontSize) > 0) merged.fontSize = Number(base.fontSize);
-  if (base.bold !== undefined) merged.bold = Boolean(base.bold);
-  if (base.italic !== undefined) merged.italic = Boolean(base.italic);
-  if (base.underline !== undefined) merged.underline = Boolean(base.underline);
-  if (base.strikethrough !== undefined) merged.strikethrough = Boolean(base.strikethrough);
-  if (base.textColor) merged.textColor = base.textColor;
   if (overrides.bold !== undefined) merged.bold = Boolean(overrides.bold);
+  if (overrides.italic !== undefined) merged.italic = Boolean(overrides.italic);
+  if (overrides.underline !== undefined) merged.underline = Boolean(overrides.underline);
   if (overrides.fontSizePt !== undefined) merged.fontSize = Math.round(Number(overrides.fontSizePt) * 100);
   if (overrides.textColor !== undefined) merged.textColor = String(overrides.textColor);
+  if (Object.keys(merged).length === 0) return false;
   const propsJson = JSON.stringify(merged);
   try {
     let raw = null;
@@ -1460,7 +1460,7 @@ function applyCharFormatRange(c, startOff, endOff, overrides) {
 
 function applyPendingFormatIfAny(c, startOff, len) {
   if (!c || len <= 0) return;
-  if (pendingFormat.bold === undefined && pendingFormat.fontSizePt === undefined && pendingFormat.textColor === undefined) return;
+  if (pendingFormat.bold === undefined && pendingFormat.italic === undefined && pendingFormat.underline === undefined && pendingFormat.fontSizePt === undefined && pendingFormat.textColor === undefined) return;
   applyCharFormatRange(c, startOff, startOff + len, pendingFormat);
 }
 
@@ -1491,6 +1491,9 @@ function ensureEditDom() {
 
     editImeEl.addEventListener('compositionstart', () => {
       if (suppressingImeReset || !editModeOn || !editCursor) return;
+      if (editSelection && compareEditPos(editSelection.start, editSelection.end) < 0) {
+        deleteEditSelection();
+      }
       imeComposing = true;
       imeCompBase = editCursor.offset;
       imeCompLen = 0;
@@ -1555,6 +1558,9 @@ function ensureEditDom() {
         return;
       }
       if (clean.length > 0) {
+        if (editSelection && compareEditPos(editSelection.start, editSelection.end) < 0) {
+          deleteEditSelection();
+        }
         const startOff = editCursor.offset;
         if (editSpanStart === null) editSpanStart = startOff;
         const nextOff = applyDeltaFast(startOff, 0, clean, true);
@@ -1664,8 +1670,47 @@ function replaceBodyLocalChunked(sec, para, off, del, ins) {
   }
 }
 
+function deleteEditSelection() {
+  if (!doc || disposed || !editSelection) return false;
+  const st = editSelection.start, en = editSelection.end;
+  if (!st || !en || compareEditPos(st, en) >= 0) return false;
+  flushPendingPaginationNow(false);
+  const beforeSnap = typeof doc.saveSnapshot === 'function' ? doc.saveSnapshot() : undefined;
+  const beforeCursor = { ...st };
+  try {
+    let raw = null;
+    if (st.inTable && st.pathJson && typeof doc.deleteRangeInCellByPath === 'function') {
+      raw = doc.deleteRangeInCellByPath(st.sec, st.parentPara, st.pathJson, st.cellPara, st.offset, en.cellPara, en.offset);
+    } else if (st.inTable && st.cell !== undefined && st.cell !== null && typeof doc.deleteRangeInCell === 'function') {
+      raw = doc.deleteRangeInCell(st.sec, st.parentPara, st.ctrl, st.cell, st.cellPara, st.offset, en.cellPara, en.offset);
+    } else if (typeof doc.deleteRange === 'function') {
+      raw = doc.deleteRange(st.sec, st.para, st.offset, en.para, en.offset);
+    }
+    const res = parseJsonSafe(raw);
+    if (res && res.ok !== false) {
+      editCursor = { ...st };
+      editSelection = null;
+      removeAllSelRects();
+      markEditDirty();
+      pushUndoOp({ kind: 'snap', beforeSnap, beforeCursor, afterCursor: { ...editCursor }, pageIdx: st.pageIdx });
+      redrawSinglePage(st.pageIdx);
+      if (en.pageIdx !== st.pageIdx) redrawSinglePage(en.pageIdx);
+      updateCaretPos();
+      emitEditState(true);
+      return true;
+    }
+    discardSnapSafe(beforeSnap);
+  } catch (_) {
+    discardSnapSafe(beforeSnap);
+  }
+  return false;
+}
+
 function handleBackspace() {
   if (!doc || disposed || !editCursor) return;
+  if (editSelection && compareEditPos(editSelection.start, editSelection.end) < 0) {
+    if (deleteEditSelection()) return;
+  }
   const c = editCursor;
   if (c.offset > 0) {
     const nextOff = applyDeltaFast(c.offset - 1, 1, '', true);
@@ -2255,6 +2300,8 @@ function handleEditTouchEnd() {
 function editApplyFormat(opts) {
   if (!editModeOn || !doc || disposed || !opts) return false;
   if (opts.bold !== undefined) pendingFormat.bold = Boolean(opts.bold);
+  if (opts.italic !== undefined) pendingFormat.italic = Boolean(opts.italic);
+  if (opts.underline !== undefined) pendingFormat.underline = Boolean(opts.underline);
   if (opts.fontSizePt !== undefined) pendingFormat.fontSizePt = Number(opts.fontSizePt);
   if (opts.textColor !== undefined) pendingFormat.textColor = String(opts.textColor);
   // 1) 이미 써진 글을 드래그로 선택한 상태(한 줄 또는 위·아래 여러 줄)면 선택 구간 전체에 즉시 적용 (자판 유지)
@@ -2547,6 +2594,15 @@ function setEditMode(enabled) {
       editImeEl.blur();
       editImeEl.disabled = true;
       editImeEl.style.display = 'none';
+    }
+    // 편집 종료 시 자판 여백과 스크롤 위치를 원래대로 되돌려 1페이지 문서에 스크롤·스크롤바가 남지 않게 함
+    setKeyboardInset(0);
+    if (vertical && vhost) {
+      if (vinner) vinner.style.paddingBottom = '';
+      const maxTop = Math.max(0, vhost.scrollHeight - vhost.clientHeight);
+      if (maxTop <= 1 || vhost.scrollTop > maxTop) vhost.scrollTop = Math.min(vhost.scrollTop, maxTop);
+      vUpdate();
+      emit('scrollMetrics', { top: vhost.scrollTop, height: vhost.scrollHeight, client: vhost.clientHeight, zoom: vZoom });
     }
   }
   return editModeOn;

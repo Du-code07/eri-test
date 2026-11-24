@@ -1118,6 +1118,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
       // 쪽 그대로 세로로 늘어놓고 쪽 사이는 살짝 띄움 (슬라이드 보기의 쪽을 세로로, 간격 줄은 예전 12의 절반)
       gap: 6,
       markedPages: _scrollMarkPages,
+      onViewportChanged: _isPdfFile ? _onScrollZoomMoved : null,
       // 쪽 뒤 바탕은 앱 테마(또는 PDF 자체 배경색), 쪽 사이 간격 줄은 고정 색
       background: _backdrop(context),
       gapColor: kViewerGapColor,
@@ -1151,10 +1152,28 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
         // 메모: 넘겨 보기와 같은 메모를 쪽에 붙여 함께 움직이게 (쓰고 지우기도 그대로)
         final strokes = _memoStrokesByPage[i] ?? const <MemoStroke>[];
         final bool memo = strokes.isNotEmpty || _isMemoMode;
-        Widget content = (all.isEmpty && current.isEmpty && !memo)
+        final (Rect, String)? sharp = _isPdfFile ? _sharpTiles[i] : null;
+        Widget content = (all.isEmpty && current.isEmpty && !memo && sharp == null)
             ? page
             : Stack(fit: StackFit.expand, children: [
                 page,
+                if (sharp != null)
+                  LayoutBuilder(
+                    builder: (ctx, c) => Stack(
+                      children: [
+                        Positioned(
+                          key: ValueKey(sharp.$2),
+                          left: sharp.$1.left * c.maxWidth,
+                          top: sharp.$1.top * c.maxHeight,
+                          width: sharp.$1.width * c.maxWidth,
+                          height: sharp.$1.height * c.maxHeight,
+                          child: IgnorePointer(
+                            child: Image.file(File(sharp.$2), fit: BoxFit.fill, filterQuality: FilterQuality.high),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 if (all.isNotEmpty || current.isNotEmpty) IgnorePointer(child: CustomPaint(painter: _FindMarkPainter(all, current))),
                 if (memo) LayoutBuilder(builder: (ctx, c) => _pageMemoLayer(i, c.maxWidth, c.maxHeight, strokes)),
               ]);
@@ -1581,6 +1600,69 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
       return;
     }
     _sharpTimer = Timer(const Duration(milliseconds: 140), _renderSharp);
+  }
+
+  void _onScrollZoomMoved() {
+    _sharpTimer?.cancel();
+    if (!_isPdfFile || !_pageModeScroll) return;
+    if (_scrollCtrl.scale < 1.08) {
+      _sharpSeq++;
+      if (_sharpTiles.isNotEmpty) _clearSharp();
+      return;
+    }
+    _sharpTimer = Timer(const Duration(milliseconds: 140), _renderSharpScroll);
+  }
+
+  Future<void> _renderSharpScroll() async {
+    if (!mounted || !_isPdfFile || !_pageModeScroll) return;
+    if (_scrollCtrl.scale < 1.08) return;
+    final Map<int, (Rect, Size)> regions = _scrollCtrl.visiblePageRegions();
+    if (regions.isEmpty) return;
+    final double dpr = MediaQuery.devicePixelRatioOf(context);
+    final int seq = ++_sharpSeq;
+    final String dir = (await getTemporaryDirectory()).path;
+    final Map<int, (Rect, String)> made = {};
+    for (final entry in regions.entries) {
+      final int p = entry.key;
+      final Rect norm = entry.value.$1;
+      final Size screenSz = entry.value.$2;
+      double w = screenSz.width * dpr * 1.35;
+      double h = screenSz.height * dpr * 1.35;
+      if (w < 2 || h < 2) continue;
+      final double k = math.min(1.0, math.min(4096 / math.max(w, h), math.sqrt(16e6 / (w * h))));
+      w *= k;
+      h *= k;
+      try {
+        final String? path = await _pdfChannel.invokeMethod<String>('renderPdfRegion', {
+          'path': widget.files.first.path,
+          'page': p,
+          'l': norm.left, 't': norm.top, 'r': norm.right, 'b': norm.bottom,
+          'w': w.round(), 'h': h.round(),
+          'out': '$dir/pdf_szoom_${seq}_$p.jpg',
+        });
+        if (path != null) made[p] = (norm, path);
+      } catch (_) {}
+      if (seq != _sharpSeq) break;
+    }
+    if (!mounted || seq != _sharpSeq) {
+      _deleteSharpFiles(made.values.map((e) => e.$2));
+      return;
+    }
+    for (final entry in made.values) {
+      if (!mounted || seq != _sharpSeq) break;
+      try {
+        await precacheImage(FileImage(File(entry.$2)), context);
+      } catch (_) {}
+    }
+    if (!mounted || seq != _sharpSeq) {
+      _deleteSharpFiles(made.values.map((e) => e.$2));
+      return;
+    }
+    final old = _sharpTiles.values.map((e) => e.$2).toList();
+    setState(() => _sharpTiles
+      ..clear()
+      ..addAll(made));
+    WidgetsBinding.instance.addPostFrameCallback((_) => _deleteSharpFiles(old));
   }
 
   void _clearSharp({bool rebuild = true}) {

@@ -1097,6 +1097,9 @@ class ContinuousPageController {
   /// 한 화면만큼 아래(+1)/위(-1)로 부드럽게
   void scrollByScreen(int dir) => _state?._scrollByScreen(dir);
 
+  /// 현재 확대 배율
+  double get scale => _state?._scale ?? 1.0;
+
   /// 확대돼 있는지
   bool get zoomed => ((_state?._scale ?? 1) - 1).abs() > 0.03;
 
@@ -1105,6 +1108,9 @@ class ContinuousPageController {
 
   /// 화면에 가장 많이(비율로) 보이는 쪽 (스크롤 보기 북마크)
   int? get mostVisiblePage => _state?._mostVisible();
+
+  /// 현재 화면에 보이는 각 쪽의 정규화 영역(0..1)과 화면상 크기(논리 px)
+  Map<int, (Rect, Size)> visiblePageRegions() => _state?._visiblePageRegions() ?? const {};
 }
 
 /// 뷰어 설정 페이지 모드: 스크롤을 켜기 직전의 탭·슬라이드 (스크롤을 다시 끄면 이대로 되돌림, 기억이 없으면 기본값 탭 + 슬라이드)
@@ -1316,7 +1322,11 @@ class ContinuousPageList extends StatefulWidget {
     this.gap = 0,
     this.onLongPressPage,
     this.markedPages = const {},
+    this.onViewportChanged,
   });
+
+  /// 확대·이동으로 보이는 영역이 바뀔 때마다 알림 (PDF 스크롤 확대 선명도 렌더링용)
+  final VoidCallback? onViewportChanged;
 
   /// 북마크한 쪽: 쪽 왼쪽 위(테두리 선에서 시작)에 책갈피를 붙여 둠 (쪽과 함께 움직이고 확대·축소돼도 보임)
   final Set<int> markedPages;
@@ -1467,6 +1477,31 @@ class _ContinuousPageListState extends State<ContinuousPageList> with SingleTick
     return lo;
   }
 
+  Map<int, (Rect, Size)> _visiblePageRegions() {
+    final Map<int, (Rect, Size)> out = {};
+    if (_tops.length < 2 || _width <= 0 || _height <= 0 || _scale <= 0) return out;
+    final double padY = _padYFor(_scale);
+    final double x0 = _ox / _scale;
+    final double x1 = (_ox + _width) / _scale;
+    final double y0 = (_oy - padY) / _scale;
+    final double y1 = (_oy - padY + _height) / _scale;
+    for (int i = 0; i < widget.count; i++) {
+      final double top = _tops[i];
+      final double h = _width * widget.aspectOf(i);
+      final double bottom = top + h;
+      if (bottom <= y0) continue;
+      if (top >= y1) break;
+      final double l = x0.clamp(0.0, _width).toDouble();
+      final double r = x1.clamp(0.0, _width).toDouble();
+      final double t = y0.clamp(top, bottom).toDouble();
+      final double b = y1.clamp(top, bottom).toDouble();
+      if (r - l < 2 || b - t < 2 || h <= 0) continue;
+      final Rect norm = Rect.fromLTRB(l / _width, (t - top) / h, r / _width, (b - top) / h);
+      out[i] = (norm, Size((r - l) * _scale, (b - t) * _scale));
+    }
+    return out;
+  }
+
   void _moved() {
     _clamp();
     final p = _pageAt(_oy);
@@ -1475,6 +1510,7 @@ class _ContinuousPageListState extends State<ContinuousPageList> with SingleTick
       widget.onPageChanged(p);
     }
     setState(() {});
+    widget.onViewportChanged?.call();
   }
 
   void _stopSim() {
