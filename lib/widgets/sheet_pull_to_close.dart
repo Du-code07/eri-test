@@ -26,7 +26,7 @@ class SheetPullToClose extends StatefulWidget {
 
 class _SheetPullToCloseState extends State<SheetPullToClose> {
   final ScrollController _scroll = ScrollController();
-  late final ScrollPhysics _physics = _PullAwareScrollPhysics(this, parent: const AlwaysScrollableScrollPhysics());
+  late final ScrollPhysics _physics = _PullAwareScrollPhysics(this, parent: const AlwaysScrollableScrollPhysics(parent: ClampingScrollPhysics()));
 
   int? _pointer;
   bool _pulling = false;

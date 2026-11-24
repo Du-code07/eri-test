@@ -1091,6 +1091,7 @@ function vMount(index) {
   source.style.transform = `scale(${scale})`;
   frame.appendChild(source); slot.appendChild(frame);
   vMounted.set(index, { frame, source, original, entry });
+  if (typeof docxEditMode !== 'undefined' && docxEditMode) docxSetEditableOnPages(true);
   renderNoteAreas([frame]);
   void vLoadImages(frame, vSerial);
 }
@@ -1396,7 +1397,7 @@ function withoutZoom(fn) {
 }
 
 // ============================================================
-// Word (.docx) 문서 직접 편집 기능 (볼드·기울임·밑줄·글자 크기·글자 색·드래그 선택·선택 삭제·되돌리기/다시 실행·원본 저장)
+// Word (.docx) 문서 직접 편집 기능 (커서 안정화·드래그 선택·초록 손잡이·서식·되돌리기/다시 실행·원본 저장)
 // ============================================================
 let docxEditMode = false;
 let docxEditDirty = false;
@@ -1411,7 +1412,7 @@ let docxSelDragging = false;
 let docxSelDownX = 0;
 let docxSelDownY = 0;
 let docxSelAnchorRange = null;
-let docxSelJustEndedAt = 0;
+let docxSavedRange = null;
 
 function docxUniqueSources() {
   const seen = new Set();
@@ -1514,14 +1515,91 @@ function docxPushUndo() {
   docxEditDirty = true;
 }
 
+function docxRemoveSelHandles() {
+  for (const el of document.querySelectorAll('.eri-sel-handle')) el.remove();
+}
+
+function docxMountSelHandle(pageEl, side, relX, relY) {
+  if (!pageEl) return;
+  const h = document.createElement('div');
+  h.className = 'eri-sel-handle';
+  h.dataset.side = side;
+  h.style.left = `${relX - 14}px`;
+  h.style.top = `${relY}px`;
+  let dragging = false;
+  h.addEventListener('touchstart', (ev) => {
+    if (ev.touches.length !== 1) return;
+    dragging = true;
+    ev.stopPropagation();
+    ev.preventDefault();
+  }, { passive: false });
+  h.addEventListener('touchmove', (ev) => {
+    if (!dragging || ev.touches.length !== 1) return;
+    ev.stopPropagation();
+    ev.preventDefault();
+    const t = ev.touches[0];
+    const pt = docxCaretRangeAt(t.clientX, t.clientY - 16);
+    if (!pt || !docxSavedRange) return;
+    const fixed = document.createRange();
+    if (side === 'start') {
+      fixed.setStart(docxSavedRange.endContainer, docxSavedRange.endOffset);
+      fixed.collapse(true);
+    } else {
+      fixed.setStart(docxSavedRange.startContainer, docxSavedRange.startOffset);
+      fixed.collapse(true);
+    }
+    docxSetRangeSelection(fixed, pt);
+    docxRenderSelHandles();
+  }, { passive: false });
+  h.addEventListener('touchend', (ev) => {
+    if (!dragging) return;
+    dragging = false;
+    ev.stopPropagation();
+    docxEmitEditState(false);
+  }, { passive: true });
+  pageEl.appendChild(h);
+}
+
+function docxRenderSelHandles() {
+  docxRemoveSelHandles();
+  if (!docxEditMode) return;
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
+    docxSavedRange = null;
+    return;
+  }
+  const range = sel.getRangeAt(0);
+  docxSavedRange = range.cloneRange();
+  const rects = [...range.getClientRects()].filter(r => r.width > 0.5 && r.height > 0.5);
+  if (rects.length === 0) return;
+  const first = rects[0];
+  const last = rects[rects.length - 1];
+  const findPage = (node) => {
+    const el = node && node.nodeType === 1 ? node : node?.parentElement;
+    return el?.closest?.('.page') || docxPageRoots()[0] || null;
+  };
+  const pFirst = findPage(range.startContainer);
+  const pLast = findPage(range.endContainer);
+  if (pFirst) {
+    const pr = pFirst.getBoundingClientRect();
+    docxMountSelHandle(pFirst, 'start', first.left - pr.left, first.bottom - pr.top - 2);
+  }
+  if (pLast) {
+    const pr = pLast.getBoundingClientRect();
+    docxMountSelHandle(pLast, 'end', last.right - pr.left, last.bottom - pr.top - 2);
+  }
+}
+
 function docxOnInput() {
   if (!docxEditMode || disposed) return;
+  docxRemoveSelHandles();
   docxPushUndo();
   docxEmitEditState(true);
 }
 
 function docxOnSelectionChange() {
   if (!docxEditMode || disposed) return;
+  if (!docxSelDragging) docxRenderSelHandles();
   docxEmitEditState(false);
 }
 
@@ -1550,14 +1628,6 @@ function docxCaretRangeAt(clientX, clientY) {
   return null;
 }
 
-function docxFocusEditableForNode(node) {
-  const el = node && node.nodeType === 1 ? node : node?.parentElement;
-  const target = el?.closest?.('[contenteditable="true"]') || docxEditableTargets()[0];
-  if (target && document.activeElement !== target) {
-    try { target.focus({ preventScroll: true }); } catch (_) {}
-  }
-}
-
 function docxSetRangeSelection(r1, r2) {
   if (!r1 || !r2) return;
   try {
@@ -1578,12 +1648,14 @@ function docxSetRangeSelection(r1, r2) {
     if (sel) {
       sel.removeAllRanges();
       sel.addRange(range);
+      docxSavedRange = range.cloneRange();
     }
   } catch (_) {}
 }
 
 function docxOnTouchStart(e) {
   if (!docxEditMode || disposed) return;
+  if (e.target && e.target.closest && e.target.closest('.eri-sel-handle')) return;
   if (e.touches.length !== 1) {
     if (docxSelTimer) { clearTimeout(docxSelTimer); docxSelTimer = 0; }
     docxSelDragging = false;
@@ -1599,14 +1671,15 @@ function docxOnTouchStart(e) {
     if (!anchor) return;
     docxSelDragging = true;
     docxSelAnchorRange = anchor.cloneRange();
-    docxFocusEditableForNode(anchor.startContainer);
     docxSetRangeSelection(docxSelAnchorRange, anchor);
+    docxRenderSelHandles();
     docxEmitEditState(false);
   }, 240);
 }
 
 function docxOnTouchMove(e) {
   if (!docxEditMode || disposed) return;
+  if (e.target && e.target.closest && e.target.closest('.eri-sel-handle')) return;
   if (e.touches.length !== 1) {
     if (docxSelTimer) { clearTimeout(docxSelTimer); docxSelTimer = 0; }
     docxSelDragging = false;
@@ -1622,9 +1695,11 @@ function docxOnTouchMove(e) {
   }
   if (!docxSelDragging || !docxSelAnchorRange) return;
   e.preventDefault();
+  e.stopPropagation();
   const cur = docxCaretRangeAt(t.clientX, t.clientY);
   if (cur) {
     docxSetRangeSelection(docxSelAnchorRange, cur);
+    docxRenderSelHandles();
   }
 }
 
@@ -1632,21 +1707,7 @@ function docxOnTouchEnd() {
   if (docxSelTimer) { clearTimeout(docxSelTimer); docxSelTimer = 0; }
   if (!docxSelDragging) return;
   docxSelDragging = false;
-  docxSelJustEndedAt = Date.now();
-  docxEmitEditState(false);
-}
-
-function docxOnClick(e) {
-  if (!docxEditMode || disposed) return;
-  if (Date.now() - docxSelJustEndedAt < 350) return;
-  const r = docxCaretRangeAt(e.clientX, e.clientY);
-  if (!r) return;
-  docxFocusEditableForNode(r.startContainer);
-  const sel = window.getSelection();
-  if (sel) {
-    sel.removeAllRanges();
-    sel.addRange(r);
-  }
+  docxRenderSelHandles();
   docxEmitEditState(false);
 }
 
@@ -1691,12 +1752,12 @@ function setEditMode(enabled) {
     docxRedoStack = [];
     docxLastSnap = docxSnapshotPages();
     docxEditDirty = false;
+    docxSavedRange = null;
     docxSetEditableOnPages(true);
     document.addEventListener('contextmenu', docxPreventContext, true);
     document.addEventListener('touchstart', docxOnTouchStart, { passive: true, capture: true });
     document.addEventListener('touchmove', docxOnTouchMove, { passive: false, capture: true });
     document.addEventListener('touchend', docxOnTouchEnd, { passive: true, capture: true });
-    document.addEventListener('click', docxOnClick, true);
     document.addEventListener('input', docxOnInput, true);
     document.addEventListener('selectionchange', docxOnSelectionChange, true);
     docxEmitEditState(false);
@@ -1704,11 +1765,12 @@ function setEditMode(enabled) {
     if (docxSelTimer) { clearTimeout(docxSelTimer); docxSelTimer = 0; }
     docxSelDragging = false;
     docxSelAnchorRange = null;
+    docxSavedRange = null;
+    docxRemoveSelHandles();
     document.removeEventListener('contextmenu', docxPreventContext, true);
     document.removeEventListener('touchstart', docxOnTouchStart, true);
     document.removeEventListener('touchmove', docxOnTouchMove, true);
     document.removeEventListener('touchend', docxOnTouchEnd, true);
-    document.removeEventListener('click', docxOnClick, true);
     document.removeEventListener('input', docxOnInput, true);
     document.removeEventListener('selectionchange', docxOnSelectionChange, true);
     docxSetEditableOnPages(false);
@@ -1734,6 +1796,11 @@ function setEditMode(enabled) {
 function editApplyFormat(opts) {
   if (!docxEditMode || disposed || !opts) return false;
   try {
+    const sel = window.getSelection();
+    if (docxSavedRange && (!sel || sel.rangeCount === 0 || sel.isCollapsed)) {
+      sel?.removeAllRanges();
+      sel?.addRange(docxSavedRange.cloneRange());
+    }
     document.execCommand('styleWithCSS', false, true);
     if (opts.bold !== undefined) {
       document.execCommand('bold', false, null);
@@ -1749,9 +1816,9 @@ function editApplyFormat(opts) {
     }
     if (opts.fontSizePt !== undefined) {
       const pt = Math.max(6, Math.min(48, Number(opts.fontSizePt) || 11));
-      const sel = window.getSelection();
-      if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
-        const range = sel.getRangeAt(0);
+      const curSel = window.getSelection();
+      if (curSel && curSel.rangeCount > 0 && !curSel.isCollapsed) {
+        const range = curSel.getRangeAt(0);
         const span = document.createElement('span');
         span.style.fontSize = `${pt}pt`;
         try {
@@ -1761,13 +1828,14 @@ function editApplyFormat(opts) {
           span.appendChild(frag);
           range.insertNode(span);
         }
-        sel.removeAllRanges();
+        curSel.removeAllRanges();
         const nr = document.createRange();
         nr.selectNodeContents(span);
-        sel.addRange(nr);
+        curSel.addRange(nr);
       }
     }
     docxPushUndo();
+    docxRenderSelHandles();
     docxEmitEditState(false);
     return true;
   } catch (_) {
@@ -1781,6 +1849,7 @@ function editUndo() {
   if (docxLastSnap) docxRedoStack.push(docxLastSnap);
   docxLastSnap = prev;
   docxApplySnapshot(prev);
+  docxRemoveSelHandles();
   docxEditDirty = docxUndoStack.length > 0;
   docxEmitEditState(false);
   return true;
@@ -1792,6 +1861,7 @@ function editRedo() {
   if (docxLastSnap) docxUndoStack.push(docxLastSnap);
   docxLastSnap = next;
   docxApplySnapshot(next);
+  docxRemoveSelHandles();
   docxEditDirty = true;
   docxEmitEditState(false);
   return true;

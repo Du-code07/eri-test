@@ -108,3 +108,7 @@ body[data-theme="white"] .page::after, body[data-theme="white"] #vpages .vslot::
 body.eri-docx-edit, body.eri-docx-edit * { -webkit-touch-callout: none !important; }
 body.eri-docx-edit ::selection { background: rgba(47, 125, 50, 0.30) !important; color: inherit; }
 body.eri-docx-edit .page, body.eri-docx-edit .freader-content, body.eri-docx-edit .odr-page-outer { caret-color: #2f7d32; }
+
+.eri-sel-handle { position: absolute; width: 28px; height: 32px; z-index: 40; touch-action: none; pointer-events: auto; }
+.eri-sel-handle::before { content: ''; position: absolute; left: 13px; top: 0; width: 2px; height: 14px; background: #2f7d32; }
+.eri-sel-handle::after { content: ''; position: absolute; left: 7px; top: 12px; width: 14px; height: 14px; border-radius: 50%; background: #2f7d32; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.35); box-sizing: border-box; }

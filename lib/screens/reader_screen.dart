@@ -218,6 +218,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       !_isEpub && !_isSpreadsheet && _docLoadedPages != 1 && !_pageModeScroll && !_slideShow && (_pageDisplay == 'two' || (_pageDisplay == 'auto' && isLandscape));
   bool _isMangaRtlMode = false;
   int _fontSize = 18;
+  bool _epubFontSizeOpen = false;
   List<EpubChapter> _chapters = [];
   List<int> _chapterLevels = const []; // 워드·한글·PPT 목차 항목의 단계 (들여쓰기용, 비어 있으면 단계 없음)
 
@@ -2000,138 +2001,142 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     );
   }
 
-  /// EPUB 전용 글자 크기 스크롤 휠 창 (편집 글자 크기 조절과 동일한 스크롤 휠 방식)
-  Future<void> _showEpubFontSizeDialog() async {
+  /// EPUB 전용 글자 크기 스크롤 휠 (도구 모음 막대 바로 위에 표시)
+  void _toggleEpubFontSizeWheel() {
     if (_isOfflineDocument) return;
+    setState(() => _epubFontSizeOpen = !_epubFontSizeOpen);
+  }
+
+  Widget _buildEpubFontSizeWheel(double bottomPadding) {
     const List<int> sizes = [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32];
     final int initIdx = sizes.indexOf(_fontSize).clamp(0, sizes.length - 1);
-    final FixedExtentScrollController wheelCtrl = FixedExtentScrollController(initialItem: initIdx);
-    try {
-      await showDialog<void>(
-        context: context,
-        barrierColor: Colors.transparent,
-        barrierDismissible: true,
-        builder: (ctx) => StatefulBuilder(
-          builder: (ctx, setDlg) {
-            final Color sig = AppColors.of(ctx);
-            return Center(
-              child: Material(
-                color: Colors.black87,
-                borderRadius: BorderRadius.circular(20),
-                elevation: 8,
-                clipBehavior: Clip.antiAlias,
-                child: SizedBox(
-                  width: 96,
-                  height: 136,
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      IgnorePointer(
-                        child: Container(
-                          width: 76,
-                          height: 34,
-                          decoration: BoxDecoration(
-                            color: sig.withValues(alpha: 0.22),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: sig.withValues(alpha: 0.7), width: 1.2),
-                          ),
+    final Color sig = AppColors.of(context);
+    double bottom = math.max<double>(bottomPadding + 16.0, 20.0) + 64.0;
+    if (!_progressBarHidden && _progressBarPos == 'bottom') bottom += 44.0;
+    if (_toolbarPos == 'top') bottom = math.max<double>(bottomPadding + 24.0, 28.0);
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: () => setState(() => _epubFontSizeOpen = false),
+          ),
+        ),
+        Positioned(
+          left: 16.0 + _safeSides.left,
+          right: 16.0 + _safeSides.right,
+          bottom: bottom,
+          child: Center(
+            child: Material(
+              color: Colors.black87,
+              borderRadius: BorderRadius.circular(20),
+              elevation: 8,
+              clipBehavior: Clip.antiAlias,
+              child: SizedBox(
+                width: 96,
+                height: 128,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    IgnorePointer(
+                      child: Container(
+                        width: 76,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: sig.withValues(alpha: 0.22),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: sig.withValues(alpha: 0.7), width: 1.2),
                         ),
                       ),
-                      ListWheelScrollView.useDelegate(
-                        controller: wheelCtrl,
-                        itemExtent: 34,
-                        diameterRatio: 1.4,
-                        physics: const FixedExtentScrollPhysics(),
-                        onSelectedItemChanged: (idx) {
+                    ),
+                    ListWheelScrollView.useDelegate(
+                      controller: FixedExtentScrollController(initialItem: initIdx),
+                      itemExtent: 32,
+                      diameterRatio: 1.4,
+                      physics: const FixedExtentScrollPhysics(),
+                      onSelectedItemChanged: (idx) {
+                        final int pt = sizes[idx];
+                        if (pt != _fontSize) _changeFontSize(pt - _fontSize);
+                      },
+                      childDelegate: ListWheelChildBuilderDelegate(
+                        childCount: sizes.length,
+                        builder: (ctx, idx) {
                           final int pt = sizes[idx];
-                          if (pt != _fontSize) {
-                            _changeFontSize(pt - _fontSize);
-                            setDlg(() {});
-                          }
-                        },
-                        childDelegate: ListWheelChildBuilderDelegate(
-                          childCount: sizes.length,
-                          builder: (ctx, idx) {
-                            final int pt = sizes[idx];
-                            final bool sel = pt == _fontSize;
-                            return Center(
-                              child: Text(
-                                '${pt}pt',
-                                style: TextStyle(
-                                  color: sel ? Colors.white : Colors.white54,
-                                  fontSize: sel ? 15 : 13.5,
-                                  fontWeight: sel ? FontWeight.w800 : FontWeight.w500,
-                                ),
+                          final bool sel = pt == _fontSize;
+                          return Center(
+                            child: Text(
+                              '${pt}pt',
+                              style: TextStyle(
+                                color: sel ? Colors.white : Colors.white54,
+                                fontSize: sel ? 14.5 : 13,
+                                fontWeight: sel ? FontWeight.w800 : FontWeight.w500,
                               ),
-                            );
-                          },
-                        ),
+                            ),
+                          );
+                        },
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
-            );
-          },
+            ),
+          ),
         ),
-      );
-    } finally {
-      wheelCtrl.dispose();
-    }
+      ],
+    );
   }
 
   // EPUB: 지금 장의 처음/끝에 닿았는지, 첫/마지막 장인지
   bool _chAtStart = false, _chAtEnd = false, _chFirst = true, _chLast = false;
 
-  /// 장 이동 버튼 높이: 아래 진행바·도구 모음 바·필기 도구 막대가 있으면 그 위에
+  /// EPUB 이전·다음 챕터 단추 높이: 오른쪽 하단(도구 모음 막대와 같은 높이)
   double _chapterButtonsBottom(double bottomPadding) {
-    double b = math.max<double>(bottomPadding + 16.0, 20.0) + 8.0;
-    if (_showControls && _progressBarPos == 'bottom') b += 44.0;
+    double b = math.max<double>(bottomPadding + 16.0, 20.0) + 4.0;
+    if (_showControls && !_progressBarHidden && _progressBarPos == 'bottom') b += 44.0;
     if (_isMemoMode && _memoToolbarPos == 'bottom') b += 60.0;
-    if (_showControls && _toolbarPos != 'top') b += 62.0; // 도구 모음
     return b;
   }
 
   Widget _buildChapterButtons() {
     final bool dark = _getBgColor().computeLuminance() < 0.4;
-    // 종이색: 흰 단추가 튀지 않게, 종이보다 조금 진한 갈색 단추로 (잘 보이게)
     final bool paper = _epubBgTheme == 'sepia';
-    final Color bg = dark ? const Color(0xFF111111) : paper ? const Color(0xFFE6D3AE) : const Color(0xFFF1F1F4);
+    final Color bg = dark ? const Color(0xE61C1C1E) : paper ? const Color(0xF0E6D3AE) : const Color(0xF0F1F1F4);
     final Color fg = dark ? Colors.white : paper ? const Color(0xFF4A3A28) : const Color(0xFF222222);
     final Color border = dark ? Colors.white24 : paper ? const Color(0x806B4E2A) : Colors.black12;
-    Widget button(String label, IconData icon, bool enabled, int dir) => Opacity(
-          opacity: enabled ? 1 : 0.35,
-          child: Material(
-            color: bg,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: border)),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(16),
-              onTap: enabled
-                  ? () {
-                      HapticFeedback.selectionClick();
-                      setState(() {
-                        _chAtStart = false;
-                        _chAtEnd = false;
-                      });
-                      _epubController.goChapter(dir);
-                    }
-                  : null,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(icon, size: 20, color: fg),
-                  const SizedBox(width: 8),
-                  Text(label, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: fg)),
-                ]),
+    Widget button(String tooltip, IconData icon, bool enabled, int dir) => Tooltip(
+          message: tooltip,
+          child: Opacity(
+            opacity: enabled ? 1 : 0.35,
+            child: Material(
+              color: bg,
+              elevation: 3,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14), side: BorderSide(color: border)),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: enabled
+                    ? () {
+                        HapticFeedback.selectionClick();
+                        setState(() {
+                          _chAtStart = false;
+                          _chAtEnd = false;
+                        });
+                        _epubController.goChapter(dir);
+                      }
+                    : null,
+                child: SizedBox(
+                  width: 40,
+                  height: 40,
+                  child: Icon(icon, size: 22, color: fg),
+                ),
               ),
             ),
           ),
         );
     return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
       children: [
         button(_tr('이전 챕터', 'Prev chapter', '上一章', '前の章'), Icons.keyboard_arrow_up_rounded, !_chFirst, -1),
-        const SizedBox(width: 12),
+        const SizedBox(width: 6),
         button(_tr('다음 챕터', 'Next chapter', '下一章', '次の章'), Icons.keyboard_arrow_down_rounded, !_chLast, 1),
       ],
     );
@@ -4336,10 +4341,11 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       if (!_isOfflineDocument)
         QuickToolItem(
           id: 'fontsize',
-          icon: const Icon(Icons.format_size_rounded, color: Colors.white, size: 19),
+          icon: Icon(Icons.format_size_rounded, color: _epubFontSizeOpen ? AppColors.signature : Colors.white, size: 19),
+          active: _epubFontSizeOpen,
           tooltip: _tr('글자 크기', 'Font Size', '字体大小', '文字サイズ'),
-          onTap: () => unawaited(_showEpubFontSizeDialog()),
-          closeAfterTap: true,
+          onTap: _toggleEpubFontSizeWheel,
+          closeAfterTap: false,
         ),
       // 메모를 쓸 수 없는 보기(한글·워드 밖의 스크롤 모드)에서는 메모 단추를 숨김
       if (!_pageModeScroll || _docVertical)
@@ -5551,14 +5557,17 @@ Offstage(offstage: _tocFreeze != null, child: EpubViewer(
 
             _buildEpubProgressBar(bottomPadding),
 
-            // EPUB (스크롤·탭·슬라이드·책처럼 넘기기): 메뉴(도구 모음)를 연 동안만 '이전 챕터 / 다음 챕터' (읽는 동안 글자를 가리지 않게)
+            // EPUB: 오른쪽 하단에 이전·다음 챕터 단추 (^ / v)
             if (_isEpub && _showControls && !_slideShow)
               Positioned(
-                left: 16.0 + _safeSides.left,
-                right: 16.0 + _safeSides.right,
+                right: 12.0 + _safeSides.right,
                 bottom: _chapterButtonsBottom(bottomPadding),
                 child: _buildChapterButtons(),
               ),
+
+            // EPUB 전용 글자 크기 스크롤 휠 (도구 모음 막대 바로 위)
+            if (_isEpub && _showControls && _epubFontSizeOpen && !_slideShow)
+              _buildEpubFontSizeWheel(bottomPadding),
 
             // 도구 모음: 아래(가로) 또는 왼쪽·오른쪽(세로). 길게 눌러 끌어 옮김 (상단바·진행바와 함께 보였다 사라짐)
             if (_showControls) _buildQuickToolBar(bottomPadding),
