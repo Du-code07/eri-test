@@ -35,6 +35,7 @@ import '../widgets/bar_drag.dart';
 import '../widgets/push_aside_route.dart';
 import '../widgets/viewer_dialogs.dart';
 import '../widgets/app_colors.dart';
+import '../widgets/app_toast.dart';
 import '../widgets/morph_icons.dart';
 import '../widgets/word_selection_layer.dart';
 import '../widgets/ui_scale.dart';
@@ -1543,7 +1544,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       _scrollMemos[page] = strokes;
     }
     await _hwpController.setScrollMemo(page, _jsStrokes(strokes));
-    if (save) await StorageService.saveLocationStrokes(widget.filePath, 'pg:$page', strokes);
+    if (save && !_isMemoMode) await StorageService.saveLocationStrokes(widget.filePath, 'pg:$page', strokes);
   }
 
   /// 화면에 보이는 쪽 자리를 다시 받음 (펜을 댈 때마다: 그 사이 스크롤·확대했을 수 있어서)
@@ -1624,7 +1625,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     _scrollEraseBefore.clear();
     for (final e in changed.entries) {
       _memoHistory.record('pg:${e.key}', e.value);
-      await StorageService.saveLocationStrokes(widget.filePath, 'pg:${e.key}', _scrollMemos[e.key] ?? const []);
+      if (!_isMemoMode) await StorageService.saveLocationStrokes(widget.filePath, 'pg:${e.key}', _scrollMemos[e.key] ?? const []);
     }
     if (changed.isNotEmpty && mounted) setState(() {});
   }
@@ -1687,7 +1688,8 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     }
   }
 
-  void _saveMemoSession() {
+  Future<void> _saveMemoSession() async {
+    final prevScroll = _memoBackupScroll;
     _memoBackupSingle = null;
     _memoBackupScroll = null;
     setState(() {
@@ -1696,9 +1698,16 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       _allowFingerDrawing = false;
       _isStylusDown = false;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(duration: const Duration(seconds: 2), content: Text(_tr('저장했어요', 'Saved', '已保存', '保存しました'))),
-    );
+    // 저장 단추를 눌렀을 때만 디스크에 기록 (미저장 이탈·강제 종료 시 자동 저장 원천 차단)
+    if (_docVertical) {
+      final pages = <int>{..._scrollMemos.keys, if (prevScroll != null) ...prevScroll.keys};
+      for (final p in pages) {
+        await StorageService.saveLocationStrokes(widget.filePath, 'pg:$p', _scrollMemos[p] ?? const <MemoStroke>[]);
+      }
+    } else {
+      await _saveMemoStrokes(_currentPageLocationKey, _memoStrokes);
+    }
+    if (mounted) showAppToast(context, _tr('저장했어요', 'Saved', '已保存', '保存しました'), fromTop: true);
   }
 
   List<Widget> _memoPinnedItems() => [
@@ -1723,7 +1732,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
         ),
         MemoDoneButton(
           label: _tr('저장', 'Save', '保存', '保存'),
-          onTap: _saveMemoSession,
+          onTap: () => unawaited(_saveMemoSession()),
         ),
       ];
 
@@ -1963,9 +1972,9 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     final Map<String, String> modeReasons = <String, String>{};
     final String scrollName = _tr('스크롤 모드', 'Scroll mode', '滚动模式', 'スクロールモード');
     if (_pageModeScroll && !_docVertical) modeReasons['memo'] = scrollName;
-    if (_pageModeScroll && _isOfflineDocument && !_isPresentation && !_isSpreadsheet) {
-      modeReasons['display'] = scrollName;
+    if (_pageModeScroll && !_isPresentation && !_isSpreadsheet) {
       modeReasons['direction'] = scrollName;
+      if (_isOfflineDocument) modeReasons['display'] = scrollName;
     }
     await showToolbarSettingsDialog(
       context,
@@ -3056,7 +3065,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   /// 메모 저장: 문서 보기는 획마다 시작한 쪽에 그 쪽 좌표로 나눠 저장
   Future<void> _saveMemo(String key, List<MemoStroke> strokes) async {
     final v = _viewPagesOf(key);
-    if (v == null) return StorageService.saveLocationStrokes(widget.filePath, key, strokes);
+    if (v == null) { if (_isMemoMode) return Future.value(); return StorageService.saveLocationStrokes(widget.filePath, key, strokes); }
     final (pages, sizes) = v;
     final double sumW = sizes.fold(0.0, (a, z) => a + z.width), maxH = sizes.map((z) => z.height).reduce(math.max);
     final List<List<MemoStroke>> per = [for (final _ in pages) <MemoStroke>[]];
@@ -3077,7 +3086,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       ));
     }
     for (int i = 0; i < pages.length; i++) {
-      await StorageService.saveLocationStrokes(widget.filePath, 'pg:${pages[i]}', per[i]);
+      if (!_isMemoMode) await StorageService.saveLocationStrokes(widget.filePath, 'pg:${pages[i]}', per[i]);
     }
   }
 
@@ -4400,12 +4409,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
         _hwpSubPanel = null;
         _lastHwpKbInset = 0;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          duration: const Duration(seconds: 2),
-          content: Text(_tr('저장했어요', 'Saved', '已保存', '保存しました')),
-        ),
-      );
+      showAppToast(context, _tr('저장했어요', 'Saved', '已保存', '保存しました'), fromTop: true);
     } finally {
       if (mounted) setState(() => _hwpSaving = false);
     }
@@ -4980,9 +4984,9 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                       transformationController: _epubZoomController,
                       // 문서 스크롤 보기는 목록이 직접 확대·이동을 맡음 (겹치면 확대가 잘 안 됨)
                       // 메모 중에도 (손으로 그리기가 아니면) 손가락으로 확대한 쪽을 옮김 (삼성 노트처럼: 펜은 쓰고 손가락은 움직임)
-                      panEnabled: !_isSpreadsheet && !_docScrollActive && (!_isMemoMode || !_allowFingerDrawing) && _epubZoomScale > 1.03,
+                      panEnabled: !_isSpreadsheet && !_docScrollActive && (!_isMemoMode || !_allowFingerDrawing) && (_epubZoomScale > 1.03 || _epubZoomScale < 0.98),
                       scaleEnabled: !_isSpreadsheet && !(_pageModeScroll && _isOfflineDocument) && (!_isMemoMode || !_allowFingerDrawing),
-                      minScale: 1.0,
+                      minScale: 0.6,
                       maxScale: 4.5,
                       onInteractionStart: (_) {
                         // 확대/이동 제스처가 터치를 가져가면 WebView는 스와이프를 받지 못함
@@ -4996,7 +5000,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                       },
                       onInteractionEnd: (_) {
                         final s = _epubZoomController.value.getMaxScaleOnAxis();
-                        if (s < 1.03) {
+                        if (s > 0.97 && s < 1.03) {
                           _epubZoomController.value = Matrix4.identity();
                           if (_epubZoomScale != 1.0) {
                             setState(() => _epubZoomScale = 1.0);

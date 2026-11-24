@@ -1470,6 +1470,9 @@ function ensureEditDom() {
       '@keyframes eriBlink{0%,49%{opacity:1}50%,100%{opacity:0}}',
       '.eri-caret-rect{fill:#2F7D32;pointer-events:none;animation:eriBlink 1s step-end infinite;}',
       '.eri-sel-rect{fill:rgba(47,125,50,0.28);pointer-events:none;}',
+      '.eri-sel-handle{position:fixed;width:24px;height:30px;z-index:9997;touch-action:none;pointer-events:auto;display:flex;flex-direction:column;align-items:center;}',
+      '.eri-sel-handle-stem{width:2.5px;height:14px;background:#2F7D32;border-radius:1.5px;}',
+      '.eri-sel-handle-knob{width:14px;height:14px;background:#2F7D32;border:2px solid #fff;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,0.35);}',
       '#eri-ime{position:fixed;left:0;top:0;opacity:0.001;width:2px;height:20px;border:0;padding:0;margin:0;resize:none;z-index:9998;pointer-events:none;font-size:16px;background:transparent;color:transparent;caret-color:transparent;}',
     ].join(' ');
     document.head.appendChild(st);
@@ -1820,28 +1823,94 @@ function applyDeltaFast(offset, delCount, insertStr, recordUndo = false) {
   return null;
 }
 
+function compareEditPos(a, b) {
+  if (a.sec !== b.sec) return a.sec - b.sec;
+  if (a.inTable && b.inTable) {
+    if (a.parentPara !== b.parentPara) return a.parentPara - b.parentPara;
+    if (a.cellPara !== b.cellPara) return a.cellPara - b.cellPara;
+    return a.offset - b.offset;
+  }
+  if (a.para !== b.para) return a.para - b.para;
+  return a.offset - b.offset;
+}
+
+function sameSelContainer(a, b) {
+  if (!a || !b || a.sec !== b.sec) return false;
+  if (Boolean(a.inTable) !== Boolean(b.inTable)) return false;
+  if (!a.inTable) return true; // 본문에서는 위·아래 여러 문단에 걸쳐 자유롭게 드래그 가능!
+  return a.parentPara === b.parentPara && a.ctrl === b.ctrl && a.cell === b.cell && a.pathJson === b.pathJson;
+}
+
 function removeAllSelRects() {
   for (const el of document.querySelectorAll('.eri-sel-rect')) el.remove();
+  for (const el of document.querySelectorAll('.eri-sel-handle')) el.remove();
+}
+
+function mountSelHandle(kind, xPx, yPx) {
+  const h = document.createElement('div');
+  h.className = 'eri-sel-handle';
+  h.dataset.kind = kind;
+  h.style.left = `${xPx - 12}px`;
+  h.style.top = `${yPx}px`;
+  const stem = document.createElement('div');
+  stem.className = 'eri-sel-handle-stem';
+  const knob = document.createElement('div');
+  knob.className = 'eri-sel-handle-knob';
+  h.appendChild(stem);
+  h.appendChild(knob);
+
+  h.addEventListener('touchstart', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!editSelection) return;
+    selDragActive = true;
+    selAnchorHit = kind === 'start' ? { ...editSelection.end } : { ...editSelection.start };
+  }, { passive: false });
+  h.addEventListener('touchmove', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!selDragActive || !selAnchorHit || !e.touches.length) return;
+    const t = e.touches[0];
+    const hit = hitTestClientPoint(t.clientX, t.clientY - 18);
+    if (!hit || !sameSelContainer(selAnchorHit, hit)) return;
+    const cmp = compareEditPos(selAnchorHit, hit);
+    const st = cmp <= 0 ? { ...selAnchorHit } : { ...hit };
+    const en = cmp <= 0 ? { ...hit } : { ...selAnchorHit };
+    editSelection = { start: st, end: en };
+    renderEditSelection();
+  }, { passive: false });
+  h.addEventListener('touchend', (e) => {
+    e.stopPropagation();
+    selDragActive = false;
+    selJustFinishedAt = Date.now();
+    if (editImeEl) {
+      resetImeBuffer();
+      editImeEl.focus({ preventScroll: true });
+    }
+    emitEditState();
+  }, { passive: true });
+  document.body.appendChild(h);
 }
 
 function renderEditSelection() {
   removeAllSelRects();
   if (!editModeOn || !doc || !editSelection) return;
-  const { cursor: c, start, end } = editSelection;
-  if (!(end > start)) return;
+  const st = editSelection.start, en = editSelection.end;
+  if (!st || !en || compareEditPos(st, en) >= 0) return;
   try {
     let raw = null;
-    if (c.inTable && c.pathJson && typeof doc.getSelectionRectsInCellByPath === 'function') {
-      raw = doc.getSelectionRectsInCellByPath(c.sec, c.parentPara, c.pathJson, c.cellPara, start, c.cellPara, end);
-    } else if (c.inTable && c.cell !== undefined && c.cell !== null && typeof doc.getSelectionRectsInCell === 'function') {
-      raw = doc.getSelectionRectsInCell(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara, start, c.cellPara, end);
+    if (st.inTable && st.pathJson && typeof doc.getSelectionRectsInCellByPath === 'function') {
+      raw = doc.getSelectionRectsInCellByPath(st.sec, st.parentPara, st.pathJson, st.cellPara, st.offset, en.cellPara, en.offset);
+    } else if (st.inTable && st.cell !== undefined && st.cell !== null && typeof doc.getSelectionRectsInCell === 'function') {
+      raw = doc.getSelectionRectsInCell(st.sec, st.parentPara, st.ctrl, st.cell, st.cellPara, st.offset, en.cellPara, en.offset);
     } else if (typeof doc.getSelectionRects === 'function') {
-      raw = doc.getSelectionRects(c.sec, c.para, start, c.para, end);
+      raw = doc.getSelectionRects(st.sec, st.para, st.offset, en.para, en.offset);
     }
     const list = parseJsonSafe(raw);
     const rects = Array.isArray(list) ? list : (list && Array.isArray(list.rects) ? list.rects : []);
+    let firstHandle = null, lastHandle = null;
     for (const r of rects) {
-      const pIdx = typeof r.pageIndex === 'number' ? r.pageIndex : c.pageIdx;
+      const pIdx = typeof r.pageIndex === 'number' ? r.pageIndex : st.pageIdx;
       const frame = findPageFrameByIndex(pIdx);
       const svg = frame ? frame.querySelector(':scope > svg') : null;
       if (!frame || !svg) continue;
@@ -1860,16 +1929,31 @@ function renderEditSelection() {
       el.setAttribute('height', String(h * sy));
       el.setAttribute('rx', '2');
       svg.appendChild(el);
+
+      const svgRect = svg.getBoundingClientRect();
+      if (svgRect.width > 0 && svgRect.height > 0) {
+        const pxX = svgRect.left + (Number(r.x || 0) / engW) * svgRect.width;
+        const pxY = svgRect.top + (Number(r.y || 0) / engH) * svgRect.height;
+        const pxW = (w / engW) * svgRect.width;
+        const pxH = (h / engH) * svgRect.height;
+        if (!firstHandle) firstHandle = { x: pxX, y: pxY + pxH - 2 };
+        lastHandle = { x: pxX + pxW, y: pxY + pxH - 2 };
+      }
     }
+    if (firstHandle) mountSelHandle('start', firstHandle.x, firstHandle.y);
+    if (lastHandle) mountSelHandle('end', lastHandle.x, lastHandle.y);
   } catch (_) {}
 }
 
 function hitTestClientPoint(clientX, clientY) {
   const el = document.elementFromPoint(clientX, clientY);
   const targetPageEl = el && el.closest ? el.closest('.page, .vslot') : null;
-  const frame = targetPageEl && targetPageEl.classList.contains('page')
+  let frame = targetPageEl && targetPageEl.classList.contains('page')
     ? targetPageEl
-    : (targetPageEl ? targetPageEl.querySelector('.page') : host.querySelector('.page'));
+    : (targetPageEl ? targetPageEl.querySelector('.page') : null);
+  if (!frame || (frame.closest && frame.closest('#pages-under'))) {
+    frame = host.querySelector(':scope > .page') || document.querySelector('#vpages .page');
+  }
   const svg = frame ? frame.querySelector(':scope > svg') : null;
   if (!frame || !svg) return null;
   const rect = svg.getBoundingClientRect();
@@ -1899,6 +1983,7 @@ let selDownX = 0, selDownY = 0;
 
 function handleEditTouchStart(e) {
   if (!editModeOn || !doc || disposed) return;
+  if (e.target && e.target.closest && e.target.closest('.eri-sel-handle')) return;
   if (e.touches.length !== 1) {
     if (selDragTimer) { clearTimeout(selDragTimer); selDragTimer = 0; }
     selDragActive = false;
@@ -1918,10 +2003,10 @@ function handleEditTouchStart(e) {
     const pLen = getParagraphLenAt(h);
     const s0 = Math.max(0, h.offset > 0 && h.offset >= pLen ? h.offset - 1 : h.offset);
     const e0 = Math.min(pLen, s0 + 1);
-    editSelection = { cursor: { ...h }, start: s0, end: e0 };
+    editSelection = { start: { ...h, offset: s0 }, end: { ...h, offset: e0 } };
     removeAllCarets();
     renderEditSelection();
-  }, 280);
+  }, 260);
 }
 
 function handleEditTouchMove(e) {
@@ -1933,8 +2018,7 @@ function handleEditTouchMove(e) {
   }
   const t = e.touches[0];
   if (selDragTimer && !selDragActive) {
-    // 길게 누르는 동안 14px 이내 미세 떨림은 허용하고, 크게 스크롤할 때만 취소
-    if (Math.hypot(t.clientX - selDownX, t.clientY - selDownY) > 14) {
+    if (Math.hypot(t.clientX - selDownX, t.clientY - selDownY) > 16) {
       clearTimeout(selDragTimer);
       selDragTimer = 0;
     }
@@ -1943,14 +2027,15 @@ function handleEditTouchMove(e) {
   if (!selDragActive || !selAnchorHit) return;
   e.preventDefault();
   const h = hitTestClientPoint(t.clientX, t.clientY);
-  if (!h || !sameCursorTarget(selAnchorHit, h)) return;
-  let s = Math.min(selAnchorHit.offset, h.offset);
-  let en = Math.max(selAnchorHit.offset, h.offset);
-  if (s === en) {
-    const pLen = getParagraphLenAt(selAnchorHit);
-    en = Math.min(pLen, s + 1);
+  if (!h || !sameSelContainer(selAnchorHit, h)) return;
+  const cmp = compareEditPos(selAnchorHit, h);
+  let st = cmp <= 0 ? { ...selAnchorHit } : { ...h };
+  let en = cmp <= 0 ? { ...h } : { ...selAnchorHit };
+  if (compareEditPos(st, en) === 0) {
+    const pLen = getParagraphLenAt(st);
+    en = { ...en, offset: Math.min(pLen, st.offset + 1) };
   }
-  editSelection = { cursor: { ...selAnchorHit }, start: s, end: en };
+  editSelection = { start: st, end: en };
   renderEditSelection();
 }
 
@@ -1959,8 +2044,7 @@ function handleEditTouchEnd() {
   if (!selDragActive) return;
   selDragActive = false;
   selJustFinishedAt = Date.now();
-  if (editSelection && editSelection.end > editSelection.start) {
-    // 드래그 선택 완료 후에도 자판은 내려가지 않게 포커스 유지
+  if (editSelection && compareEditPos(editSelection.start, editSelection.end) < 0) {
     if (editImeEl) {
       resetImeBuffer();
       editImeEl.focus({ preventScroll: true });
@@ -1969,7 +2053,6 @@ function handleEditTouchEnd() {
   } else {
     editSelection = null;
     removeAllSelRects();
-    setKeyboardInset(0);
     updateCaretPos();
   }
 }
@@ -1979,17 +2062,35 @@ function editApplyFormat(opts) {
   if (opts.bold !== undefined) pendingFormat.bold = Boolean(opts.bold);
   if (opts.fontSizePt !== undefined) pendingFormat.fontSizePt = Number(opts.fontSizePt);
   if (opts.textColor !== undefined) pendingFormat.textColor = String(opts.textColor);
-  // 1) 이미 써진 글을 드래그로 선택한 상태면 그 선택 구간에만 즉시 적용 (자판 유지)
-  if (editSelection && editSelection.end > editSelection.start) {
-    const c = editSelection.cursor;
-    const ok = applyCharFormatRange(c, editSelection.start, editSelection.end, opts);
-    if (ok) {
+  // 1) 이미 써진 글을 드래그로 선택한 상태(한 줄 또는 위·아래 여러 줄)면 선택 구간 전체에 즉시 적용 (자판 유지)
+  if (editSelection && compareEditPos(editSelection.start, editSelection.end) < 0) {
+    const st = editSelection.start, en = editSelection.end;
+    let applied = false;
+    if (!st.inTable) {
+      for (let p = st.para; p <= en.para; p++) {
+        const target = { ...st, para: p };
+        const pLen = getParagraphLenAt(target);
+        const sOff = p === st.para ? st.offset : 0;
+        const eOff = p === en.para ? en.offset : pLen;
+        if (eOff > sOff && applyCharFormatRange(target, sOff, eOff, opts)) applied = true;
+      }
+    } else {
+      for (let cp = st.cellPara; cp <= en.cellPara; cp++) {
+        const target = { ...st, cellPara: cp };
+        const pLen = getParagraphLenAt(target);
+        const sOff = cp === st.cellPara ? st.offset : 0;
+        const eOff = cp === en.cellPara ? en.offset : pLen;
+        if (eOff > sOff && applyCharFormatRange(target, sOff, eOff, opts)) applied = true;
+      }
+    }
+    if (applied) {
       markEditDirty();
-      redrawSinglePage(c.pageIdx);
+      redrawSinglePage(st.pageIdx);
+      if (en.pageIdx !== st.pageIdx) redrawSinglePage(en.pageIdx);
       renderEditSelection();
     }
   }
-  // 2) 커서만 둔 상태(선택 없음)면 주변 기존 글자는 건드리지 않고 이후 치는 글자(pendingFormat)만 적용
+  // 2) 커서만 둔 상태면 기존 글자는 건드리지 않고 이후 치는 글자만 적용
   if (editImeEl) {
     editImeEl.focus({ preventScroll: true });
   }
@@ -2106,7 +2207,6 @@ function updateCaretPos() {
     caret.setAttribute('height', String(caretH));
     caret.setAttribute('rx', String(caretW * 0.35));
     svg.appendChild(caret);
-    if (editKeyboardInset > 0) requestAnimationFrame(ensureCaretAboveKeyboard);
   } catch (err) {
     console.warn('HWP updateCaretPos failed:', err);
   }
@@ -2178,26 +2278,6 @@ function handleDirectEditClick(e) {
 
 let editKeyboardInset = 0;
 
-function ensureCaretAboveKeyboard() {
-  if (!editModeOn || !editCursor || !(editKeyboardInset > 0)) return;
-  const caret = document.querySelector('#pages .eri-caret-rect, #vpages .eri-caret-rect');
-  if (!caret) return;
-  const cr = caret.getBoundingClientRect();
-  const safeBottom = window.innerHeight - editKeyboardInset - 80;
-  if (vertical && vhost) {
-    if (cr.bottom > safeBottom) {
-      vhost.scrollTop += (cr.bottom - safeBottom) + 24;
-    }
-  } else if (host) {
-    if (cr.bottom > safeBottom) {
-      const curShift = parseFloat(host.dataset.kbShift || '0') || 0;
-      const nextShift = curShift + (cr.bottom - safeBottom) + 24;
-      host.dataset.kbShift = String(nextShift);
-      host.style.marginTop = `${-nextShift}px`;
-    }
-  }
-}
-
 function resetSlideKbShift() {
   if (host) {
     host.dataset.kbShift = '0';
@@ -2207,19 +2287,15 @@ function resetSlideKbShift() {
 
 function setKeyboardInset(px) {
   editKeyboardInset = Math.max(0, Number(px) || 0);
+  // 자판이 글을 가려도 강제로 위치를 고정/점프하지 않고, 자판이 떴을 때만 원본보다 자판 높이만큼 아래로 더 스크롤할 수 있게 함
   if (vinner) {
-    vinner.style.paddingBottom = editKeyboardInset > 0 ? `${editKeyboardInset + 96}px` : '';
+    vinner.style.paddingBottom = editKeyboardInset > 0 ? `${editKeyboardInset + 80}px` : '';
   }
-  if (editKeyboardInset === 0) {
-    resetSlideKbShift();
-    if (vertical && vhost) {
-      // 자판이 내려가면 추가 여백을 없애고 스크롤 범위를 정상 위치로 자연스럽게 복원
-      const maxTop = Math.max(0, vhost.scrollHeight - vhost.clientHeight);
-      if (vhost.scrollTop > maxTop) vhost.scrollTop = maxTop;
-      vUpdate();
-    }
-  } else {
-    requestAnimationFrame(ensureCaretAboveKeyboard);
+  resetSlideKbShift();
+  if (editKeyboardInset === 0 && vertical && vhost) {
+    const maxTop = Math.max(0, vhost.scrollHeight - vhost.clientHeight);
+    if (vhost.scrollTop > maxTop) vhost.scrollTop = maxTop;
+    vUpdate();
   }
   return editKeyboardInset;
 }

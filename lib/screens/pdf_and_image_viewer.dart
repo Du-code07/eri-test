@@ -23,6 +23,7 @@ import '../widgets/push_aside_route.dart';
 import '../widgets/viewer_dialogs.dart';
 import '../widgets/word_selection_layer.dart';
 import '../widgets/app_colors.dart';
+import '../widgets/app_toast.dart';
 import '../widgets/ui_scale.dart';
 import '../widgets/memo_tools.dart';
 import '../widgets/direction_arrow_icon.dart';
@@ -1242,7 +1243,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
         _memoStrokesByPage[page] = List<MemoStroke>.of(strokes);
       }
     });
-    await StorageService.savePageMemoStrokes(_bookKey, page, strokes);
+    if (!_isMemoMode) await StorageService.savePageMemoStrokes(_bookKey, page, strokes);
   }
 
   Future<void> _undoMemo() async {
@@ -1324,16 +1325,20 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
     }
   }
 
-  void _saveMemoSession() {
+  Future<void> _saveMemoSession() async {
+    final prev = _memoBackupByPage;
     _memoBackupByPage = null;
     setState(() {
       _isMemoMode = false;
       _isEraserMode = false;
       _allowFingerDrawing = false;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(duration: const Duration(seconds: 2), content: Text(_tr('저장했어요', 'Saved', '已保存', '保存しました'))),
-    );
+    // 저장 단추를 눌렀을 때만 디스크에 기록 (미저장 이탈·강제 종료 시 자동 저장 원천 차단)
+    final pages = <int>{..._memoStrokesByPage.keys, if (prev != null) ...prev.keys};
+    for (final p in pages) {
+      await StorageService.savePageMemoStrokes(_bookKey, p, _memoStrokesByPage[p] ?? const <MemoStroke>[]);
+    }
+    if (mounted) showAppToast(context, _tr('저장했어요', 'Saved', '已保存', '保存しました'), fromTop: true);
   }
 
   List<Widget> _memoPinnedItems() => [
@@ -1358,7 +1363,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
         ),
         MemoDoneButton(
           label: _tr('저장', 'Save', '保存', '保存'),
-          onTap: _saveMemoSession,
+          onTap: () => unawaited(_saveMemoSession()),
         ),
       ];
 
@@ -1504,7 +1509,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
       final after = [for (final s in before) if (!which(s)) s];
       _memoHistory.record(pg, before);
       setState(() => _memoStrokesByPage[pg] = after);
-      await StorageService.savePageMemoStrokes(_bookKey, pg, after);
+      if (!_isMemoMode) await StorageService.savePageMemoStrokes(_bookKey, pg, after);
     }
   }
 
@@ -1547,10 +1552,15 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
 
   /// 도구 모음 설정 (화면 가운데 창): 상단바·도구 모음 아이콘 배치, 진행바 숨기기
   Future<void> _showViewerSettingsSheet() async {
+    final Map<String, String> modeReasons = <String, String>{};
+    if (_pageModeScroll) {
+      modeReasons['direction'] = _tr('스크롤 모드', 'Scroll mode', '滚动模式', 'スクロールモード');
+    }
     await showToolbarSettingsDialog(
       context,
       tr: _tr,
       items: _barItems(),
+      modeReasons: modeReasons,
       progressHidden: _progressBarHidden,
       onProgressHidden: (val) {
         StorageService.setProgressBarHidden(val);
@@ -1920,7 +1930,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
           if (useEraser) {
             _finishEraseHistory(pageIndex);
             final list = _memoStrokesByPage[pageIndex] ?? [];
-            await StorageService.savePageMemoStrokes(_bookKey, pageIndex, list);
+            if (!_isMemoMode) await StorageService.savePageMemoStrokes(_bookKey, pageIndex, list);
           } else if (_activeStrokePoints.isNotEmpty &&
               drawWidth > 0 &&
               drawHeight > 0) {
@@ -1945,7 +1955,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
               _memoStrokesByPage[pageIndex] = list;
               _activeStrokePoints.clear();
             });
-            await StorageService.savePageMemoStrokes(_bookKey, pageIndex, list);
+            if (!_isMemoMode) await StorageService.savePageMemoStrokes(_bookKey, pageIndex, list);
           }
         },
         onStylusCancel: (_) async {
@@ -1953,7 +1963,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
           _finishEraseHistory(pageIndex);
           setState(() => _activeStrokePoints.clear());
           final list = _memoStrokesByPage[pageIndex] ?? [];
-          await StorageService.savePageMemoStrokes(_bookKey, pageIndex, list);
+          if (!_isMemoMode) await StorageService.savePageMemoStrokes(_bookKey, pageIndex, list);
         },
         child: RepaintBoundary(
           child: CustomPaint(
