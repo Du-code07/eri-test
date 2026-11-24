@@ -242,29 +242,46 @@ class _MemoToolbarMoverState extends State<MemoToolbarMover> with TickerProvider
 
 /// 메모 도구모음 바탕. [vertical]이면 세로(왼쪽/오른쪽 배치), 아니면 가로(상단/하단 배치).
 class MemoToolbar extends StatelessWidget {
-  const MemoToolbar({super.key, required this.children, this.vertical = false});
+  const MemoToolbar({super.key, required this.children, this.pinned = const [], this.vertical = false});
 
   final List<Widget> children;
+  /// 오른쪽(세로일 땐 아래)에 고정할 단추 (예: 취소·저장). 나머지는 슬라이드로 넘겨 봄
+  final List<Widget> pinned;
   final bool vertical;
 
   @override
   Widget build(BuildContext context) {
+    final Widget scrollTools = SingleChildScrollView(
+      scrollDirection: vertical ? Axis.vertical : Axis.horizontal,
+      child: Flex(
+        direction: vertical ? Axis.vertical : Axis.horizontal,
+        mainAxisSize: MainAxisSize.min,
+        children: children,
+      ),
+    );
     return Material(
       color: Colors.black87,
       borderRadius: BorderRadius.circular(24),
       elevation: 6,
-      // 아이콘을 누를 때 퍼지는 효과가 도구모음 밖으로 나가지 않게 자름
       clipBehavior: Clip.antiAlias,
       child: Padding(
         padding: vertical ? const EdgeInsets.symmetric(horizontal: 4, vertical: 8) : const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        child: SingleChildScrollView(
-          scrollDirection: vertical ? Axis.vertical : Axis.horizontal,
-          child: Flex(
-            direction: vertical ? Axis.vertical : Axis.horizontal,
-            mainAxisSize: MainAxisSize.min,
-            children: children,
-          ),
-        ),
+        child: pinned.isEmpty
+            ? scrollTools
+            : Flex(
+                direction: vertical ? Axis.vertical : Axis.horizontal,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(child: scrollTools),
+                  Container(
+                    width: vertical ? 24 : 1,
+                    height: vertical ? 1 : 22,
+                    margin: vertical ? const EdgeInsets.symmetric(vertical: 4) : const EdgeInsets.symmetric(horizontal: 4),
+                    color: Colors.white24,
+                  ),
+                  ...pinned,
+                ],
+              ),
       ),
     );
   }

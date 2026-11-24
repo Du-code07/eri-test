@@ -489,8 +489,15 @@ class _ToolbarSettingsState extends State<_ToolbarSettings> {
                   child: ReorderableListView(
                     buildDefaultDragHandles: false,
                     padding: EdgeInsets.zero,
-                    onReorderStart: (_) => HapticFeedback.selectionClick(),
-                    onReorderItem: _onReorder,
+                    onReorderStart: (_) {
+                      ViewerSheetPull.hold(context, true);
+                      HapticFeedback.selectionClick();
+                    },
+                    onReorderEnd: (_) => ViewerSheetPull.hold(context, false),
+                    onReorderItem: (o, n) {
+                      ViewerSheetPull.hold(context, false);
+                      _onReorder(o, n);
+                    },
                     // 끄는 줄: 손가락 밑에 정확히 (앱 화면 크기를 바꿨을 때도), 살짝 떠오름
                     proxyDecorator: (child, index, animation) => Material(
                       type: MaterialType.transparency,

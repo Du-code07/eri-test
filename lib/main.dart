@@ -346,9 +346,9 @@ class _MyEbookAppState extends State<MyEbookApp> with SingleTickerProviderStateM
         backgroundColor: b == Brightness.dark ? const Color(0xFF2B2F2D) : const Color(0xFF242725),
         contentTextStyle: const TextStyle(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.w500),
         actionTextColor: sig,
-        behavior: SnackBarBehavior.floating,
+        behavior: SnackBarBehavior.fixed,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
           side: BorderSide(color: b == Brightness.dark ? Colors.white.withValues(alpha: 0.14) : Colors.transparent),
         ),
       ),

@@ -1290,21 +1290,82 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
         enabled: _memoHistory.canRedo(_visibleMemoPages()),
         onTap: _redoMemo,
       ),
-      MemoDoneButton(
-        label: _tr('완료', 'Done', '完成', '完了'),
-        onTap: () => setState(() {
-          _isMemoMode = false;
-          _isEraserMode = false;
-          _allowFingerDrawing = false;
-        }),
-      ),
     ];
   }
+
+  Map<int, List<MemoStroke>>? _memoBackupByPage;
+
+  void _beginMemoSession() {
+    _memoBackupByPage = {for (final e in _memoStrokesByPage.entries) e.key: List<MemoStroke>.of(e.value)};
+    setState(() {
+      _isMemoMode = true;
+      _isEraserMode = false;
+    });
+  }
+
+  Future<void> _cancelMemoSession() async {
+    final backup = _memoBackupByPage;
+    _memoBackupByPage = null;
+    final touchedPages = <int>{..._memoStrokesByPage.keys, if (backup != null) ...backup.keys};
+    setState(() {
+      _isMemoMode = false;
+      _isEraserMode = false;
+      _allowFingerDrawing = false;
+      if (backup != null) {
+        _memoStrokesByPage
+          ..clear()
+          ..addAll({for (final e in backup.entries) e.key: List<MemoStroke>.of(e.value)});
+      }
+    });
+    if (backup != null) {
+      for (final p in touchedPages) {
+        await StorageService.savePageStrokes(_bookKey, p, backup[p] ?? const <MemoStroke>[]);
+      }
+    }
+  }
+
+  void _saveMemoSession() {
+    _memoBackupByPage = null;
+    setState(() {
+      _isMemoMode = false;
+      _isEraserMode = false;
+      _allowFingerDrawing = false;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(duration: const Duration(seconds: 2), content: Text(_tr('저장했어요', 'Saved', '已保存', '保存しました'))),
+    );
+  }
+
+  List<Widget> _memoPinnedItems() => [
+        Semantics(
+          button: true,
+          label: _tr('취소', 'Cancel', '取消', 'キャンセル'),
+          child: InkResponse(
+            radius: 18,
+            onTap: () => unawaited(_cancelMemoSession()),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: kMemoToolExtent, minHeight: kMemoToolExtent),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Center(
+                  widthFactor: 1,
+                  heightFactor: 1,
+                  child: Text(_tr('취소', 'Cancel', '取消', 'キャンセル'), style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600)),
+                ),
+              ),
+            ),
+          ),
+        ),
+        MemoDoneButton(
+          label: _tr('저장', 'Save', '保存', '保存'),
+          onTap: _saveMemoSession,
+        ),
+      ];
 
   /// 메모 도구모음 배치: 하단(기본) / 상단 / 왼쪽 / 오른쪽
   Widget _buildMemoToolbar(double bottomInset) {
     final List<Widget> items = _memoToolItems();
-    // 끄는 동안 손가락을 따라가는 모양 (가장자리 근처에서는 그 자리의 가로·세로 모양)
+    final List<Widget> pinned = _memoPinnedItems();
     Widget mover(Widget bar) => MemoToolbarMover(
           current: _memoToolbarPos,
           onDrop: _moveMemoToolbar,
@@ -1312,7 +1373,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
             final bool v = side == 'left' || side == 'right';
             return ConstrainedBox(
               constraints: BoxConstraints(maxWidth: v ? 60 : barDragMaxLength(context, vertical: false), maxHeight: v ? barDragMaxLength(context, vertical: true) : 60),
-              child: MemoToolbar(vertical: v, children: items),
+              child: MemoToolbar(vertical: v, children: items, pinned: pinned),
             );
           },
           child: bar,
@@ -1328,7 +1389,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
           top: topOffset,
           left: 12 + _safeSides.left,
           right: 12 + _safeSides.right,
-          child: Center(child: mover(MemoToolbar(children: items))),
+          child: Center(child: mover(MemoToolbar(children: items, pinned: pinned))),
         );
       case 'left':
       case 'right':
@@ -1346,7 +1407,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
           bottom: bottomLimit,
           left: isLeft ? edge : null,
           right: isLeft ? null : edge,
-          child: Center(widthFactor: 1, child: mover(MemoToolbar(vertical: true, children: items))),
+          child: Center(widthFactor: 1, child: mover(MemoToolbar(vertical: true, children: items, pinned: pinned))),
         );
       default:
         return Positioned(
@@ -1355,7 +1416,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
           bottom: baseBottom + bottomBarSpace + ((_showControls && _toolbarPos != 'top') ? 60.0 : 0.0),
           left: 12 + _safeSides.left,
           right: 12 + _safeSides.right,
-          child: Center(child: mover(MemoToolbar(children: items))),
+          child: Center(child: mover(MemoToolbar(children: items, pinned: pinned))),
         );
     }
   }
@@ -2614,12 +2675,11 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
         active: _isMemoMode,
         tooltip: _tr('메모', 'Memo', '笔记', 'メモ'),
         onTap: () {
-          // 스크롤 모드에서도 쪽마다 같은 메모 (넘겨 보기와 함께 씀)
-          setState(() {
-            _isMemoMode = !_isMemoMode;
-            _isEraserMode = false;
-            if (!_isMemoMode) _allowFingerDrawing = false;
-          });
+          if (_isMemoMode) {
+            unawaited(_cancelMemoSession());
+            return;
+          }
+          _beginMemoSession();
         },
         closeAfterTap: true,
       ),

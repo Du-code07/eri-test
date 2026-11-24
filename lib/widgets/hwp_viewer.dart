@@ -103,6 +103,7 @@ class HwpReaderController {
 
   /// 화면 위 직접 커서·키보드 편집 모드 켜기/끄기
   Future<void> setEditMode(bool enabled) async => _invoke?.call('setEditMode', [enabled]);
+  Future<void> setKeyboardInset(double px) async => _invoke?.call('setKeyboardInset', [px]);
 
   /// 편집한 내용을 원본 형식으로 직렬화(base64)해 저장 단추를 눌렀을 때만 반영
   Future<Map<String, Object?>?> exportEditedBytes({required bool preferHwpx}) async {

@@ -163,6 +163,7 @@ class _ViewerSheetPullState extends State<ViewerSheetPull> with SingleTickerProv
   }
 
   void _onUp(PointerEvent e) {
+    _hold = false;
     if (e.pointer != _pointer) return;
     _pointer = null;
     if (!_pulling) return;

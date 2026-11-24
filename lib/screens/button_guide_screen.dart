@@ -1054,6 +1054,27 @@ class _MemoMock extends StatelessWidget {
 }
 
 
+
+class _GuideTextColorPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final tp = TextPainter(
+      text: const TextSpan(
+        text: 'A',
+        style: TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w800, height: 1.0),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, Offset((size.width - tp.width) / 2, 0));
+    final RRect bar = RRect.fromRectAndRadius(Rect.fromLTWH(1, size.height - 4.2, size.width - 2, 3.6), const Radius.circular(1.8));
+    canvas.drawRRect(bar, Paint()..color = const Color(0xFFD32F2F));
+    canvas.drawRRect(bar, Paint()..color = Colors.white70..style = PaintingStyle.stroke..strokeWidth = 0.85);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
 class _DocEditMock extends StatelessWidget {
   const _DocEditMock({required this.k, required this.tr});
   final _KeyOf k;
@@ -1070,25 +1091,10 @@ class _DocEditMock extends StatelessWidget {
             icon,
           ]),
         );
-    final Widget colorBarIcon = SizedBox(
-      width: 22,
-      height: 22,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Text('A', style: TextStyle(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.w800, height: 1.0)),
-          const SizedBox(height: 1.5),
-          Container(
-            width: 15,
-            height: 4,
-            decoration: BoxDecoration(
-              color: const Color(0xFFD32F2F),
-              borderRadius: BorderRadius.circular(2),
-              border: Border.all(color: Colors.white70, width: 0.9),
-            ),
-          ),
-        ],
-      ),
+    // 글자 크기 단추(16×16 아이콘)와 동일한 정사각형 하이라이트 영역이 잡히도록 CustomPaint(16×16)로 그림
+    final Widget colorBarIcon = CustomPaint(
+      size: const Size(16, 16),
+      painter: _GuideTextColorPainter(),
     );
     return Stack(
       children: [

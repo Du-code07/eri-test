@@ -1953,6 +1953,7 @@ function handleEditTouchEnd() {
   } else {
     editSelection = null;
     removeAllSelRects();
+    setKeyboardInset(0);
     updateCaretPos();
   }
 }
@@ -2042,7 +2043,7 @@ function findPageFrameByIndex(pIdx) {
     const m = vMounted.get(pIdx);
     if (m && m.frame) return m.frame;
   }
-  const pages = [...document.querySelectorAll('.page')];
+  const pages = [...host.querySelectorAll(':scope > .page')];
   for (const fr of pages) {
     if (fr.dataset && fr.dataset.page !== undefined && Number(fr.dataset.page) === pIdx) {
       return fr;
@@ -2089,6 +2090,7 @@ function updateCaretPos() {
     caret.setAttribute('height', String(caretH));
     caret.setAttribute('rx', String(caretW * 0.35));
     svg.appendChild(caret);
+    if (editKeyboardInset > 0) requestAnimationFrame(ensureCaretAboveKeyboard);
   } catch (err) {
     console.warn('HWP updateCaretPos failed:', err);
   }
@@ -2156,6 +2158,42 @@ function handleDirectEditClick(e) {
   } catch (err) {
     console.warn('HWP hitTest failed:', err);
   }
+}
+
+let editKeyboardInset = 0;
+
+function ensureCaretAboveKeyboard() {
+  if (!editModeOn || !editCursor || !(editKeyboardInset > 0)) return;
+  const caret = document.querySelector('#pages .eri-caret-rect, #vpages .eri-caret-rect');
+  if (!caret) return;
+  const cr = caret.getBoundingClientRect();
+  const safeBottom = window.innerHeight - editKeyboardInset - 80;
+  if (vertical && vhost) {
+    if (cr.bottom > safeBottom) {
+      vhost.scrollTop += (cr.bottom - safeBottom) + 24;
+    }
+  } else if (host) {
+    if (cr.bottom > safeBottom) {
+      const curShift = parseFloat(host.dataset.kbShift || '0') || 0;
+      const nextShift = curShift + (cr.bottom - safeBottom) + 24;
+      host.dataset.kbShift = String(nextShift);
+      host.style.marginTop = `${-nextShift}px`;
+    }
+  }
+}
+
+function setKeyboardInset(px) {
+  editKeyboardInset = Math.max(0, Number(px) || 0);
+  if (vinner) {
+    vinner.style.paddingBottom = editKeyboardInset > 0 ? `${editKeyboardInset + 96}px` : '';
+  }
+  if (editKeyboardInset === 0 && host) {
+    host.dataset.kbShift = '0';
+    host.style.marginTop = '';
+  } else if (editKeyboardInset > 0) {
+    requestAnimationFrame(ensureCaretAboveKeyboard);
+  }
+  return editKeyboardInset;
 }
 
 function setEditMode(enabled) {
@@ -2241,7 +2279,7 @@ function exportEditedBytes(preferHwpx) {
 }
 
 window.freaderHwp = { setView, resetScrollZoom: vResetZoom, setScrollMarks, setScrollMemos, setScrollMemo, visibleSlots: vVisibleSlots, mostVisiblePage: vMostVisible, highlightBoxes: withoutZoom(highlightBoxes), beginDocument, pageSizes, setVertical, scrollToRatio: vScrollToRatio, appendChunk, openDocument, configure, display, next, previous, progress, highlightSelection: withoutZoom(highlightSelection), destroy,
-  search, showSearchResult, clearSearch, headingCandidates, pageText, visibleTextBoxes: withoutZoom(visibleTextBoxes), pageRect: withoutZoom(pageRect), setEditMode, exportEditedBytes, editApplyFormat, editUndo, editRedo, cancelEditSession,
+  search, showSearchResult, clearSearch, headingCandidates, pageText, visibleTextBoxes: withoutZoom(visibleTextBoxes), pageRect: withoutZoom(pageRect), setEditMode, setKeyboardInset, exportEditedBytes, editApplyFormat, editUndo, editRedo, cancelEditSession,
   getState: () => ({ ready: readyReported, page, count, cachedPages: cache.size, cachedBytes, received, spread: options.spread, maxBytes: MAX_BYTES }) };
 window.addEventListener('pagehide', destroy, { once: true });
 

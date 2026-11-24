@@ -340,6 +340,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   bool _hwpCanUndo = false;
   bool _hwpCanRedo = false;
   String? _hwpSubPanel; // 'size' | 'color' | null
+  double _lastHwpKbInset = 0;
   bool get _canHwpEdit => _isHwpFile;
   bool _isEraserMode = false;
   bool _allowFingerDrawing = false;
@@ -1648,18 +1649,94 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     }
   }
 
-  /// 메모 도구모음 항목: 모두 같은 크기 칸(MemoToolButton)이라 간격이 똑같다
+  List<MemoStroke>? _memoBackupSingle;
+  Map<int, List<MemoStroke>>? _memoBackupScroll;
+
+  void _beginMemoSession() {
+    _memoBackupSingle = List<MemoStroke>.of(_memoStrokes);
+    _memoBackupScroll = {for (final e in _scrollMemos.entries) e.key: List<MemoStroke>.of(e.value)};
+    setState(() {
+      _isMemoMode = true;
+      _isEraserMode = false;
+      _isStylusDown = false;
+    });
+  }
+
+  Future<void> _cancelMemoSession() async {
+    final single = _memoBackupSingle;
+    final scroll = _memoBackupScroll;
+    _memoBackupSingle = null;
+    _memoBackupScroll = null;
+    setState(() {
+      _isMemoMode = false;
+      _isEraserMode = false;
+      _allowFingerDrawing = false;
+      _isStylusDown = false;
+      if (single != null) _memoStrokes = List<MemoStroke>.of(single);
+      if (scroll != null) _scrollMemos = {for (final e in scroll.entries) e.key: List<MemoStroke>.of(e.value)};
+    });
+    if (_docVertical && scroll != null) {
+      final allPages = <int>{...scroll.keys, ..._scrollMemos.keys};
+      for (final p in allPages) {
+        final list = scroll[p] ?? const <MemoStroke>[];
+        await StorageService.saveLocationStrokes(widget.filePath, 'pg:$p', list);
+      }
+      await _hwpController.setScrollMemos({for (final e in scroll.entries) e.key: _jsStrokes(e.value)});
+    } else if (single != null) {
+      await StorageService.saveLocationStrokes(widget.filePath, _currentPageLocationKey, single);
+    }
+  }
+
+  void _saveMemoSession() {
+    _memoBackupSingle = null;
+    _memoBackupScroll = null;
+    setState(() {
+      _isMemoMode = false;
+      _isEraserMode = false;
+      _allowFingerDrawing = false;
+      _isStylusDown = false;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(duration: const Duration(seconds: 2), content: Text(_tr('저장했어요', 'Saved', '已保存', '保存しました'))),
+    );
+  }
+
+  List<Widget> _memoPinnedItems() => [
+        Semantics(
+          button: true,
+          label: _tr('취소', 'Cancel', '取消', 'キャンセル'),
+          child: InkResponse(
+            radius: 18,
+            onTap: () => unawaited(_cancelMemoSession()),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: kMemoToolExtent, minHeight: kMemoToolExtent),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Center(
+                  widthFactor: 1,
+                  heightFactor: 1,
+                  child: Text(_tr('취소', 'Cancel', '取消', 'キャンセル'), style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600)),
+                ),
+              ),
+            ),
+          ),
+        ),
+        MemoDoneButton(
+          label: _tr('저장', 'Save', '保存', '保存'),
+          onTap: _saveMemoSession,
+        ),
+      ];
+
+  /// 메모 도구모음 항목: 모두 같은 크기 칸(MemoToolButton)이라 간격이 똑같다 (취소·저장은 고정)
   List<Widget> _memoToolItems() {
     return [
       MemoToolButton(
-        // 손가락 끝에서 선이 그어지는 모양 (펜 아이콘과 같은 높이)
         iconBuilder: (c) => FingerDrawIcon(color: c, size: 22),
         label: _tr('손으로 그리기', 'Finger Writing', '手指书写', '指で手書き'),
         active: _allowFingerDrawing,
         onTap: () => setState(() => _allowFingerDrawing = !_allowFingerDrawing),
       ),
       ..._memoDrawTools(),
-      // 되돌리기 / 다시 실행
       MemoToolButton(
         icon: Icons.undo,
         label: _tr('되돌리기', 'Undo', '撤销', '元に戻す'),
@@ -1672,22 +1749,13 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
         enabled: _memoHistory.canRedo(_memoHistoryKeys),
         onTap: _redoMemo,
       ),
-      MemoDoneButton(
-        label: _tr('완료', 'Done', '完成', '完了'),
-        onTap: () => setState(() {
-          _isMemoMode = false;
-          _isEraserMode = false;
-          _allowFingerDrawing = false;
-          _isStylusDown = false;
-        }),
-      ),
     ];
   }
 
   /// 메모 도구모음 배치: 하단(기본) / 상단 / 왼쪽 / 오른쪽
   Widget _buildMemoToolbar(double bottomInset) {
     final List<Widget> items = _memoToolItems();
-    // 끄는 동안 손가락을 따라가는 모양 (가장자리 근처에서는 그 자리의 가로·세로 모양)
+    final List<Widget> pinned = _memoPinnedItems();
     Widget mover(Widget bar) => MemoToolbarMover(
           current: _memoToolbarPos,
           onDrop: _moveMemoToolbar,
@@ -1695,7 +1763,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
             final bool v = side == 'left' || side == 'right';
             return ConstrainedBox(
               constraints: BoxConstraints(maxWidth: v ? 60 : barDragMaxLength(context, vertical: false), maxHeight: v ? barDragMaxLength(context, vertical: true) : 60),
-              child: MemoToolbar(vertical: v, children: items),
+              child: MemoToolbar(vertical: v, children: items, pinned: pinned),
             );
           },
           child: bar,
@@ -1711,7 +1779,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           top: topOffset,
           left: 12 + _safeSides.left,
           right: 12 + _safeSides.right,
-          child: Center(child: mover(MemoToolbar(children: items))),
+          child: Center(child: mover(MemoToolbar(children: items, pinned: pinned))),
         );
       case 'left':
       case 'right':
@@ -1729,7 +1797,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           bottom: bottomLimit,
           left: isLeft ? edge : null,
           right: isLeft ? null : edge,
-          child: Center(widthFactor: 1, child: mover(MemoToolbar(vertical: true, children: items))),
+          child: Center(widthFactor: 1, child: mover(MemoToolbar(vertical: true, children: items, pinned: pinned))),
         );
       default:
         return Positioned(
@@ -1738,7 +1806,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           bottom: baseBottom + bottomBarSpace + ((_showControls && _toolbarPos != 'top') ? 60.0 : 0.0),
           left: 12 + _safeSides.left,
           right: 12 + _safeSides.right,
-          child: Center(child: mover(MemoToolbar(children: items))),
+          child: Center(child: mover(MemoToolbar(children: items, pinned: pinned))),
         );
     }
   }
@@ -1797,6 +1865,9 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
               st.tool = kind;
             });
             MemoTools.save();
+            if (_docVertical) {
+              unawaited(_hwpController.setScrollMemos({for (final e in _scrollMemos.entries) e.key: _jsStrokes(e.value)}));
+            }
           },
           onReselect: (_) => _openMemoToolPanel(kind),
         );
@@ -2626,7 +2697,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     _docPendingExtend = null;
     _docPressMoved = false;
     _docPressAt = e.position;
-    if (!_docSelectable || _isMemoMode) return;
+    if (!_docSelectable || _isMemoMode || _isHwpEditMode) return;
     final local = _docLocal(e.position);
     _docDownOnControls = local != null && _docSel.hitsControls(local);
     if (_docDownOnControls) return;
@@ -4200,12 +4271,11 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
         active: _isMemoMode,
         tooltip: _tr('메모', 'Memo', '笔记', 'メモ'),
         onTap: () {
-          setState(() {
-            _isMemoMode = !_isMemoMode;
-            _isEraserMode = false;
-            if (!_isMemoMode) _allowFingerDrawing = false;
-          _isStylusDown = false;
-          });
+          if (_isMemoMode) {
+            unawaited(_cancelMemoSession());
+            return;
+          }
+          _beginMemoSession();
         },
         closeAfterTap: true,
       ),
@@ -4328,6 +4398,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
         _hwpCanUndo = false;
         _hwpCanRedo = false;
         _hwpSubPanel = null;
+        _lastHwpKbInset = 0;
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -4349,6 +4420,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       _hwpCanUndo = false;
       _hwpCanRedo = false;
       _hwpSubPanel = null;
+      _lastHwpKbInset = 0;
     });
     FocusManager.instance.primaryFocus?.unfocus();
     unawaited(_hwpController.cancelEditSession());
@@ -4518,6 +4590,10 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   /// 순서: 볼드체 · 글자 크기 · 글자 색 · 되돌리기 · 다시 실행 · 취소 · 저장
   Widget _buildHwpInlineEditBar(double bottomPadding) {
     final double kb = MediaQuery.of(context).viewInsets.bottom;
+    if ((kb - _lastHwpKbInset).abs() > 1.0) {
+      _lastHwpKbInset = kb;
+      unawaited(_hwpController.setKeyboardInset(kb));
+    }
     final double bottomOffset = kb > 0 ? kb + 8.0 : math.max<double>(bottomPadding + 24.0, 28.0);
     final List<Widget> items = [
       MemoToolButton(
@@ -4563,6 +4639,8 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           unawaited(_hwpController.editRedo());
         },
       ),
+    ];
+    final List<Widget> pinned = [
       Semantics(
         button: true,
         label: _tr('취소', 'Cancel', '取消', 'キャンセル'),
@@ -4603,7 +4681,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
             Center(child: _buildHwpSubPanel()),
             const SizedBox(height: 8),
           ],
-          Center(child: MemoToolbar(children: items)),
+          Center(child: MemoToolbar(children: items, pinned: pinned)),
         ],
       ),
     );
