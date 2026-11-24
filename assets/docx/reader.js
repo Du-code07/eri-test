@@ -1396,7 +1396,7 @@ function withoutZoom(fn) {
 }
 
 // ============================================================
-// Word (.docx) 문서 직접 편집 기능 (볼드·기울임·밑줄·글자 크기·글자 색·선택 삭제·되돌리기/다시 실행·원본 저장)
+// Word (.docx) 문서 직접 편집 기능 (볼드·기울임·밑줄·글자 크기·글자 색·드래그 선택·선택 삭제·되돌리기/다시 실행·원본 저장)
 // ============================================================
 let docxEditMode = false;
 let docxEditDirty = false;
@@ -1406,6 +1406,12 @@ let docxUndoStack = [];
 let docxRedoStack = [];
 let docxLastSnap = null;
 let docxKbInset = 0;
+let docxSelTimer = 0;
+let docxSelDragging = false;
+let docxSelDownX = 0;
+let docxSelDownY = 0;
+let docxSelAnchorRange = null;
+let docxSelJustEndedAt = 0;
 
 function docxUniqueSources() {
   const seen = new Set();
@@ -1427,6 +1433,15 @@ function docxPageRoots() {
   }
   for (const el of host.querySelectorAll(':scope > .page')) out.push(el);
   return out;
+}
+
+function docxEditableTargets() {
+  const targets = new Set();
+  for (const pageEl of docxPageRoots()) {
+    const inner = pageEl.querySelector('.freader-content') || pageEl.querySelector('.odr-page-outer') || pageEl;
+    if (inner) targets.add(inner);
+  }
+  return [...targets];
 }
 
 function docxSnapshotPages() {
@@ -1510,15 +1525,141 @@ function docxOnSelectionChange() {
   docxEmitEditState(false);
 }
 
+function docxPreventContext(e) {
+  if (!docxEditMode) return;
+  e.preventDefault();
+  e.stopPropagation();
+}
+
+function docxCaretRangeAt(clientX, clientY) {
+  try {
+    if (typeof document.caretRangeFromPoint === 'function') {
+      const r = document.caretRangeFromPoint(clientX, clientY);
+      if (r && r.startContainer) return r;
+    }
+    if (typeof document.caretPositionFromPoint === 'function') {
+      const p = document.caretPositionFromPoint(clientX, clientY);
+      if (p && p.offsetNode) {
+        const r = document.createRange();
+        r.setStart(p.offsetNode, p.offset);
+        r.collapse(true);
+        return r;
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
+function docxFocusEditableForNode(node) {
+  const el = node && node.nodeType === 1 ? node : node?.parentElement;
+  const target = el?.closest?.('[contenteditable="true"]') || docxEditableTargets()[0];
+  if (target && document.activeElement !== target) {
+    try { target.focus({ preventScroll: true }); } catch (_) {}
+  }
+}
+
+function docxSetRangeSelection(r1, r2) {
+  if (!r1 || !r2) return;
+  try {
+    const cmp = r1.compareBoundaryPoints(Range.START_TO_START, r2);
+    const st = cmp <= 0 ? r1 : r2;
+    const en = cmp <= 0 ? r2 : r1;
+    const range = document.createRange();
+    range.setStart(st.startContainer, st.startOffset);
+    range.setEnd(en.startContainer, en.startOffset);
+    if (range.collapsed && st.startContainer.nodeType === 3) {
+      const len = st.startContainer.nodeValue?.length || 0;
+      const sOff = Math.max(0, st.startOffset >= len && len > 0 ? len - 1 : st.startOffset);
+      const eOff = Math.min(len, sOff + 1);
+      range.setStart(st.startContainer, sOff);
+      range.setEnd(st.startContainer, eOff);
+    }
+    const sel = window.getSelection();
+    if (sel) {
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  } catch (_) {}
+}
+
+function docxOnTouchStart(e) {
+  if (!docxEditMode || disposed) return;
+  if (e.touches.length !== 1) {
+    if (docxSelTimer) { clearTimeout(docxSelTimer); docxSelTimer = 0; }
+    docxSelDragging = false;
+    return;
+  }
+  const t = e.touches[0];
+  docxSelDownX = t.clientX;
+  docxSelDownY = t.clientY;
+  if (docxSelTimer) { clearTimeout(docxSelTimer); docxSelTimer = 0; }
+  docxSelTimer = setTimeout(() => {
+    docxSelTimer = 0;
+    const anchor = docxCaretRangeAt(docxSelDownX, docxSelDownY);
+    if (!anchor) return;
+    docxSelDragging = true;
+    docxSelAnchorRange = anchor.cloneRange();
+    docxFocusEditableForNode(anchor.startContainer);
+    docxSetRangeSelection(docxSelAnchorRange, anchor);
+    docxEmitEditState(false);
+  }, 240);
+}
+
+function docxOnTouchMove(e) {
+  if (!docxEditMode || disposed) return;
+  if (e.touches.length !== 1) {
+    if (docxSelTimer) { clearTimeout(docxSelTimer); docxSelTimer = 0; }
+    docxSelDragging = false;
+    return;
+  }
+  const t = e.touches[0];
+  if (docxSelTimer && !docxSelDragging) {
+    if (Math.hypot(t.clientX - docxSelDownX, t.clientY - docxSelDownY) > 14) {
+      clearTimeout(docxSelTimer);
+      docxSelTimer = 0;
+    }
+    return;
+  }
+  if (!docxSelDragging || !docxSelAnchorRange) return;
+  e.preventDefault();
+  const cur = docxCaretRangeAt(t.clientX, t.clientY);
+  if (cur) {
+    docxSetRangeSelection(docxSelAnchorRange, cur);
+  }
+}
+
+function docxOnTouchEnd() {
+  if (docxSelTimer) { clearTimeout(docxSelTimer); docxSelTimer = 0; }
+  if (!docxSelDragging) return;
+  docxSelDragging = false;
+  docxSelJustEndedAt = Date.now();
+  docxEmitEditState(false);
+}
+
+function docxOnClick(e) {
+  if (!docxEditMode || disposed) return;
+  if (Date.now() - docxSelJustEndedAt < 350) return;
+  const r = docxCaretRangeAt(e.clientX, e.clientY);
+  if (!r) return;
+  docxFocusEditableForNode(r.startContainer);
+  const sel = window.getSelection();
+  if (sel) {
+    sel.removeAllRanges();
+    sel.addRange(r);
+  }
+  docxEmitEditState(false);
+}
+
 function docxSetEditableOnPages(on) {
-  const all = new Set([...docxUniqueSources(), ...docxPageRoots()]);
-  for (const p of all) {
-    if (!p || !p.style) continue;
-    p.contentEditable = on ? 'true' : 'false';
-    if (typeof p.setAttribute === 'function') p.setAttribute('spellcheck', 'false');
-    p.style.userSelect = on ? 'text' : '';
-    p.style.webkitUserSelect = on ? 'text' : '';
-    p.style.outline = on ? 'none' : '';
+  document.body.classList.toggle('eri-docx-edit', Boolean(on));
+  const targets = docxEditableTargets();
+  for (const el of targets) {
+    if (!el || !el.style) continue;
+    el.contentEditable = on ? 'true' : 'false';
+    if (typeof el.setAttribute === 'function') el.setAttribute('spellcheck', 'false');
+    el.style.userSelect = on ? 'text' : '';
+    el.style.webkitUserSelect = on ? 'text' : '';
+    el.style.outline = on ? 'none' : '';
   }
 }
 
@@ -1542,7 +1683,7 @@ function setEditMode(enabled) {
     docxEditOrigHtml = docxSnapshotPages();
     docxOrigParaTexts = [];
     for (const src of docxUniqueSources()) {
-      for (const el of src.querySelectorAll('p')) {
+      for (const el of src.querySelectorAll('x-p, p')) {
         docxOrigParaTexts.push((el.textContent || '').replace(/\s+/g, ' ').trim());
       }
     }
@@ -1551,10 +1692,23 @@ function setEditMode(enabled) {
     docxLastSnap = docxSnapshotPages();
     docxEditDirty = false;
     docxSetEditableOnPages(true);
+    document.addEventListener('contextmenu', docxPreventContext, true);
+    document.addEventListener('touchstart', docxOnTouchStart, { passive: true, capture: true });
+    document.addEventListener('touchmove', docxOnTouchMove, { passive: false, capture: true });
+    document.addEventListener('touchend', docxOnTouchEnd, { passive: true, capture: true });
+    document.addEventListener('click', docxOnClick, true);
     document.addEventListener('input', docxOnInput, true);
     document.addEventListener('selectionchange', docxOnSelectionChange, true);
     docxEmitEditState(false);
   } else {
+    if (docxSelTimer) { clearTimeout(docxSelTimer); docxSelTimer = 0; }
+    docxSelDragging = false;
+    docxSelAnchorRange = null;
+    document.removeEventListener('contextmenu', docxPreventContext, true);
+    document.removeEventListener('touchstart', docxOnTouchStart, true);
+    document.removeEventListener('touchmove', docxOnTouchMove, true);
+    document.removeEventListener('touchend', docxOnTouchEnd, true);
+    document.removeEventListener('click', docxOnClick, true);
     document.removeEventListener('input', docxOnInput, true);
     document.removeEventListener('selectionchange', docxOnSelectionChange, true);
     docxSetEditableOnPages(false);
@@ -1692,7 +1846,7 @@ function exportEditedBytes() {
   const edits = [];
   let idx = 0;
   for (const src of docxUniqueSources()) {
-    for (const el of src.querySelectorAll('p')) {
+    for (const el of src.querySelectorAll('x-p, p')) {
       const origText = idx < docxOrigParaTexts.length ? docxOrigParaTexts[idx] : '';
       const runs = docxCollectRuns(el);
       edits.push({ index: idx, origText, runs });

@@ -103,3 +103,8 @@ body[data-theme="white"] .page::after, body[data-theme="white"] #vpages .vslot::
 #pages-under.rtl { flex-direction: row-reverse; }
 #pages-under > .page + .page { box-shadow: calc(-8px / 3) 0 0 0 var(--gap); }
 #pages-under.rtl > .page + .page { box-shadow: calc(8px / 3) 0 0 0 var(--gap); }
+
+/* Word 문서 편집 모드: 초록색 선택 표시·커서, 기본 복사 메뉴 호출 억제 */
+body.eri-docx-edit, body.eri-docx-edit * { -webkit-touch-callout: none !important; }
+body.eri-docx-edit ::selection { background: rgba(47, 125, 50, 0.30) !important; color: inherit; }
+body.eri-docx-edit .page, body.eri-docx-edit .freader-content, body.eri-docx-edit .odr-page-outer { caret-color: #2f7d32; }

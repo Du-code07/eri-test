@@ -2000,68 +2000,84 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     );
   }
 
-  /// EPUB 전용 글자 크기 조절 창 (도구 모음 막대의 글자 크기 단추)
+  /// EPUB 전용 글자 크기 스크롤 휠 창 (편집 글자 크기 조절과 동일한 스크롤 휠 방식)
   Future<void> _showEpubFontSizeDialog() async {
     if (_isOfflineDocument) return;
-    await showViewerDialog<void>(
-      context,
-      (ctx) => StatefulBuilder(
-        builder: (ctx, setDlg) {
-          final cs = Theme.of(ctx).colorScheme;
-          return Center(
-            child: viewerPanel(
-              ctx,
-              color: cs.surfaceContainerHigh,
-              width: 280,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      _tr('글자 크기', 'Font Size', '字体大小', '文字サイズ'),
-                      style: TextStyle(color: cs.onSurface, fontSize: 16, fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 14),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        IconButton(
-                          icon: Icon(Icons.text_decrease, color: _fontSize <= 12 ? cs.onSurfaceVariant.withValues(alpha: 0.35) : cs.onSurface, size: 24),
-                          onPressed: _fontSize <= 12
-                              ? null
-                              : () {
-                                  _changeFontSize(-2);
-                                  setDlg(() {});
-                                },
-                        ),
-                        SizedBox(
-                          width: 72,
-                          child: Text(
-                            '${_fontSize}pt',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: cs.onSurface, fontSize: 18, fontWeight: FontWeight.w800),
+    const List<int> sizes = [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32];
+    final int initIdx = sizes.indexOf(_fontSize).clamp(0, sizes.length - 1);
+    final FixedExtentScrollController wheelCtrl = FixedExtentScrollController(initialItem: initIdx);
+    try {
+      await showDialog<void>(
+        context: context,
+        barrierColor: Colors.transparent,
+        barrierDismissible: true,
+        builder: (ctx) => StatefulBuilder(
+          builder: (ctx, setDlg) {
+            final Color sig = AppColors.of(ctx);
+            return Center(
+              child: Material(
+                color: Colors.black87,
+                borderRadius: BorderRadius.circular(20),
+                elevation: 8,
+                clipBehavior: Clip.antiAlias,
+                child: SizedBox(
+                  width: 96,
+                  height: 136,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      IgnorePointer(
+                        child: Container(
+                          width: 76,
+                          height: 34,
+                          decoration: BoxDecoration(
+                            color: sig.withValues(alpha: 0.22),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: sig.withValues(alpha: 0.7), width: 1.2),
                           ),
                         ),
-                        IconButton(
-                          icon: Icon(Icons.text_increase, color: _fontSize >= 32 ? cs.onSurfaceVariant.withValues(alpha: 0.35) : cs.onSurface, size: 24),
-                          onPressed: _fontSize >= 32
-                              ? null
-                              : () {
-                                  _changeFontSize(2);
-                                  setDlg(() {});
-                                },
+                      ),
+                      ListWheelScrollView.useDelegate(
+                        controller: wheelCtrl,
+                        itemExtent: 34,
+                        diameterRatio: 1.4,
+                        physics: const FixedExtentScrollPhysics(),
+                        onSelectedItemChanged: (idx) {
+                          final int pt = sizes[idx];
+                          if (pt != _fontSize) {
+                            _changeFontSize(pt - _fontSize);
+                            setDlg(() {});
+                          }
+                        },
+                        childDelegate: ListWheelChildBuilderDelegate(
+                          childCount: sizes.length,
+                          builder: (ctx, idx) {
+                            final int pt = sizes[idx];
+                            final bool sel = pt == _fontSize;
+                            return Center(
+                              child: Text(
+                                '${pt}pt',
+                                style: TextStyle(
+                                  color: sel ? Colors.white : Colors.white54,
+                                  fontSize: sel ? 15 : 13.5,
+                                  fontWeight: sel ? FontWeight.w800 : FontWeight.w500,
+                                ),
+                              ),
+                            );
+                          },
                         ),
-                      ],
-                    ),
-                  ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-          );
-        },
-      ),
-    );
+            );
+          },
+        ),
+      );
+    } finally {
+      wheelCtrl.dispose();
+    }
   }
 
   // EPUB: 지금 장의 처음/끝에 닿았는지, 첫/마지막 장인지
