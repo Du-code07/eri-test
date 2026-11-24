@@ -343,7 +343,14 @@ class _MyEbookAppState extends State<MyEbookApp> with SingleTickerProviderStateM
         ),
       ),
       snackBarTheme: SnackBarThemeData(
-        contentTextStyle: TextStyle(color: Colors.white, shadows: AppColors.whiteTextShadowsFor(sig, brightness: b)),
+        backgroundColor: b == Brightness.dark ? const Color(0xFF2B2F2D) : const Color(0xFF242725),
+        contentTextStyle: const TextStyle(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.w500),
+        actionTextColor: sig,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: b == Brightness.dark ? Colors.white.withValues(alpha: 0.14) : Colors.transparent),
+        ),
       ),
       // 아래에서 올라오는 창의 회색 막대는 창마다 SheetGrip으로 (제목과의 간격을 모든 창에서 같게)
       bottomSheetTheme: const BottomSheetThemeData(showDragHandle: false),

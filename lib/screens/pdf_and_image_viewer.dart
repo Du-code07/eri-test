@@ -39,6 +39,7 @@ import '../widgets/text_select.dart';
 /// 반면 일반 손가락 터치(PointerDeviceKind.touch)는 아예 거부(isPointerAllowed = false)하므로 손가락 스와이프로는 평소처럼 페이지가 부드럽게 넘어갑니다!
 class EagerStylusPanGestureRecognizer extends OneSequenceGestureRecognizer {
   bool allowTouch = false;
+  int? _activePointer;
   void Function(PointerDownEvent event)? onStylusDown;
   void Function(PointerMoveEvent event)? onStylusMove;
   void Function(PointerUpEvent event)? onStylusUp;
@@ -46,6 +47,8 @@ class EagerStylusPanGestureRecognizer extends OneSequenceGestureRecognizer {
 
   @override
   bool isPointerAllowed(PointerDownEvent event) {
+    // 이미 한 손가락(또는 펜)으로 그리는 중이면 두 번째 손가락 터치는 무시 (두 손가락 사이로 선이 이어지는 현상 차단)
+    if (_activePointer != null) return false;
     if (allowTouch &&
         (event.kind == PointerDeviceKind.touch ||
             event.kind == PointerDeviceKind.mouse)) {
@@ -57,6 +60,8 @@ class EagerStylusPanGestureRecognizer extends OneSequenceGestureRecognizer {
 
   @override
   void addAllowedPointer(PointerDownEvent event) {
+    if (_activePointer != null) return;
+    _activePointer = event.pointer;
     startTrackingPointer(event.pointer, event.transform);
     // 핵심: S펜이 닿자마자 제스처 아레나를 즉시 독점(accepted)하여 화면 이동/페이지 넘김을 0픽셀도 허용하지 않음!
     resolve(GestureDisposition.accepted);
@@ -65,12 +70,15 @@ class EagerStylusPanGestureRecognizer extends OneSequenceGestureRecognizer {
 
   @override
   void handleEvent(PointerEvent event) {
+    if (event.pointer != _activePointer) return;
     if (event is PointerMoveEvent) {
       onStylusMove?.call(event);
     } else if (event is PointerUpEvent) {
+      _activePointer = null;
       onStylusUp?.call(event);
       stopTrackingPointer(event.pointer);
     } else if (event is PointerCancelEvent) {
+      _activePointer = null;
       onStylusCancel?.call(event);
       stopTrackingPointer(event.pointer);
     }
@@ -1036,24 +1044,26 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
   // 두 손가락(확대·축소) 동작 중이었는지: 그 끝에 손가락을 떼는 것은 탭이 아님
   bool _pinchSeen = false;
 
-  // 확대한 화면을 빠르게 두 번 누르면 확대를 처음으로 (확대돼 있을 때만 한 번 누름을 잠깐 기다려 봄)
+  // 확대·축소한 화면에서도 한 번 누르면 메뉴가 즉시 뜨고, 260ms 안에 한 번 더 누르면 배율을 원래대로 되돌림
   Timer? _tapTimer;
   DateTime? _lastTapAt;
   Offset _lastTapPos = Offset.zero;
+  bool? _controlsBeforeTap;
 
   void _onViewerTap(Offset local) {
     if (_pinchSeen) return;
-    // 글을 골라 둔 상태면 누르기는 고른 것을 지우기만 함
     if (_textSel.active) {
       _textSel.clear();
       return;
     }
     final bool zoomed = _currentZoomScale > 1.03 || (_pageModeScroll && _scrollCtrl.zoomed);
     final now = DateTime.now();
-    if (_tapTimer != null && _lastTapAt != null && now.difference(_lastTapAt!).inMilliseconds < 320 && (local - _lastTapPos).distance < 60) {
-      _tapTimer!.cancel();
-      _tapTimer = null;
+    if (zoomed && _lastTapAt != null && now.difference(_lastTapAt!).inMilliseconds < 260 && (local - _lastTapPos).distance < 60) {
       _lastTapAt = null;
+      if (_controlsBeforeTap != null && _showControls != _controlsBeforeTap) {
+        setState(() => _showControls = _controlsBeforeTap!);
+      }
+      _controlsBeforeTap = null;
       HapticFeedback.selectionClick();
       _resetAnyZoom();
       return;
@@ -1061,12 +1071,10 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
     if (zoomed) {
       _lastTapAt = now;
       _lastTapPos = local;
-      _tapTimer?.cancel();
-      _tapTimer = Timer(const Duration(milliseconds: 300), () {
-        _tapTimer = null;
-        if (mounted) _onViewerTapNow(local);
-      });
-      return;
+      _controlsBeforeTap = _showControls;
+    } else {
+      _lastTapAt = null;
+      _controlsBeforeTap = null;
     }
     _onViewerTapNow(local);
   }

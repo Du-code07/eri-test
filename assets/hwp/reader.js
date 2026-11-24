@@ -1133,6 +1133,11 @@ let editUndoStack = [];
 let editRedoStack = [];
 let pendingFormat = {}; // { bold?, fontSizePt?, textColor? }
 let editSpanStart = null;
+let editSelection = null; // { cursor, start, end } (same paragraph/cell dragged range)
+let selDragTimer = 0;
+let selDragActive = false;
+let selAnchorHit = null;
+let selJustFinishedAt = 0;
 const pageEngineSizeCache = new Map();
 const MAX_EDIT_UNDO = 40;
 const IME_SENTINEL = '\u200B';
@@ -1461,6 +1466,7 @@ function ensureEditDom() {
     st.textContent = [
       '@keyframes eriBlink{0%,49%{opacity:1}50%,100%{opacity:0}}',
       '.eri-caret-rect{fill:#2F7D32;pointer-events:none;animation:eriBlink 1s step-end infinite;}',
+      '.eri-sel-rect{fill:rgba(47,125,50,0.28);pointer-events:none;}',
       '#eri-ime{position:fixed;left:0;top:0;opacity:0.001;width:2px;height:20px;border:0;padding:0;margin:0;resize:none;z-index:9998;pointer-events:none;font-size:16px;background:transparent;color:transparent;caret-color:transparent;}',
     ].join(' ');
     document.head.appendChild(st);
@@ -1811,30 +1817,144 @@ function applyDeltaFast(offset, delCount, insertStr, recordUndo = false) {
   return null;
 }
 
-function findWordRangeAt(c) {
-  const paraLen = getParagraphLenAt(c);
-  if (paraLen <= 0) return null;
-  if (editSpanStart !== null && c.offset > editSpanStart && c.offset <= paraLen) {
-    return [Math.max(0, editSpanStart), c.offset];
+function removeAllSelRects() {
+  for (const el of document.querySelectorAll('.eri-sel-rect')) el.remove();
+}
+
+function renderEditSelection() {
+  removeAllSelRects();
+  if (!editModeOn || !doc || !editSelection) return;
+  const { cursor: c, start, end } = editSelection;
+  if (!(end > start)) return;
+  try {
+    let raw = null;
+    if (c.inTable && c.pathJson && typeof doc.getSelectionRectsInCellByPath === 'function') {
+      raw = doc.getSelectionRectsInCellByPath(c.sec, c.parentPara, c.pathJson, c.cellPara, start, c.cellPara, end);
+    } else if (c.inTable && c.cell !== undefined && c.cell !== null && typeof doc.getSelectionRectsInCell === 'function') {
+      raw = doc.getSelectionRectsInCell(c.sec, c.parentPara, c.ctrl, c.cell, c.cellPara, start, c.cellPara, end);
+    } else if (typeof doc.getSelectionRects === 'function') {
+      raw = doc.getSelectionRects(c.sec, c.para, start, c.para, end);
+    }
+    const list = parseJsonSafe(raw);
+    const rects = Array.isArray(list) ? list : (list && Array.isArray(list.rects) ? list.rects : []);
+    for (const r of rects) {
+      const pIdx = typeof r.pageIndex === 'number' ? r.pageIndex : c.pageIdx;
+      const frame = findPageFrameByIndex(pIdx);
+      const svg = frame ? frame.querySelector(':scope > svg') : null;
+      if (!frame || !svg) continue;
+      const vb = svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width > 0
+        ? svg.viewBox.baseVal
+        : { x: 0, y: 0, width: parseFloat(frame.dataset.width) || 595, height: parseFloat(frame.dataset.height) || 842 };
+      const { w: engW, h: engH } = getPageEngineSize(pIdx, svg);
+      const sx = vb.width / engW, sy = vb.height / engH;
+      const w = Number(r.width ?? r.w ?? 0), h = Number(r.height ?? r.h ?? 0);
+      if (!(w > 0 && h > 0)) continue;
+      const el = document.createElementNS(SVG_NS, 'rect');
+      el.setAttribute('class', 'eri-sel-rect');
+      el.setAttribute('x', String(vb.x + Number(r.x || 0) * sx));
+      el.setAttribute('y', String(vb.y + Number(r.y || 0) * sy));
+      el.setAttribute('width', String(w * sx));
+      el.setAttribute('height', String(h * sy));
+      el.setAttribute('rx', '2');
+      svg.appendChild(el);
+    }
+  } catch (_) {}
+}
+
+function hitTestClientPoint(clientX, clientY) {
+  const el = document.elementFromPoint(clientX, clientY);
+  const targetPageEl = el && el.closest ? el.closest('.page, .vslot') : null;
+  const frame = targetPageEl && targetPageEl.classList.contains('page')
+    ? targetPageEl
+    : (targetPageEl ? targetPageEl.querySelector('.page') : host.querySelector('.page'));
+  const svg = frame ? frame.querySelector(':scope > svg') : null;
+  if (!frame || !svg) return null;
+  const rect = svg.getBoundingClientRect();
+  if (!(rect.width > 0 && rect.height > 0)) return null;
+  let pIdx = page;
+  if (frame.dataset && frame.dataset.page !== undefined) pIdx = Number(frame.dataset.page);
+  else if (targetPageEl && targetPageEl.dataset && targetPageEl.dataset.page !== undefined) pIdx = Number(targetPageEl.dataset.page);
+  const { w: engW, h: engH } = getPageEngineSize(pIdx, svg);
+  const xEng = ((clientX - rect.left) / rect.width) * engW;
+  const yEng = ((clientY - rect.top) / rect.height) * engH;
+  if (xEng < 0 || yEng < 0 || xEng > engW || yEng > engH) return null;
+  const hit = parseJsonSafe(doc.hitTest(pIdx, xEng, yEng));
+  if (!hit || hit.hit === false) return null;
+  const sec = Number(hit.sectionIndex ?? hit.sectionIdx ?? 0);
+  const hasPath = Array.isArray(hit.cellPath) && hit.cellPath.length > 0;
+  const cellVal = hit.cellIndex ?? hit.cellIdx;
+  const inTable = Boolean(hasPath || (cellVal !== undefined && cellVal !== null));
+  const parentPara = Number(hit.parentParaIndex ?? hit.parentParaIdx ?? hit.paragraphIndex ?? hit.paraIndex ?? 0);
+  const para = Number(hit.paragraphIndex ?? hit.paraIndex ?? hit.paraIdx ?? 0);
+  const ctrl = Number(hit.controlIndex ?? hit.controlIdx ?? 0);
+  const cellPara = Number(hit.cellParaIndex ?? hit.cellParagraphIndex ?? hit.cellParaIdx ?? 0);
+  const offset = Math.max(0, Number(hit.charOffset ?? 0));
+  return { pageIdx: pIdx, sec, para, parentPara, offset, inTable, pathJson: hasPath ? JSON.stringify(hit.cellPath) : null, ctrl, cell: cellVal, cellPara };
+}
+
+function handleEditTouchStart(e) {
+  if (!editModeOn || !doc || disposed) return;
+  if (e.touches.length !== 1) {
+    if (selDragTimer) { clearTimeout(selDragTimer); selDragTimer = 0; }
+    selDragActive = false;
+    return;
   }
-  const winStart = Math.max(0, c.offset - 24);
-  const winEnd = Math.min(paraLen, c.offset + 24);
-  const slice = readTextSliceAt(c, winStart, winEnd - winStart);
-  if (!slice) return null;
-  const rel = c.offset - winStart;
-  const isSep = (ch) => !ch || /\s/.test(ch);
-  let l = rel;
-  while (l > 0 && !isSep(slice[l - 1])) l--;
-  let r = rel;
-  while (r < slice.length && !isSep(slice[r])) r++;
-  if (l === r && rel > 0 && !isSep(slice[rel - 1])) {
-    l = rel - 1;
-    while (l > 0 && !isSep(slice[l - 1])) l--;
-    r = rel;
+  const t = e.touches[0];
+  const sx = t.clientX, sy = t.clientY;
+  selDragTimer = setTimeout(() => {
+    selDragTimer = 0;
+    const h = hitTestClientPoint(sx, sy);
+    if (!h) return;
+    selDragActive = true;
+    selAnchorHit = h;
+    editCursor = { ...h };
+    editSelection = { cursor: { ...h }, start: h.offset, end: h.offset };
+    removeAllCarets();
+    renderEditSelection();
+  }, 320);
+}
+
+function handleEditTouchMove(e) {
+  if (!editModeOn || !doc || disposed) return;
+  if (e.touches.length !== 1) {
+    if (selDragTimer) { clearTimeout(selDragTimer); selDragTimer = 0; }
+    selDragActive = false;
+    return;
   }
-  const absL = winStart + l;
-  const absR = winStart + r;
-  return absR > absL ? [absL, absR] : null;
+  const t = e.touches[0];
+  if (selDragTimer && !selDragActive) {
+    // 길게 누르기 전에 손가락이 움직이면 일반 스크롤로 넘김
+    clearTimeout(selDragTimer);
+    selDragTimer = 0;
+    return;
+  }
+  if (!selDragActive || !selAnchorHit) return;
+  e.preventDefault();
+  const h = hitTestClientPoint(t.clientX, t.clientY);
+  if (!h || !sameCursorTarget(selAnchorHit, h)) return;
+  const s = Math.min(selAnchorHit.offset, h.offset);
+  const en = Math.max(selAnchorHit.offset, h.offset);
+  editSelection = { cursor: { ...selAnchorHit }, start: s, end: en };
+  renderEditSelection();
+}
+
+function handleEditTouchEnd() {
+  if (selDragTimer) { clearTimeout(selDragTimer); selDragTimer = 0; }
+  if (!selDragActive) return;
+  selDragActive = false;
+  selJustFinishedAt = Date.now();
+  if (editSelection && editSelection.end > editSelection.start) {
+    // 드래그 선택 완료 후에도 자판은 내려가지 않게 포커스 유지
+    if (editImeEl) {
+      resetImeBuffer();
+      editImeEl.focus({ preventScroll: true });
+    }
+    emitEditState();
+  } else {
+    editSelection = null;
+    removeAllSelRects();
+    updateCaretPos();
+  }
 }
 
 function editApplyFormat(opts) {
@@ -1842,18 +1962,19 @@ function editApplyFormat(opts) {
   if (opts.bold !== undefined) pendingFormat.bold = Boolean(opts.bold);
   if (opts.fontSizePt !== undefined) pendingFormat.fontSizePt = Number(opts.fontSizePt);
   if (opts.textColor !== undefined) pendingFormat.textColor = String(opts.textColor);
-  // 수정 중인 문구(방금 입력한 구간 또는 커서가 놓인 단어)에 즉시 적용해 다른 곳을 터치하지 않아도 바로 보이게 함
-  if (editCursor) {
-    const c = editCursor;
-    const range = findWordRangeAt(c);
-    if (range) {
-      const ok = applyCharFormatRange(c, range[0], range[1], opts);
-      if (ok) {
-        markEditDirty();
-        redrawSinglePage(c.pageIdx);
-        updateCaretPos();
-      }
+  // 1) 이미 써진 글을 드래그로 선택한 상태면 그 선택 구간에만 즉시 적용 (자판 유지)
+  if (editSelection && editSelection.end > editSelection.start) {
+    const c = editSelection.cursor;
+    const ok = applyCharFormatRange(c, editSelection.start, editSelection.end, opts);
+    if (ok) {
+      markEditDirty();
+      redrawSinglePage(c.pageIdx);
+      renderEditSelection();
     }
+  }
+  // 2) 커서만 둔 상태(선택 없음)면 주변 기존 글자는 건드리지 않고 이후 치는 글자(pendingFormat)만 적용
+  if (editImeEl) {
+    editImeEl.focus({ preventScroll: true });
   }
   emitEditState();
   return true;
@@ -1975,7 +2096,7 @@ function updateCaretPos() {
 
 function handleDirectEditClick(e) {
   if (!editModeOn || !doc || disposed) return;
-  if (Date.now() - lastPinchEndedAt < 350) return;
+  if (Date.now() - lastPinchEndedAt < 350 || Date.now() - selJustFinishedAt < 350) return;
   const targetPageEl = e.target && e.target.closest ? e.target.closest('.page, .vslot') : null;
   const frame = targetPageEl && targetPageEl.classList.contains('page')
     ? targetPageEl
@@ -2020,6 +2141,8 @@ function handleDirectEditClick(e) {
     };
     pendingFormat = {};
     editSpanStart = null;
+    editSelection = null;
+    removeAllSelRects();
     imeComposing = false;
     imeCompLen = 0;
     ensureEditDom();
@@ -2052,9 +2175,17 @@ function setEditMode(enabled) {
       editImeEl.style.display = '';
     }
     document.addEventListener('click', handleDirectEditClick, true);
+    document.addEventListener('touchstart', handleEditTouchStart, { passive: true, capture: true });
+    document.addEventListener('touchmove', handleEditTouchMove, { passive: false, capture: true });
+    document.addEventListener('touchend', handleEditTouchEnd, { passive: true, capture: true });
     emitEditState();
   } else {
     document.removeEventListener('click', handleDirectEditClick, true);
+    document.removeEventListener('touchstart', handleEditTouchStart, true);
+    document.removeEventListener('touchmove', handleEditTouchMove, true);
+    document.removeEventListener('touchend', handleEditTouchEnd, true);
+    editSelection = null;
+    removeAllSelRects();
     flushPendingPaginationNow(true);
     discardSnapSafe(sessionBaseSnapId);
     sessionBaseSnapId = null;

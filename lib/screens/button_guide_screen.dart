@@ -35,6 +35,8 @@ class ButtonGuideScreen extends StatelessWidget {
           _tr('파일을 볼 때 쓰는 단추', 'Buttons you use while reading a file', '阅读文件时使用的按钮', 'ファイルを見るときに使うボタン')),
       (_GuideKind.memo, MemoToolIcon(kind: 'memo', color: cs.onSurface, size: 24), _tr('메모 도구 막대', 'Memo Tool Bar', '笔记工具栏', 'メモツールバー'),
           _tr('펜·지우개·스티커 등 메모 도구', 'Pen, eraser, sticker and other memo tools', '笔·橡皮擦·贴纸等笔记工具', 'ペン・消しゴム・ステッカーなどのメモツール')),
+      (_GuideKind.docEdit, Icon(Icons.edit_note_rounded, color: cs.onSurface, size: 24), _tr('문서 편집 도구 막대', 'Document Edit Tool Bar', '文档编辑工具栏', '文書編集ツールバー'),
+          _tr('글자 입력·서식·되돌리기·저장 등 문서 편집 도구', 'Typing, formatting, undo, save and other document edit tools', '文字输入·格式·撤销·保存等文档编辑工具', '文字入力・書式・元に戻す・保存などの文書編集ツール')),
       (_GuideKind.settings, SpinGearIcon(turns: 0, color: cs.onSurface), _tr('설정', 'Settings', '设置', '設定'),
           _tr('앱 설정의 항목', 'Items in the app settings', '应用设置中的各项', 'アプリ設定の項目')),
     ];
@@ -78,7 +80,7 @@ class ButtonGuideScreen extends StatelessWidget {
   }
 }
 
-enum _GuideKind { main, viewer, memo, settings }
+enum _GuideKind { main, viewer, memo, docEdit, settings }
 
 /// 가이드 한 단계: 비출 단추와 설명
 class _Step {
@@ -350,6 +352,41 @@ class _GuideRunnerState extends State<_GuideRunner> with TickerProviderStateMixi
                   '记完笔记后需点击完成按钮才会保存\n（长按笔记工具栏可更改位置）',
                   'メモをしたあと完了ボタンを押すと保存されます\n（メモツールバーは長押しで位置を変えられます）')),
         ];
+      case _GuideKind.docEdit:
+        return [
+          _Step('bold', tr('볼드체', 'Bold', '粗体', '太字'),
+              tr('커서를 둔 상태에서 켜면 이후 치는 글자만 굵게 써지고, 이미 써진 글자는 길게 눌러 드래그해 고른 뒤 바꿀 수 있어요',
+                  'Turn on at the cursor to type new text in bold, or long-press and drag to select existing text first',
+                  '在光标处开启后仅新输入文字变粗，已有文字可长按拖动选中后再更改',
+                  'カーソル位置でオンにすると新しく打つ文字だけ太字になり、既存の文字は長押しドラッグで選んでから変えられます')),
+          _Step('size', tr('글자 크기', 'Font Size', '字号', '文字サイズ'),
+              tr('편집 막대 위의 스크롤 창에서 크기를 고르면 새로 치는 글자나 드래그해 고른 글자 크기가 바로 바뀌어요',
+                  'Pick a size from the scroll wheel above the bar to change new text or dragged selection immediately',
+                  '在编辑栏上方的滚动框中选择字号，即可立即更改新输入或选中文字的大小',
+                  '編集バー上のスクロールでサイズを選ぶと、新しく打つ文字や選択した文字の大きさがすぐ変わります')),
+          _Step('color', tr('글자 색', 'Text Color', '文字颜色', '文字色'),
+              tr('A 아래 막대로 현재 글자 색을 확인하고, 원하는 색을 골라 새로 치는 글자나 드래그해 고른 글자에 적용해요',
+                  'Check the current color on the bar under A and apply a new color to new text or dragged selection',
+                  '通过 A 下方的色条查看当前颜色，并应用到新输入或拖动选中的文字',
+                  'A の下のバーで現在の色を確認し、新しく打つ文字やドラッグ選択した文字に色を適用します')),
+          _Step('undo', tr('되돌리기', 'Undo', '撤销', '元に戻す'),
+              tr('방금 입력하거나 지운 내용(한 번에 연속으로 지운 글자 포함)을 한 단계 되돌려요',
+                  'Undo the last edit, including a continuous burst of deleted text at once',
+                  '撤销上一步输入或删除的内容（连续删除的文字也会一次恢复）',
+                  '直前の入力や削除（連続で消した文字も含む）を1段階元に戻します')),
+          _Step('redo', tr('다시 실행', 'Redo', '重做', 'やり直し'),
+              tr('방금 되돌린 편집 작업을 다시 실행해요', 'Redo the edit you just undid', '重新执行刚才撤销的编辑', '直前に元に戻した編集をやり直します')),
+          _Step('cancel', tr('취소', 'Cancel', '取消', 'キャンセル'),
+              tr('저장하기 전까지 수정한 내용을 모두 취소하고 원래 문서 상태로 편집을 종료해요',
+                  'Discard all unsaved edits made in this session and exit edit mode',
+                  '取消本次保存前的所有修改，恢复原文档并退出编辑',
+                  '保存前までの修正をすべて取り消し、元の状態に戻して編集を終了します')),
+          _Step('save', tr('저장', 'Save', '保存', '保存'),
+              tr('수정한 내용을 문서에 저장하고 편집을 마쳐요 (저장을 눌러야 수정 내용이 반영돼요)',
+                  'Save your edits to the document and finish editing (changes are only kept when you tap Save)',
+                  '将修改内容保存到文档并结束编辑（点击保存后才会生效）',
+                  '修正内容を文書に保存して編集を終了します（保存を押した場合のみ反映されます）')),
+        ];
       case _GuideKind.settings:
         return [
           _Step('style', tr('앱 스타일', 'App Style', '应用样式', 'アプリのスタイル'),
@@ -413,6 +450,7 @@ class _GuideRunnerState extends State<_GuideRunner> with TickerProviderStateMixi
       _GuideKind.main => _MainMock(k: _k, tr: tr, simple: _simple),
       _GuideKind.viewer => _ViewerMock(k: _k, tr: tr),
       _GuideKind.memo => _MemoMock(k: _k, tr: tr),
+      _GuideKind.docEdit => _DocEditMock(k: _k, tr: tr),
       _GuideKind.settings => _SettingsMock(k: _k, tr: tr),
     };
     return Scaffold(
@@ -1004,6 +1042,84 @@ class _MemoMock extends StatelessWidget {
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 11),
                     child: Center(child: Text(tr('완료', 'Done', '完成', '完了'), style: const TextStyle(color: AppColors.signature, fontSize: 14, fontWeight: FontWeight.w600))),
+                  ),
+                ),
+              ]),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+
+class _DocEditMock extends StatelessWidget {
+  const _DocEditMock({required this.k, required this.tr});
+  final _KeyOf k;
+  final _Tr tr;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget b(String id, Widget icon, {bool active = false}) => SizedBox(
+          key: k(id),
+          width: kMemoToolExtent,
+          height: kMemoToolExtent,
+          child: Stack(alignment: Alignment.center, children: [
+            if (active) Positioned(left: 2.5, child: MemoToolButton.activeBar()),
+            icon,
+          ]),
+        );
+    final Widget colorBarIcon = SizedBox(
+      width: 22,
+      height: 22,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Text('A', style: TextStyle(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.w800, height: 1.0)),
+          const SizedBox(height: 1.5),
+          Container(
+            width: 15,
+            height: 4,
+            decoration: BoxDecoration(
+              color: const Color(0xFFD32F2F),
+              borderRadius: BorderRadius.circular(2),
+              border: Border.all(color: Colors.white70, width: 0.9),
+            ),
+          ),
+        ],
+      ),
+    );
+    return Stack(
+      children: [
+        const Positioned.fill(child: _SamplePage(ink: false)),
+        Positioned(
+          left: 12,
+          right: 12,
+          bottom: 28 + MediaQuery.paddingOf(context).bottom,
+          child: Center(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: MemoToolbar(children: [
+                b('bold', const Icon(Icons.format_bold_rounded, color: Colors.white, size: 16), active: true),
+                b('size', const Icon(Icons.format_size_rounded, color: Colors.white, size: 16)),
+                b('color', colorBarIcon),
+                b('undo', const Icon(Icons.undo, color: Colors.white, size: 16)),
+                b('redo', const Icon(Icons.redo, color: Colors.white30, size: 16)),
+                SizedBox(
+                  key: k('cancel'),
+                  height: kMemoToolExtent,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    child: Center(child: Text(tr('취소', 'Cancel', '取消', 'キャンセル'), style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600))),
+                  ),
+                ),
+                SizedBox(
+                  key: k('save'),
+                  height: kMemoToolExtent,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 11),
+                    child: Center(child: Text(tr('저장', 'Save', '保存', '保存'), style: const TextStyle(color: AppColors.signature, fontSize: 14, fontWeight: FontWeight.w600))),
                   ),
                 ),
               ]),

@@ -101,7 +101,7 @@ String toolbarCatalogLabel(String id, String Function(String ko, String en, Stri
       'mode' => tr('페이지 이동', 'Page Turning', '翻页', 'ページ移動'),
       'direction' => tr('읽기 방향', 'Reading Direction', '阅读方向', '読む方向'),
       'memo' => tr('메모', 'Memo', '笔记', 'メモ'),
-      'edit' => tr('한글 편집', 'Edit HWP', '编辑 HWP', 'HWP編集'),
+      'edit' => tr('문서 편집', 'Edit Document', '编辑文档', '文書編集'),
       'copy' => tr('글자 복사', 'Copy Text', '复制文字', '文字をコピー'),
       _ => tr('북마크', 'Bookmarks', '书签', 'ブックマーク'),
     };

@@ -3455,6 +3455,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   Timer? _tapTimer;
   DateTime? _lastTapAt;
   Offset _lastTapPos = Offset.zero;
+  bool? _controlsBeforeTap;
   bool get _anyZoomed => _epubZoomScale > 1.03 || _scrollCtrl.zoomed || (_docVertical && (_hwpController.scrollZoom - 1).abs() > 0.01);
 
   Orientation? _zoomOrientation;
@@ -3481,25 +3482,26 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
 
   void _tapOrDoubleTap(Offset pos) {
     final now = DateTime.now();
-    if (_tapTimer != null && _lastTapAt != null && now.difference(_lastTapAt!).inMilliseconds < 320 && (pos - _lastTapPos).distance < 60) {
-      _tapTimer!.cancel();
-      _tapTimer = null;
+    if (_anyZoomed && _lastTapAt != null && now.difference(_lastTapAt!).inMilliseconds < 260 && (pos - _lastTapPos).distance < 60) {
       _lastTapAt = null;
+      if (_controlsBeforeTap != null && _showControls != _controlsBeforeTap) {
+        setState(() => _showControls = _controlsBeforeTap!);
+      }
+      _controlsBeforeTap = null;
       HapticFeedback.selectionClick();
       _resetAnyZoom();
       return;
     }
-    if (!_anyZoomed) {
-      _onReaderTap(pos);
-      return;
+    if (_anyZoomed) {
+      _lastTapAt = now;
+      _lastTapPos = pos;
+      _controlsBeforeTap = _showControls;
+    } else {
+      _lastTapAt = null;
+      _controlsBeforeTap = null;
     }
-    _lastTapAt = now;
-    _lastTapPos = pos;
-    _tapTimer?.cancel();
-    _tapTimer = Timer(const Duration(milliseconds: 300), () {
-      _tapTimer = null;
-      if (mounted) _onReaderTap(pos);
-    });
+    // 핀치 줌 인/아웃 상태에서도 한 번 탭하면 기다리지 않고 메뉴가 즉시 열림
+    _onReaderTap(pos);
   }
 
   /// 화면을 한 번 눌렀을 때: 탭 모드면 위쪽은 메뉴, 아래 왼쪽·오른쪽은 이전·다음 쪽
@@ -4211,7 +4213,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
         QuickToolItem(
           id: 'edit',
           icon: Icon(Icons.edit_note_rounded, color: _isHwpEditMode ? AppColors.signature : Colors.white, size: 20),
-          tooltip: _tr('한글 편집', 'Edit HWP', '编辑 HWP', 'HWP編集'),
+          tooltip: _tr('문서 편집', 'Edit Document', '编辑文档', '文書編集'),
           onTap: _toggleHwpEditMode,
           closeAfterTap: true,
         ),
