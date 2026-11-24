@@ -4828,11 +4828,18 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
             : _getBgColor();
 
     return PopScope(
-      canPop: !_slideShow && !_findOpen && !_isHwpEditMode,
+      canPop: !_slideShow && !_findOpen && !_isHwpEditMode && !_isMemoMode,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
         if (_isHwpEditMode) {
           unawaited(_cancelHwpEditMode());
+          return;
+        }
+        if (_isMemoMode) {
+          unawaited(() async {
+            await _cancelMemoSession();
+            if (mounted) Navigator.of(context).pop();
+          }());
           return;
         }
         if (!didPop && _findOpen) {

@@ -126,7 +126,7 @@ Widget toolbarSettingsRow(BuildContext context, {required Widget icon, required 
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: cs.onSurface, fontSize: 15, fontWeight: FontWeight.w600)),
-                if (note != null) Text(note, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: cs.onSurfaceVariant, fontSize: 11.5)),
+                if (note != null) Text(note, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: cs.onSurfaceVariant, fontSize: 11.5, height: 1.3)),
               ],
             ),
           ),
@@ -293,7 +293,7 @@ class _ToolbarSettingsState extends State<_ToolbarSettings> {
               icon: toolbarCatalogIcon(id, cs.onSurface),
               label: toolbarCatalogLabel(id, widget.tr),
               // 이 파일에서는 쓰지 않는 아이콘: 자리만 옮겨 두고 이 파일에서는 보이지 않음
-              note: here ? null : (widget.modeReasons[id] != null ? widget.tr('현재 사용하고 있는 모드로 인해 보이지 않아요 (${widget.modeReasons[id]})', 'Not shown in current mode (${widget.modeReasons[id]})', '因当前模式而隐藏（${widget.modeReasons[id]}）', '現在のモードにより表示されません（${widget.modeReasons[id]}）') : widget.tr('이 파일 형식에서는 보이지 않아요', 'Not shown for this file type', '此文件类型中不显示', 'このファイル形式では表示されません')),
+              note: here ? null : (widget.modeReasons[id] != null ? widget.tr('현재 사용하고 있는 모드로 인해 보이지 않아요\n(${widget.modeReasons[id]})', 'Not shown in current mode\n(${widget.modeReasons[id]})', '因当前模式而隐藏\n（${widget.modeReasons[id]}）', '現在のモードにより表示されません\n（${widget.modeReasons[id]}）') : widget.tr('이 파일 형식에서는 보이지 않아요', 'Not shown for this file type', '此文件类型中不显示', 'このファイル形式では表示されません')),
               dim: hidden,
               trailing: _hideButton(hidden: hidden, onTap: () => _toggleHidden(id)),
             ),
@@ -488,6 +488,8 @@ class _ToolbarSettingsState extends State<_ToolbarSettings> {
                   height: (_l.top.length + _l.bar.length) * 56.0 + 3 * 42.0 + 56.0 + (widget.extra != null ? 56.0 : 0.0) + 8.0,
                   child: ReorderableListView(
                     buildDefaultDragHandles: false,
+                    physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
+                    cacheExtent: 420,
                     padding: EdgeInsets.zero,
                     onReorderStart: (_) {
                       ViewerSheetPull.hold(context, true);

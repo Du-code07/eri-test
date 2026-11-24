@@ -581,8 +581,10 @@ function vPinchEnd(e) {
   vSize();
   vinner.style.transform = '';
   const sh = Math.max(1, vTops[p.i + 1] - vTops[p.i] - V_GAP);
-  vhost.scrollTop = vTops[p.i] + p.fy * sh - p.y;
-  vhost.scrollLeft = vLeft() + p.fx * vPageWidth() - p.x;
+  const maxSt = Math.max(0, vhost.scrollHeight - vhost.clientHeight);
+  const maxSl = Math.max(0, vhost.scrollWidth - vhost.clientWidth);
+  vhost.scrollTop = Math.max(0, Math.min(maxSt, vTops[p.i] + p.fy * sh - p.y));
+  vhost.scrollLeft = Math.max(0, Math.min(maxSl, vLeft() + p.fx * vPageWidth() - p.x));
   vUpdate();
   lastPinchEndedAt = Date.now();
   vReportMetrics();
@@ -632,7 +634,7 @@ function vDrawMemo(i) {
         const lx = xs[xs.length - 1] * 1000, ly = ys[ys.length - 1] * H;
         if (Math.hypot(lx - pts[pts.length - 1][0], ly - pts[pts.length - 1][1]) >= 1.5) pts.push([lx, ly]);
       }
-      const endSafe = Math.max(w * 0.6, 12);
+      const endSafe = Math.max(w * 0.95, 18);
       while (pts.length >= 3 && Math.hypot(pts[pts.length - 1][0] - pts[pts.length - 2][0], pts[pts.length - 1][1] - pts[pts.length - 2][1]) < endSafe) {
         const a = pts[pts.length - 3], b = pts[pts.length - 2], c = pts[pts.length - 1];
         if ((b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1]) < 0) pts.pop();
@@ -1081,6 +1083,7 @@ function zoomClear() {
   updateCaretPos();
 }
 function setView(s, tx, ty) {
+  if (typeof resetSlideKbShift === 'function') resetSlideKbShift();
   if (!(s > 1.001)) { if (zoomView) zoomClear(); return true; }
   if (!zoomView) {
     zoomBase = [host.clientWidth, host.clientHeight]; zoomDrawn = 1;
@@ -1892,6 +1895,8 @@ function hitTestClientPoint(clientX, clientY) {
   return { pageIdx: pIdx, sec, para, parentPara, offset, inTable, pathJson: hasPath ? JSON.stringify(hit.cellPath) : null, ctrl, cell: cellVal, cellPara };
 }
 
+let selDownX = 0, selDownY = 0;
+
 function handleEditTouchStart(e) {
   if (!editModeOn || !doc || disposed) return;
   if (e.touches.length !== 1) {
@@ -1900,18 +1905,23 @@ function handleEditTouchStart(e) {
     return;
   }
   const t = e.touches[0];
-  const sx = t.clientX, sy = t.clientY;
+  selDownX = t.clientX;
+  selDownY = t.clientY;
+  if (selDragTimer) { clearTimeout(selDragTimer); selDragTimer = 0; }
   selDragTimer = setTimeout(() => {
     selDragTimer = 0;
-    const h = hitTestClientPoint(sx, sy);
+    const h = hitTestClientPoint(selDownX, selDownY);
     if (!h) return;
     selDragActive = true;
     selAnchorHit = h;
     editCursor = { ...h };
-    editSelection = { cursor: { ...h }, start: h.offset, end: h.offset };
+    const pLen = getParagraphLenAt(h);
+    const s0 = Math.max(0, h.offset > 0 && h.offset >= pLen ? h.offset - 1 : h.offset);
+    const e0 = Math.min(pLen, s0 + 1);
+    editSelection = { cursor: { ...h }, start: s0, end: e0 };
     removeAllCarets();
     renderEditSelection();
-  }, 320);
+  }, 280);
 }
 
 function handleEditTouchMove(e) {
@@ -1923,17 +1933,23 @@ function handleEditTouchMove(e) {
   }
   const t = e.touches[0];
   if (selDragTimer && !selDragActive) {
-    // 길게 누르기 전에 손가락이 움직이면 일반 스크롤로 넘김
-    clearTimeout(selDragTimer);
-    selDragTimer = 0;
+    // 길게 누르는 동안 14px 이내 미세 떨림은 허용하고, 크게 스크롤할 때만 취소
+    if (Math.hypot(t.clientX - selDownX, t.clientY - selDownY) > 14) {
+      clearTimeout(selDragTimer);
+      selDragTimer = 0;
+    }
     return;
   }
   if (!selDragActive || !selAnchorHit) return;
   e.preventDefault();
   const h = hitTestClientPoint(t.clientX, t.clientY);
   if (!h || !sameCursorTarget(selAnchorHit, h)) return;
-  const s = Math.min(selAnchorHit.offset, h.offset);
-  const en = Math.max(selAnchorHit.offset, h.offset);
+  let s = Math.min(selAnchorHit.offset, h.offset);
+  let en = Math.max(selAnchorHit.offset, h.offset);
+  if (s === en) {
+    const pLen = getParagraphLenAt(selAnchorHit);
+    en = Math.min(pLen, s + 1);
+  }
   editSelection = { cursor: { ...selAnchorHit }, start: s, end: en };
   renderEditSelection();
 }
@@ -2182,15 +2198,27 @@ function ensureCaretAboveKeyboard() {
   }
 }
 
+function resetSlideKbShift() {
+  if (host) {
+    host.dataset.kbShift = '0';
+    host.style.marginTop = '';
+  }
+}
+
 function setKeyboardInset(px) {
   editKeyboardInset = Math.max(0, Number(px) || 0);
   if (vinner) {
     vinner.style.paddingBottom = editKeyboardInset > 0 ? `${editKeyboardInset + 96}px` : '';
   }
-  if (editKeyboardInset === 0 && host) {
-    host.dataset.kbShift = '0';
-    host.style.marginTop = '';
-  } else if (editKeyboardInset > 0) {
+  if (editKeyboardInset === 0) {
+    resetSlideKbShift();
+    if (vertical && vhost) {
+      // 자판이 내려가면 추가 여백을 없애고 스크롤 범위를 정상 위치로 자연스럽게 복원
+      const maxTop = Math.max(0, vhost.scrollHeight - vhost.clientHeight);
+      if (vhost.scrollTop > maxTop) vhost.scrollTop = maxTop;
+      vUpdate();
+    }
+  } else {
     requestAnimationFrame(ensureCaretAboveKeyboard);
   }
   return editKeyboardInset;

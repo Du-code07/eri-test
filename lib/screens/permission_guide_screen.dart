@@ -62,13 +62,13 @@ class PermissionGuideScreen extends StatelessWidget {
           children: [
             Expanded(
               child: ListView(
-                padding: const EdgeInsets.fromLTRB(28, 48, 28, 16),
+                padding: const EdgeInsets.fromLTRB(28, 36, 28, 16),
                 children: [
                   // 앱 아이콘 (책 읽는 늑대)
                   Center(
-                    child: Image.asset('assets/splash/app_icon.png', width: 116, height: 116, filterQuality: FilterQuality.medium),
+                    child: Image.asset('assets/splash/app_icon.png', width: 152, height: 152, filterQuality: FilterQuality.medium),
                   ),
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 6),
                   Center(
                     child: Text('이리ERI', style: TextStyle(fontSize: 34, fontWeight: FontWeight.w900, letterSpacing: -0.5, color: cs.onSurface)),
                   ),

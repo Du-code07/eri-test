@@ -2795,9 +2795,16 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
     final int viewItemCount = isSpread ? ((_totalPages + 1) ~/ 2) : _totalPages;
 
     return PopScope(
-      canPop: !_findOpen,
+      canPop: !_findOpen && !_isMemoMode,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
+        if (_isMemoMode) {
+          unawaited(() async {
+            await _cancelMemoSession();
+            if (mounted) Navigator.of(context).pop();
+          }());
+          return;
+        }
         if (!didPop && _findOpen) {
           _closeFind(); // 뒤로 가기: 검색만 닫음
           return;
@@ -2988,7 +2995,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
                               padding: btnPadding,
                               constraints: btnConstraints,
                               icon: const Icon(Icons.arrow_back, color: Colors.white, size: 17),
-                              onPressed: () => Navigator.pop(context),
+                              onPressed: () => Navigator.maybePop(context),
                             ),
                             // 파일 이름은 화면 방향과 상관없이 항상 표시 (남는 공간을 모두 사용)
                             Expanded(

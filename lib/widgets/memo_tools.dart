@@ -553,7 +553,7 @@ void _paintTape(Canvas canvas, List<Offset> pts, Path body, Color color, double 
     clean.add(pts.last);
   }
   // 끝부분 바로 앞 선분이 테이프 반폭(width * 0.55)보다 짧으면 StrokeJoin.round가 끝 톱니를 덮어 뭉개므로 중간 꼭짓점을 정리
-  final double endSafe = math.max(width * 0.6, 8.0);
+  final double endSafe = math.max(width * 0.95, 12.0);
   while (clean.length >= 3 && (clean.last - clean[clean.length - 2]).distance < endSafe) {
     final Offset a = clean[clean.length - 3];
     final Offset b = clean[clean.length - 2];

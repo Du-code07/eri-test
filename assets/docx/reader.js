@@ -871,7 +871,7 @@ function vDrawMemo(i) {
         const lx = xs[xs.length - 1] * 1000, ly = ys[ys.length - 1] * H;
         if (Math.hypot(lx - pts[pts.length - 1][0], ly - pts[pts.length - 1][1]) >= 1.5) pts.push([lx, ly]);
       }
-      const endSafe = Math.max(w * 0.6, 12);
+      const endSafe = Math.max(w * 0.95, 18);
       while (pts.length >= 3 && Math.hypot(pts[pts.length - 1][0] - pts[pts.length - 2][0], pts[pts.length - 1][1] - pts[pts.length - 2][1]) < endSafe) {
         const a = pts[pts.length - 3], b = pts[pts.length - 2], c = pts[pts.length - 1];
         if ((b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1]) < 0) pts.pop();
