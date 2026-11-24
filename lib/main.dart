@@ -1314,9 +1314,8 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
       if (path == null || !mounted) return;
       if (path.isEmpty) {
         // 보낸 앱이 읽기 허락 없이 파일 경로만 넘긴 경우 (옛날 파일 관리자 등)
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(_tr('보낸 앱에서 파일을 읽을 수 없어요\n파일 추가로 열어 주세요', 'Could not read the file from the sending app\nPlease open it with Add Files',
-                '无法读取发送应用中的文件\n请通过添加文件打开', '送信元のアプリからファイルを読み込めません\nファイル追加で開いてください'))));
+        _showNotice(_tr('보낸 앱에서 파일을 읽을 수 없어요\n파일 추가로 열어 주세요', 'Could not read the file from the sending app\nPlease open it with Add Files',
+            '无法读取发送应用中的文件\n请通过添加文件打开', '送信元のアプリからファイルを読み込めません\nファイル追加で開いてください'));
         return;
       }
       File src = File(path);
@@ -1335,8 +1334,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
         }
       }
       if (!_supportedExts.contains(ext)) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(_tr('열 수 없는 파일 형식이에요', 'This file type is not supported', '不支持此文件格式', 'このファイル形式は開けません'))));
+        _showNotice(_tr('열 수 없는 파일 형식이에요', 'This file type is not supported', '不支持此文件格式', 'このファイル形式は開けません'));
         return;
       }
       final appDir = await getApplicationDocumentsDirectory();
@@ -1789,18 +1787,12 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
 
     if (validPicked.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              _tr(
-                '지원되는 파일 형식(PDF, EPUB, TXT, CBZ, 워드, 한글, PPT, 엑셀)을 선택해 주세요',
-                'Please select supported files (PDF, EPUB, TXT, CBZ, Word, HWP, PPT, Excel)',
-                '请选择受支持的文件格式 (PDF, EPUB, TXT, CBZ, Word, HWP, PPT, Excel)',
-                '対応ファイル形式(PDF, EPUB, TXT, CBZ, Word, HWP, PPT, Excel)を選択してください',
-              ),
-            ),
-          ),
-        );
+        _showNotice(_tr(
+          '지원되는 파일 형식(PDF, EPUB, TXT, CBZ, 워드, 한글, PPT, 엑셀)을 선택해 주세요',
+          'Please select supported files (PDF, EPUB, TXT, CBZ, Word, HWP, PPT, Excel)',
+          '请选择受支持的文件格式 (PDF, EPUB, TXT, CBZ, Word, HWP, PPT, Excel)',
+          '対応ファイル形式(PDF, EPUB, TXT, CBZ, Word, HWP, PPT, Excel)を選択してください',
+        ));
       }
       return;
     }
@@ -1865,11 +1857,9 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
 
     await _loadLibrary();
     if (mounted && importedFiles.isEmpty && alreadyIn > 0) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(alreadyIn == 1
-            ? _tr('해당 파일은 이미 서재에 있어요', 'This file is already in your library', '该文件已在书架中', 'このファイルはすでにライブラリにあります')
-            : _tr('고른 파일 $alreadyIn개는 이미 서재에 있어요', 'The $alreadyIn selected files are already in your library', '所选的 $alreadyIn 个文件已在书架中', '選んだ$alreadyIn個のファイルはすでにライブラリにあります')),
-      ));
+      _showNotice(alreadyIn == 1
+          ? _tr('해당 파일은 이미 서재에 있어요', 'This file is already in your library', '该文件已在书架中', 'このファイルはすでにライブラリにあります')
+          : _tr('고른 파일 $alreadyIn개는 이미 서재에 있어요', 'The $alreadyIn selected files are already in your library', '所选的 $alreadyIn 个文件已在书架中', '選んだ$alreadyIn個のファイルはすでにライブラリにあります'));
       return;
     }
     if (mounted) {
@@ -1921,7 +1911,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
       } catch (e) {
         if (e is! TimeoutException) rethrow;
         if (mounted) {
-          messenger.showSnackBar(SnackBar(content: Text(_tr('찾는 데 너무 오래 걸려 멈췄어요', 'Search took too long and was stopped', '查找时间过长，已停止', '時間がかかりすぎたため中止しました'))));
+          _showNotice(_tr('찾는 데 너무 오래 걸려 멈췄어요', 'Search took too long and was stopped', '查找时间过长，已停止', '時間がかかりすぎたため中止しました'));
         }
         return;
       }
@@ -1948,7 +1938,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
       }
       if (!mounted) return;
       if (newFiles.isEmpty && inLibrary.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_tr('새로 넣을 파일을 찾지 못했어요', 'No new files found', '没有找到新的文件', '新しいファイルは見つかりませんでした'))));
+        _showNotice(_tr('새로 넣을 파일을 찾지 못했어요', 'No new files found', '没有找到新的文件', '新しいファイルは見つかりませんでした'));
         return;
       }
       final n = newFiles.length + inLibrary.length;
@@ -1982,11 +1972,10 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
       }
       await _loadLibrary();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_tr("'$groupLabel' 그룹에 파일 $added개를 넣었어요", "Put $added file(s) in '$groupLabel'", "已将 $added 个文件放入“$groupLabel”", "「$groupLabel」に$added個のファイルを入れました"))));
+      _showNotice(_tr("'$groupLabel' 그룹에 파일 $added개를 넣었어요", "Put $added file(s) in '$groupLabel'", "已将 $added 个文件放入“$groupLabel”", "「$groupLabel」に$added個のファイルを入れました"));
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).clearSnackBars();
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_tr('파일을 찾지 못했어요 ($e)', 'Could not search files ($e)', '无法查找文件 ($e)', 'ファイルを探せませんでした ($e)'))));
+        _showNotice(_tr('파일을 찾지 못했어요 ($e)', 'Could not search files ($e)', '无法查找文件 ($e)', 'ファイルを探せませんでした ($e)'));
       }
     } finally {
       if (mounted) setState(() => _groupScanBusy = false);
@@ -2161,9 +2150,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
     if (files.length >= 2) {
       await _createMangaBookFromImages(files);
     } else if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_tr('이미지를 2개 이상 선택해 주세요', 'Please select at least 2 images', '请选择至少 2 张图片', '画像を2つ以上選択してください'))),
-      );
+      _showNotice(_tr('이미지를 2개 이상 선택해 주세요', 'Please select at least 2 images', '请选择至少 2 张图片', '画像を2つ以上選択してください'));
     }
   }
 
@@ -2373,9 +2360,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
         final files = result.files.where((f) => f.path != null).map((f) => File(f.path!)).toList();
         await _createMergedPdfFromFiles(files, deleteSourceAfter: false);
       } else if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_tr('PDF 파일을 2개 이상 선택해 주세요', 'Please select at least 2 PDF files', '请选择至少 2 个 PDF 文件', 'PDFファイルを2つ以上選択してください'))),
-        );
+        _showNotice(_tr('PDF 파일을 2개 이상 선택해 주세요', 'Please select at least 2 PDF files', '请选择至少 2 个 PDF 文件', 'PDFファイルを2つ以上選択してください'));
       }
       return;
     }
@@ -2401,9 +2386,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
         final files = picked.files.where((f) => f.path != null).map((f) => File(f.path!)).toList();
         await _createMergedPdfFromFiles(files, deleteSourceAfter: false);
       } else if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_tr('PDF 파일을 2개 이상 선택해 주세요', 'Please select at least 2 PDF files', '请选择至少 2 个 PDF 文件', 'PDFファイルを2つ以上選択してください'))),
-        );
+        _showNotice(_tr('PDF 파일을 2개 이상 선택해 주세요', 'Please select at least 2 PDF files', '请选择至少 2 个 PDF 文件', 'PDFファイルを2つ以上選択してください'));
       }
       return;
     }
@@ -2478,9 +2461,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
     final newPath = '${file.parent.path}/$newFileName';
     if (await File(newPath).exists()) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_tr('같은 이름의 파일이 이미 있어요', 'A file with that name already exists', '同名文件已存在', '同じ名前のファイルが既に存在します'))),
-        );
+        _showNotice(_tr('같은 이름의 파일이 이미 있어요', 'A file with that name already exists', '同名文件已存在', '同じ名前のファイルが既に存在します'));
       }
       return;
     }
@@ -2496,25 +2477,33 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
   /// 지금 화면에 보이는 파일 목록 (파일 화면의 이전·다음 파일 순서로 씀)
   List<File> _visibleBooksNow = const [];
 
+  /// 메인 화면 하단 안내 막대 (하단 내비게이션 막대 뒤에서 위로 올라왔다가 아래로 사라짐)
+  void _showNotice(
+    String message, {
+    Duration duration = const Duration(milliseconds: 2200),
+    String? actionLabel,
+    VoidCallback? onAction,
+  }) {
+    if (!mounted) return;
+    showAppToast(
+      context,
+      message,
+      aboveBottomBar: !_isSelectionMode && !StorageService.simpleStyle,
+      duration: duration,
+      actionLabel: actionLabel,
+      onAction: onAction,
+    );
+  }
+
   /// 파일을 만들었다·넣었다는 아래 알림 + 오른쪽 끝 [열기]
   void _showCreatedSnack(String message, File file) {
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.hideCurrentSnackBar();
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(message),
-        // [열기]가 있어도 5초 뒤에 사라짐 (단추가 있으면 기본으로는 계속 떠 있음)
-        duration: const Duration(seconds: 5),
-        persist: false,
-        action: SnackBarAction(
-          label: _tr('열기', 'Open', '打开', '開く'),
-          // 단추 바탕 없이 글자만: 알림창 바탕과 대비되는 글자색 (모든 테마)
-          textColor: Theme.of(context).colorScheme.onInverseSurface,
-          onPressed: () {
-            if (mounted && file.existsSync()) _openFile(file);
-          },
-        ),
-      ),
+    _showNotice(
+      message,
+      duration: const Duration(seconds: 5),
+      actionLabel: _tr('열기', 'Open', '打开', '開く'),
+      onAction: () {
+        if (mounted && file.existsSync()) _openFile(file);
+      },
     );
   }
 
@@ -3614,9 +3603,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
       if (mounted) setState(() {});
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_tr('표지를 바꾸지 못했어요', 'Could not change the cover', '无法更换封面', '表紙を変更できませんでした'))),
-      );
+      _showNotice(_tr('표지를 바꾸지 못했어요', 'Could not change the cover', '无法更换封面', '表紙を変更できませんでした'));
     }
   }
 
@@ -3715,9 +3702,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
     );
     if (name == null || name.isEmpty || name == group || !mounted) return null;
     if (name == '전체' || name == '미분류' || name == _localizeGroupName('전체') || name == _localizeGroupName('미분류') || _groups.contains(name)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_tr('같은 이름의 그룹이 있어요', 'A group with that name already exists', '已有同名分组', '同じ名前のグループがあります'))),
-      );
+      _showNotice(_tr('같은 이름의 그룹이 있어요', 'A group with that name already exists', '已有同名分组', '同じ名前のグループがあります'));
       return null;
     }
     final ok = await StorageService.renameGroup(group, name);

@@ -341,6 +341,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   bool _hwpCanUndo = false;
   bool _hwpCanRedo = false;
   String? _hwpSubPanel; // 'size' | 'color' | null
+  double _lastSlideEditKb = 0.0;
   double _lastHwpKbInset = 0;
   bool get _canHwpEdit => _isHwpFile;
   bool _isEraserMode = false;
@@ -1207,7 +1208,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
             // 문서 단위로 바꿔(× _uiScale) 되돌려야 함 — 그대로 뒤집으면 문서 화면 자체가 비껴 놓여 오른쪽·아래가 잘려 보였음
             final Matrix4 m = _epubZoomController.value;
             Matrix4 inv = Matrix4.identity();
-            if (_docLiveZoom && !_sameMatrix(m, Matrix4.identity())) {
+            if (_docLiveZoom && (m.getMaxScaleOnAxis() - 1.0).abs() > 0.005) {
               final double s = m.getMaxScaleOnAxis();
               final t = m.getTranslation();
               inv = Matrix4.identity()
@@ -1243,6 +1244,9 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
               final fs = st['fontSizePt'];
               if (fs is num && fs > 0) _hwpFontSizePt = fs.round();
               _hwpTextColor = parsed;
+              if (st['typed'] == true && _hwpSubPanel != null) {
+                _hwpSubPanel = null;
+              }
             });
           },
           initialPosition: _currentCfi ?? _initialCfi,
@@ -4804,6 +4808,18 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   Widget build(BuildContext context) {
     _uiScale = UiScale.of(context);
     _resetZoomOnRotate(context);
+    final double _slideKbNow = _isHwpEditMode && !_pageModeScroll ? MediaQuery.viewInsetsOf(context).bottom : 0.0;
+    if (_lastSlideEditKb > 0 && _slideKbNow <= 0) {
+      final double s = _epubZoomController.value.getMaxScaleOnAxis();
+      if ((s - 1.0).abs() <= 0.03 && !_sameMatrix(_epubZoomController.value, Matrix4.identity())) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && (_epubZoomController.value.getMaxScaleOnAxis() - 1.0).abs() <= 0.03) {
+            _epubZoomController.value = Matrix4.identity();
+          }
+        });
+      }
+    }
+    _lastSlideEditKb = _slideKbNow;
     // 메뉴를 띄운 동안에는 상태표시줄도 함께 보임
     SystemBars.viewerStatus(_showControls);
     if (_isLoading) {
@@ -4986,7 +5002,9 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                       // 문서 스크롤 보기는 목록이 직접 확대·이동을 맡음 (겹치면 확대가 잘 안 됨)
                       // 메모 중에도 (손으로 그리기가 아니면) 손가락으로 확대한 쪽을 옮김 (삼성 노트처럼: 펜은 쓰고 손가락은 움직임)
                       boundaryMargin: _isHwpEditMode
-                          ? EdgeInsets.fromLTRB(260, 260, 260, math.max(260.0, MediaQuery.viewInsetsOf(context).bottom + 96.0))
+                          ? ((_epubZoomScale - 1.0).abs() <= 0.03 && MediaQuery.viewInsetsOf(context).bottom > 0
+                              ? EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom + 96.0)
+                              : EdgeInsets.fromLTRB(260, 260, 260, math.max(260.0, MediaQuery.viewInsetsOf(context).bottom + 96.0)))
                           : (_epubZoomScale < 0.98 ? const EdgeInsets.all(220) : EdgeInsets.zero),
                       panEnabled: !_isSpreadsheet && !_docScrollActive && (!_isMemoMode || !_allowFingerDrawing) && (_epubZoomScale > 1.03 || _epubZoomScale < 0.98 || (_isHwpEditMode && MediaQuery.viewInsetsOf(context).bottom > 0)),
                       scaleEnabled: !_isSpreadsheet && !(_pageModeScroll && _isOfflineDocument) && (!_isMemoMode || !_allowFingerDrawing),
@@ -5004,8 +5022,15 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                       },
                       onInteractionEnd: (_) {
                         final s = _epubZoomController.value.getMaxScaleOnAxis();
+                        final double kb = MediaQuery.viewInsetsOf(context).bottom;
                         if (s > 0.97 && s < 1.03) {
-                          _epubZoomController.value = Matrix4.identity();
+                          if (_isHwpEditMode && kb > 0) {
+                            final t = _epubZoomController.value.getTranslation();
+                            final double clampedY = t.y.clamp(-(kb + 96.0), 0.0).toDouble();
+                            _epubZoomController.value = Matrix4.translationValues(0.0, clampedY, 0.0);
+                          } else {
+                            _epubZoomController.value = Matrix4.identity();
+                          }
                           if (_epubZoomScale != 1.0) {
                             setState(() => _epubZoomScale = 1.0);
                           }

@@ -1131,9 +1131,9 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
         final img = Image.file(
           _imagePages[i],
           fit: BoxFit.fill,
-          cacheWidth: math.min(4096, (w * dpr).round()),
+          cacheWidth: math.min(4096, (w * dpr * 1.5).round()),
           gaplessPlayback: true,
-          filterQuality: FilterQuality.medium,
+          filterQuality: FilterQuality.high,
         );
         // 라이트·편안한 모드: 한글·워드처럼 쪽마다 옅은 회색 테두리
         final Widget page = Theme.of(ctx).brightness == Brightness.light
@@ -1575,12 +1575,12 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
   void _onZoomMoved() {
     _sharpTimer?.cancel();
     if (!_isPdfFile || _pageModeScroll) return;
-    if (_zoomController.value.getMaxScaleOnAxis() < 1.15) {
+    if (_zoomController.value.getMaxScaleOnAxis() < 1.08) {
       _sharpSeq++;
       if (_sharpTiles.isNotEmpty) _clearSharp();
       return;
     }
-    _sharpTimer = Timer(const Duration(milliseconds: 250), _renderSharp);
+    _sharpTimer = Timer(const Duration(milliseconds: 140), _renderSharp);
   }
 
   void _clearSharp({bool rebuild = true}) {
@@ -1606,7 +1606,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
     if (!mounted || !_isPdfFile || _pageModeScroll || _stageSize.isEmpty) return;
     final Matrix4 m = _zoomController.value;
     final double scale = m.getMaxScaleOnAxis();
-    if (scale < 1.15) return;
+    if (scale < 1.08) return;
     // 지금 화면에 보이는 곳 (확대 전 좌표)
     final Matrix4 inv = Matrix4.inverted(m);
     final Rect visible = Rect.fromPoints(
@@ -1631,10 +1631,10 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
         (region.right - pr.left) / pr.width,
         (region.bottom - pr.top) / pr.height,
       );
-      // 보이는 크기 그대로의 화소 수 (너무 크면 메모리를 위해 줄임: 긴 변 4096, 1200만 화소까지)
-      double w = region.width * scale * dpr;
-      double h = region.height * scale * dpr;
-      final double k = math.min(1.0, math.min(4096 / math.max(w, h), math.sqrt(12e6 / (w * h))));
+      // 확대 시 글자·선 선명도를 높이기 위해 1.35배 초과 샘플링 (긴 변 4096, 1600만 화소 상한)
+      double w = region.width * scale * dpr * 1.35;
+      double h = region.height * scale * dpr * 1.35;
+      final double k = math.min(1.0, math.min(4096 / math.max(w, h), math.sqrt(16e6 / (w * h))));
       w *= k;
       h *= k;
       try {
@@ -2037,7 +2037,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
                   fit: BoxFit.contain,
                   alignment: pageAlign,
                   gaplessPlayback: true,
-                  filterQuality: FilterQuality.medium,
+                  filterQuality: FilterQuality.high,
                   width: constraints.maxWidth,
                   height: constraints.maxHeight,
                 ),
@@ -2051,7 +2051,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
                 width: sharp.$1.width * drawWidth,
                 height: sharp.$1.height * drawHeight,
                 child: IgnorePointer(
-                  child: Image.file(File(sharp.$2), fit: BoxFit.fill, gaplessPlayback: true, filterQuality: FilterQuality.medium),
+                  child: Image.file(File(sharp.$2), fit: BoxFit.fill, gaplessPlayback: true, filterQuality: FilterQuality.high),
                 ),
               ),
             // 라이트·편안한 모드: 흰 쪽이 흰 바탕에 묻히지 않게 쪽마다 옅은 회색 테두리

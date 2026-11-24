@@ -1125,6 +1125,7 @@ let editCursor = null; // { pageIdx, sec, para, parentPara, offset, inTable, pat
 let editImeEl = null;
 let editStyleInjected = false;
 let imeComposing = false;
+let suppressingImeReset = false;
 let imeCompBase = 0;
 let imeCompLen = 0;
 let lastPinchEndedAt = 0;
@@ -1204,7 +1205,7 @@ function readCurrentCharProps() {
   }
 }
 
-function emitEditState() {
+function emitEditState(typed = false) {
   const props = readCurrentCharProps();
   const bold = pendingFormat.bold !== undefined ? Boolean(pendingFormat.bold) : Boolean(props && props.bold);
   let fontSizePt = pendingFormat.fontSizePt;
@@ -1221,6 +1222,7 @@ function emitEditState() {
     fontSizePt,
     textColor,
     hasCursor: Boolean(editCursor),
+    typed: Boolean(typed),
   });
 }
 
@@ -1488,13 +1490,13 @@ function ensureEditDom() {
     document.body.appendChild(editImeEl);
 
     editImeEl.addEventListener('compositionstart', () => {
-      if (!editModeOn || !editCursor) return;
+      if (suppressingImeReset || !editModeOn || !editCursor) return;
       imeComposing = true;
       imeCompBase = editCursor.offset;
       imeCompLen = 0;
     });
     editImeEl.addEventListener('compositionupdate', (e) => {
-      if (!editModeOn || !editCursor) return;
+      if (suppressingImeReset || !editModeOn || !editCursor) return;
       const str = String(e.data ?? '').replace(/\u200B/g, '');
       if (editSpanStart === null) editSpanStart = imeCompBase;
       applyDeltaFast(imeCompBase, imeCompLen, str, false);
@@ -1502,8 +1504,10 @@ function ensureEditDom() {
       imeCompLen = str.length;
       editCursor.offset = imeCompBase + imeCompLen;
       scheduleFastRedraw(editCursor.pageIdx);
+      emitEditState(true);
     });
     editImeEl.addEventListener('compositionend', (e) => {
+      if (suppressingImeReset) { imeComposing = false; imeCompLen = 0; return; }
       if (!editModeOn || !editCursor) { imeComposing = false; resetImeBuffer(); return; }
       const str = String(e.data ?? '').replace(/\u200B/g, '');
       applyDeltaFast(imeCompBase, imeCompLen, str, false);
@@ -1516,19 +1520,22 @@ function ensureEditDom() {
       imeCompLen = 0;
       resetImeBuffer();
       scheduleFastRedraw(editCursor.pageIdx);
+      emitEditState(true);
     });
     editImeEl.addEventListener('input', (e) => {
-      if (!editModeOn || !editCursor || imeComposing) return;
+      if (suppressingImeReset || !editModeOn || !editCursor || imeComposing) return;
       const it = e.inputType || '';
       const rawVal = editImeEl.value || '';
       if (it === 'deleteContentBackward' || rawVal.length === 0) {
         handleBackspace();
         resetImeBuffer();
+        emitEditState(true);
         return;
       }
       if (it === 'insertLineBreak' || it === 'insertParagraph') {
         handleEnter();
         resetImeBuffer();
+        emitEditState(true);
         return;
       }
       const clean = rawVal.replace(/\u200B/g, '');
@@ -1544,6 +1551,7 @@ function ensureEditDom() {
           if (i < parts.length - 1) handleEnter();
         }
         resetImeBuffer();
+        emitEditState(true);
         return;
       }
       if (clean.length > 0) {
@@ -1554,6 +1562,7 @@ function ensureEditDom() {
         editCursor.offset = nextOff !== null ? nextOff : (startOff + clean.length);
         scheduleFastRedraw(editCursor.pageIdx);
         resetImeBuffer();
+        emitEditState(true);
       }
     });
     editImeEl.addEventListener('keydown', (e) => {
@@ -1905,13 +1914,16 @@ function collectSelRects(st, en) {
   } else if (st.inTable && st.cell !== undefined && st.cell !== null && typeof doc.getSelectionRectsInCell === 'function') {
     pushFromRaw(doc.getSelectionRectsInCell(st.sec, st.parentPara, st.ctrl, st.cell, st.cellPara, st.offset, en.cellPara, en.offset));
   } else if (typeof doc.getSelectionRects === 'function') {
-    for (let p = st.para; p <= en.para; p++) {
-      const target = { ...st, para: p };
-      const pLen = getParagraphLenAt(target);
-      const sOff = p === st.para ? st.offset : 0;
-      const eOff = p === en.para ? en.offset : pLen;
-      if (eOff > sOff) {
-        pushFromRaw(doc.getSelectionRects(st.sec, p, sOff, p, eOff));
+    pushFromRaw(doc.getSelectionRects(st.sec, st.para, st.offset, en.para, en.offset));
+    if (out.length === 0) {
+      for (let p = st.para; p <= en.para; p++) {
+        const target = { ...st, para: p };
+        const pLen = getParagraphLenAt(target);
+        const sOff = p === st.para ? st.offset : 0;
+        const eOff = p === en.para ? en.offset : pLen;
+        if (eOff > sOff) {
+          pushFromRaw(doc.getSelectionRects(st.sec, p, sOff, p, eOff));
+        }
       }
     }
   }
@@ -1936,8 +1948,10 @@ function renderEditSelection() {
         : { x: 0, y: 0, width: parseFloat(frame.dataset.width) || 595, height: parseFloat(frame.dataset.height) || 842 };
       const { w: engW, h: engH } = getPageEngineSize(pIdx, svg);
       const sx = vb.width / engW, sy = vb.height / engH;
-      const w = Number(r.width ?? r.w ?? 0), h = Number(r.height ?? r.h ?? 0);
-      if (!(w > 0 && h > 0)) continue;
+      const w = Number(r.width ?? r.w ?? 0);
+      let h = Number(r.height ?? r.h ?? 0);
+      if (!(w > 0)) continue;
+      if (!(h > 0)) h = 12;
       const el = document.createElementNS(SVG_NS, 'rect');
       el.setAttribute('class', 'eri-sel-rect');
       el.setAttribute('x', String(vb.x + Number(r.x || 0) * sx));
@@ -1965,6 +1979,31 @@ function renderEditSelection() {
   } catch (_) {}
 }
 
+function hitTestWithEdgeFallback(pIdx, rawX, rawY, engW, engH) {
+  if (rawX < -36 || rawY < -36 || rawX > engW + 36 || rawY > engH + 36) return null;
+  const cx = Math.max(0.5, Math.min(engW - 0.5, rawX));
+  const cy = Math.max(0.5, Math.min(engH - 0.5, rawY));
+  let hit = parseJsonSafe(doc.hitTest(pIdx, cx, cy));
+  if (hit && hit.hit !== false) return hit;
+  const dirX = cx < engW * 0.5 ? 1 : -1;
+  const dirY = cy < engH * 0.5 ? 1 : -1;
+  const dxList = [10, 22, 36];
+  for (const dx of dxList) {
+    const nx = Math.max(0.5, Math.min(engW - 0.5, cx + dirX * dx));
+    hit = parseJsonSafe(doc.hitTest(pIdx, nx, cy));
+    if (hit && hit.hit !== false) return hit;
+  }
+  for (const dy of [8, 18]) {
+    const ny = Math.max(0.5, Math.min(engH - 0.5, cy + dirY * dy));
+    hit = parseJsonSafe(doc.hitTest(pIdx, cx, ny));
+    if (hit && hit.hit !== false) return hit;
+    const nx = Math.max(0.5, Math.min(engW - 0.5, cx + dirX * 18));
+    hit = parseJsonSafe(doc.hitTest(pIdx, nx, ny));
+    if (hit && hit.hit !== false) return hit;
+  }
+  return null;
+}
+
 function hitTestClientPoint(clientX, clientY) {
   const el = document.elementFromPoint(clientX, clientY);
   const targetPageEl = el && el.closest ? el.closest('.page, .vslot') : null;
@@ -1984,8 +2023,7 @@ function hitTestClientPoint(clientX, clientY) {
   const { w: engW, h: engH } = getPageEngineSize(pIdx, svg);
   const xEng = ((clientX - rect.left) / rect.width) * engW;
   const yEng = ((clientY - rect.top) / rect.height) * engH;
-  if (xEng < 0 || yEng < 0 || xEng > engW || yEng > engH) return null;
-  const hit = parseJsonSafe(doc.hitTest(pIdx, xEng, yEng));
+  const hit = hitTestWithEdgeFallback(pIdx, xEng, yEng, engW, engH);
   if (!hit || hit.hit === false) return null;
   const sec = Number(hit.sectionIndex ?? hit.sectionIdx ?? 0);
   const hasPath = Array.isArray(hit.cellPath) && hit.cellPath.length > 0;
@@ -2111,6 +2149,8 @@ function editApplyFormat(opts) {
     }
   }
   // 2) 커서만 둔 상태면 진행 중이던 한글 조합을 현재 커서에서 끊어, 이전 문구 색은 그대로 두고 이후 치는 글자만 새 서식 적용
+  // blur() 때 Android WebView가 이전 조합 글자를 compositionend/input으로 다시 흘려 복사되는 현상을 막음
+  suppressingImeReset = true;
   if (imeComposing) {
     imeComposing = false;
     imeCompLen = 0;
@@ -2121,6 +2161,7 @@ function editApplyFormat(opts) {
     resetImeBuffer();
     editImeEl.focus({ preventScroll: true });
   }
+  setTimeout(() => { suppressingImeReset = false; }, 80);
   emitEditState();
   return true;
 }
@@ -2259,9 +2300,8 @@ function handleDirectEditClick(e) {
   const { w: engW, h: engH } = getPageEngineSize(pIdx, svg);
   const xEng = ((e.clientX - rect.left) / rect.width) * engW;
   const yEng = ((e.clientY - rect.top) / rect.height) * engH;
-  if (xEng < 0 || yEng < 0 || xEng > engW || yEng > engH) return;
   try {
-    const hit = parseJsonSafe(doc.hitTest(pIdx, xEng, yEng));
+    const hit = hitTestWithEdgeFallback(pIdx, xEng, yEng, engW, engH);
     if (!hit || hit.hit === false) return;
     const sec = Number(hit.sectionIndex ?? hit.sectionIdx ?? 0);
     const hasPath = Array.isArray(hit.cellPath) && hit.cellPath.length > 0;
