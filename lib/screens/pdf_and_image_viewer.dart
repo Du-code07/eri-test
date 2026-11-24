@@ -1338,7 +1338,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
     for (final p in pages) {
       await StorageService.savePageMemoStrokes(_bookKey, p, _memoStrokesByPage[p] ?? const <MemoStroke>[]);
     }
-    if (mounted) showAppToast(context, _tr('저장했어요', 'Saved', '已保存', '保存しました'), fromTop: true);
+    if (mounted) showAppToast(context, _tr('저장', 'Saved', '已保存', '保存'), fromTop: true);
   }
 
   List<Widget> _memoPinnedItems() => [

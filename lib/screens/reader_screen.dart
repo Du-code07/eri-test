@@ -1707,7 +1707,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     } else {
       await _saveMemo(_currentPageLocationKey, _memoStrokes);
     }
-    if (mounted) showAppToast(context, _tr('저장했어요', 'Saved', '已保存', '保存しました'), fromTop: true);
+    if (mounted) showAppToast(context, _tr('저장', 'Saved', '已保存', '保存'), fromTop: true);
   }
 
   List<Widget> _memoPinnedItems() => [
@@ -3441,6 +3441,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   }
 
   void _handlePointerDown(PointerDownEvent event) {
+    if (_hwpSubPanel != null) setState(() => _hwpSubPanel = null);
     if (_isMemoMode &&
         (event.kind == PointerDeviceKind.stylus ||
             event.kind == PointerDeviceKind.invertedStylus)) {
@@ -4409,7 +4410,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
         _hwpSubPanel = null;
         _lastHwpKbInset = 0;
       });
-      showAppToast(context, _tr('저장했어요', 'Saved', '已保存', '保存しました'), fromTop: true);
+      showAppToast(context, _tr('저장', 'Saved', '已保存', '保存'), fromTop: true);
     } finally {
       if (mounted) setState(() => _hwpSaving = false);
     }
@@ -4984,7 +4985,10 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                       transformationController: _epubZoomController,
                       // 문서 스크롤 보기는 목록이 직접 확대·이동을 맡음 (겹치면 확대가 잘 안 됨)
                       // 메모 중에도 (손으로 그리기가 아니면) 손가락으로 확대한 쪽을 옮김 (삼성 노트처럼: 펜은 쓰고 손가락은 움직임)
-                      panEnabled: !_isSpreadsheet && !_docScrollActive && (!_isMemoMode || !_allowFingerDrawing) && (_epubZoomScale > 1.03 || _epubZoomScale < 0.98),
+                      boundaryMargin: _isHwpEditMode
+                          ? EdgeInsets.fromLTRB(260, 260, 260, math.max(260.0, MediaQuery.viewInsetsOf(context).bottom + 96.0))
+                          : (_epubZoomScale < 0.98 ? const EdgeInsets.all(220) : EdgeInsets.zero),
+                      panEnabled: !_isSpreadsheet && !_docScrollActive && (!_isMemoMode || !_allowFingerDrawing) && (_epubZoomScale > 1.03 || _epubZoomScale < 0.98 || (_isHwpEditMode && MediaQuery.viewInsetsOf(context).bottom > 0)),
                       scaleEnabled: !_isSpreadsheet && !(_pageModeScroll && _isOfflineDocument) && (!_isMemoMode || !_allowFingerDrawing),
                       minScale: 0.6,
                       maxScale: 4.5,

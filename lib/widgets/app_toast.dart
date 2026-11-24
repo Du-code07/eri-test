@@ -8,7 +8,7 @@ OverlayEntry? _activeAppToast;
 Timer? _activeAppToastTimer;
 
 /// 메인 화면에서는 하단에서 막대 전체가 위로 올라왔다가 아래로 스르륵 사라지고,
-/// 파일 열람 중([fromTop]: true)에는 상단바 아래에 나타났다가 위로 스르륵 사라지는 알림 막대.
+/// 파일 열람 중([fromTop]: true)에는 상단바 아래 가운데에 글자 크기에 맞게 나타났다가 위로 스르륵 사라지는 알림.
 void showAppToast(
   BuildContext context,
   String message, {
@@ -83,7 +83,7 @@ class _AppToastOverlayState extends State<_AppToastOverlay> with SingleTickerPro
     reverseDuration: const Duration(milliseconds: 260),
   );
   late final Animation<Offset> _slide = Tween<Offset>(
-    begin: widget.fromTop ? const Offset(0, -1.6) : const Offset(0, 1.6),
+    begin: widget.fromTop ? const Offset(0, -1.8) : const Offset(0, 1.8),
     end: Offset.zero,
   ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic));
 
@@ -113,6 +113,24 @@ class _AppToastOverlayState extends State<_AppToastOverlay> with SingleTickerPro
   @override
   Widget build(BuildContext context) {
     final bool dark = Theme.of(context).brightness == Brightness.dark;
+    final Widget pill = Material(
+      color: dark ? const Color(0xF02B2F2D) : const Color(0xF0242725),
+      elevation: 8,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(widget.fromTop ? 20 : 18),
+        side: BorderSide(color: dark ? Colors.white.withValues(alpha: 0.14) : Colors.transparent),
+      ),
+      child: Padding(
+        padding: widget.fromTop
+            ? const EdgeInsets.symmetric(horizontal: 20, vertical: 10)
+            : const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
+        child: DefaultTextStyle(
+          style: const TextStyle(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.w600, height: 1.3),
+          child: widget.content ?? Text(widget.message, textAlign: widget.fromTop ? TextAlign.center : TextAlign.start),
+        ),
+      ),
+    );
+
     return Positioned(
       left: 16,
       right: 16,
@@ -122,21 +140,7 @@ class _AppToastOverlayState extends State<_AppToastOverlay> with SingleTickerPro
         ignoring: true,
         child: SlideTransition(
           position: _slide,
-          child: Material(
-            color: dark ? const Color(0xF02B2F2D) : const Color(0xF0242725),
-            elevation: 8,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(18),
-              side: BorderSide(color: dark ? Colors.white.withValues(alpha: 0.14) : Colors.transparent),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
-              child: DefaultTextStyle(
-                style: const TextStyle(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.w500, height: 1.35),
-                child: widget.content ?? Text(widget.message),
-              ),
-            ),
-          ),
+          child: widget.fromTop ? Center(child: pill) : pill,
         ),
       ),
     );

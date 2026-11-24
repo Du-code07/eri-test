@@ -31,6 +31,7 @@ import 'widgets/toolbar_settings.dart';
 import 'widgets/memo_tools.dart' show MemoTools;
 import 'widgets/ui_scale.dart';
 import 'widgets/app_colors.dart';
+import 'widgets/app_toast.dart';
 import 'services/library_nav.dart';
 import 'services/storage_service.dart';
 import 'services/system_bars.dart';
@@ -1885,7 +1886,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
         // 파일 하나만 넣었으면 바로 열 수 있게
         _showCreatedSnack(msg, importedFiles.first);
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+        showAppToast(context, msg);
       }
     }
   }
@@ -2347,9 +2348,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
     } catch (e) {
       if (mounted) {
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('PDF Merge Error: $e')),
-        );
+        showAppToast(context, 'PDF Merge Error: $e');
       }
     } finally {
       _pdfChannel.setMethodCallHandler(null);

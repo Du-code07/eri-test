@@ -1470,7 +1470,7 @@ function ensureEditDom() {
       '@keyframes eriBlink{0%,49%{opacity:1}50%,100%{opacity:0}}',
       '.eri-caret-rect{fill:#2F7D32;pointer-events:none;animation:eriBlink 1s step-end infinite;}',
       '.eri-sel-rect{fill:rgba(47,125,50,0.28);pointer-events:none;}',
-      '.eri-sel-handle{position:fixed;width:24px;height:30px;z-index:9997;touch-action:none;pointer-events:auto;display:flex;flex-direction:column;align-items:center;}',
+      '.eri-sel-handle{position:absolute;width:24px;height:30px;z-index:30;touch-action:none;pointer-events:auto;display:flex;flex-direction:column;align-items:center;}',
       '.eri-sel-handle-stem{width:2.5px;height:14px;background:#2F7D32;border-radius:1.5px;}',
       '.eri-sel-handle-knob{width:14px;height:14px;background:#2F7D32;border:2px solid #fff;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,0.35);}',
       '#eri-ime{position:fixed;left:0;top:0;opacity:0.001;width:2px;height:20px;border:0;padding:0;margin:0;resize:none;z-index:9998;pointer-events:none;font-size:16px;background:transparent;color:transparent;caret-color:transparent;}',
@@ -1846,12 +1846,13 @@ function removeAllSelRects() {
   for (const el of document.querySelectorAll('.eri-sel-handle')) el.remove();
 }
 
-function mountSelHandle(kind, xPx, yPx) {
+function mountSelHandle(frame, kind, leftPx, topPx) {
+  if (!frame) return;
   const h = document.createElement('div');
   h.className = 'eri-sel-handle';
   h.dataset.kind = kind;
-  h.style.left = `${xPx - 12}px`;
-  h.style.top = `${yPx}px`;
+  h.style.left = `${leftPx - 12}px`;
+  h.style.top = `${topPx}px`;
   const stem = document.createElement('div');
   stem.className = 'eri-sel-handle-stem';
   const knob = document.createElement('div');
@@ -1889,7 +1890,32 @@ function mountSelHandle(kind, xPx, yPx) {
     }
     emitEditState();
   }, { passive: true });
-  document.body.appendChild(h);
+  frame.appendChild(h);
+}
+
+function collectSelRects(st, en) {
+  const out = [];
+  const pushFromRaw = (raw) => {
+    const list = parseJsonSafe(raw);
+    const rects = Array.isArray(list) ? list : (list && Array.isArray(list.rects) ? list.rects : []);
+    for (const r of rects) out.push(r);
+  };
+  if (st.inTable && st.pathJson && typeof doc.getSelectionRectsInCellByPath === 'function') {
+    pushFromRaw(doc.getSelectionRectsInCellByPath(st.sec, st.parentPara, st.pathJson, st.cellPara, st.offset, en.cellPara, en.offset));
+  } else if (st.inTable && st.cell !== undefined && st.cell !== null && typeof doc.getSelectionRectsInCell === 'function') {
+    pushFromRaw(doc.getSelectionRectsInCell(st.sec, st.parentPara, st.ctrl, st.cell, st.cellPara, st.offset, en.cellPara, en.offset));
+  } else if (typeof doc.getSelectionRects === 'function') {
+    for (let p = st.para; p <= en.para; p++) {
+      const target = { ...st, para: p };
+      const pLen = getParagraphLenAt(target);
+      const sOff = p === st.para ? st.offset : 0;
+      const eOff = p === en.para ? en.offset : pLen;
+      if (eOff > sOff) {
+        pushFromRaw(doc.getSelectionRects(st.sec, p, sOff, p, eOff));
+      }
+    }
+  }
+  return out;
 }
 
 function renderEditSelection() {
@@ -1898,16 +1924,7 @@ function renderEditSelection() {
   const st = editSelection.start, en = editSelection.end;
   if (!st || !en || compareEditPos(st, en) >= 0) return;
   try {
-    let raw = null;
-    if (st.inTable && st.pathJson && typeof doc.getSelectionRectsInCellByPath === 'function') {
-      raw = doc.getSelectionRectsInCellByPath(st.sec, st.parentPara, st.pathJson, st.cellPara, st.offset, en.cellPara, en.offset);
-    } else if (st.inTable && st.cell !== undefined && st.cell !== null && typeof doc.getSelectionRectsInCell === 'function') {
-      raw = doc.getSelectionRectsInCell(st.sec, st.parentPara, st.ctrl, st.cell, st.cellPara, st.offset, en.cellPara, en.offset);
-    } else if (typeof doc.getSelectionRects === 'function') {
-      raw = doc.getSelectionRects(st.sec, st.para, st.offset, en.para, en.offset);
-    }
-    const list = parseJsonSafe(raw);
-    const rects = Array.isArray(list) ? list : (list && Array.isArray(list.rects) ? list.rects : []);
+    const rects = collectSelRects(st, en);
     let firstHandle = null, lastHandle = null;
     for (const r of rects) {
       const pIdx = typeof r.pageIndex === 'number' ? r.pageIndex : st.pageIdx;
@@ -1930,18 +1947,21 @@ function renderEditSelection() {
       el.setAttribute('rx', '2');
       svg.appendChild(el);
 
-      const svgRect = svg.getBoundingClientRect();
-      if (svgRect.width > 0 && svgRect.height > 0) {
-        const pxX = svgRect.left + (Number(r.x || 0) / engW) * svgRect.width;
-        const pxY = svgRect.top + (Number(r.y || 0) / engH) * svgRect.height;
-        const pxW = (w / engW) * svgRect.width;
-        const pxH = (h / engH) * svgRect.height;
-        if (!firstHandle) firstHandle = { x: pxX, y: pxY + pxH - 2 };
-        lastHandle = { x: pxX + pxW, y: pxY + pxH - 2 };
+      const fRect = frame.getBoundingClientRect();
+      const sRect = svg.getBoundingClientRect();
+      if (sRect.width > 0 && sRect.height > 0) {
+        const offX = sRect.left - fRect.left;
+        const offY = sRect.top - fRect.top;
+        const relX = offX + (Number(r.x || 0) / engW) * sRect.width;
+        const relY = offY + (Number(r.y || 0) / engH) * sRect.height;
+        const relW = (w / engW) * sRect.width;
+        const relH = (h / engH) * sRect.height;
+        if (!firstHandle) firstHandle = { frame, x: relX, y: relY + relH - 2 };
+        lastHandle = { frame, x: relX + relW, y: relY + relH - 2 };
       }
     }
-    if (firstHandle) mountSelHandle('start', firstHandle.x, firstHandle.y);
-    if (lastHandle) mountSelHandle('end', lastHandle.x, lastHandle.y);
+    if (firstHandle) mountSelHandle(firstHandle.frame, 'start', firstHandle.x, firstHandle.y);
+    if (lastHandle) mountSelHandle(lastHandle.frame, 'end', lastHandle.x, lastHandle.y);
   } catch (_) {}
 }
 
@@ -2090,8 +2110,15 @@ function editApplyFormat(opts) {
       renderEditSelection();
     }
   }
-  // 2) 커서만 둔 상태면 기존 글자는 건드리지 않고 이후 치는 글자만 적용
+  // 2) 커서만 둔 상태면 진행 중이던 한글 조합을 현재 커서에서 끊어, 이전 문구 색은 그대로 두고 이후 치는 글자만 새 서식 적용
+  if (imeComposing) {
+    imeComposing = false;
+    imeCompLen = 0;
+    if (editCursor) imeCompBase = editCursor.offset;
+  }
   if (editImeEl) {
+    editImeEl.blur();
+    resetImeBuffer();
     editImeEl.focus({ preventScroll: true });
   }
   emitEditState();

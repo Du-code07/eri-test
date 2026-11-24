@@ -759,8 +759,8 @@ class _HwpViewerState extends State<HwpViewer> {
           // 슬라이드→스크롤로 바꾸면 스크롤이 먹통이 됐었음. 그래서 목록은 그대로 두고, 누를 때마다 지금 보기 방식을 확인함
           gestureRecognizers: {
             Factory<OneSequenceGestureRecognizer>(() => _ModeEagerRecognizer(() => mounted && (_isSpreadsheet || widget.vertical))),
-            // 엑셀: 칸을 길게 눌러 고르는 동작은 문서 화면이 직접 받음 (워드·한글의 글 고르기는 앱이 직접 해서 필요 없음)
-            if (_isSpreadsheet) Factory<LongPressGestureRecognizer>(() => LongPressGestureRecognizer(duration: const Duration(milliseconds: 350))),
+            // 문서 편집 모드(슬라이드 포함): 길게 눌러 드래그 선택할 때만 WebView가 터치를 받아 핀치 줌·이동과 충돌 없이 동작
+            Factory<LongPressGestureRecognizer>(() => _ModeLongPressRecognizer(() => mounted && (_isSpreadsheet || widget.editMode))),
           },
           initialUrlRequest: URLRequest(url: WebUri(_entry)),
           initialSettings: InAppWebViewSettings(
@@ -855,6 +855,16 @@ class _HwpViewerState extends State<HwpViewer> {
 }
 
 /// 켜져 있을 때만 손가락이 닿자마자 문서 화면(WebView)이 터치를 바로 가져가게 함 (스크롤 보기·엑셀)
+
+/// 켜져 있을 때만 길게 누르기(260ms)를 문서 화면(WebView)이 직접 받아 드래그 선택 가능 (일반 탭·핀치 줌 방해 없음)
+class _ModeLongPressRecognizer extends LongPressGestureRecognizer {
+  _ModeLongPressRecognizer(this.active) : super(duration: const Duration(milliseconds: 260));
+  final bool Function() active;
+
+  @override
+  bool isPointerAllowed(PointerDownEvent event) => active() && super.isPointerAllowed(event);
+}
+
 class _ModeEagerRecognizer extends OneSequenceGestureRecognizer {
   _ModeEagerRecognizer(this.active);
   final bool Function() active;
