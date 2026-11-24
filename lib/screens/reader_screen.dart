@@ -1705,7 +1705,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
         await StorageService.saveLocationStrokes(widget.filePath, 'pg:$p', _scrollMemos[p] ?? const <MemoStroke>[]);
       }
     } else {
-      await _saveMemoStrokes(_currentPageLocationKey, _memoStrokes);
+      await _saveMemo(_currentPageLocationKey, _memoStrokes);
     }
     if (mounted) showAppToast(context, _tr('저장했어요', 'Saved', '已保存', '保存しました'), fromTop: true);
   }
