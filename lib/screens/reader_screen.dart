@@ -2011,6 +2011,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           return Center(
             child: viewerPanel(
               ctx,
+              color: cs.surfaceContainerHigh,
               width: 280,
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
