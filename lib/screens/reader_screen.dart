@@ -2305,7 +2305,10 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   }
 
   void _toggleControls() {
-    setState(() => _showControls = !_showControls);
+    setState(() {
+      _showControls = !_showControls;
+      if (!_showControls) _epubFontSizeOpen = false;
+    });
   }
 
   // ── 파일 내 단어 검색 (한글·워드) ──
@@ -4233,6 +4236,38 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   /// 상단바·도구 모음에 둘 수 있는 모든 아이콘 (이 파일에서 쓸 수 있는 것만). 어디에 어떤 순서로 둘지는 [ToolbarLayout]
   Map<String, QuickToolItem> _barItems() {
     final list = <QuickToolItem>[
+      if (_isEpub)
+        QuickToolItem(
+          id: 'prevChapter',
+          icon: Icon(Icons.keyboard_arrow_up_rounded, color: _chFirst ? Colors.white38 : Colors.white, size: 22),
+          tooltip: _tr('이전 챕터', 'Previous Chapter', '上一章', '前の章'),
+          onTap: () {
+            if (_chFirst) return;
+            HapticFeedback.selectionClick();
+            setState(() {
+              _chAtStart = false;
+              _chAtEnd = false;
+            });
+            _epubController.goChapter(-1);
+          },
+          closeAfterTap: false,
+        ),
+      if (_isEpub)
+        QuickToolItem(
+          id: 'nextChapter',
+          icon: Icon(Icons.keyboard_arrow_down_rounded, color: _chLast ? Colors.white38 : Colors.white, size: 22),
+          tooltip: _tr('다음 챕터', 'Next Chapter', '下一章', '次の章'),
+          onTap: () {
+            if (_chLast) return;
+            HapticFeedback.selectionClick();
+            setState(() {
+              _chAtStart = false;
+              _chAtEnd = false;
+            });
+            _epubController.goChapter(1);
+          },
+          closeAfterTap: false,
+        ),
       QuickToolItem(
         id: 'prev',
         icon: const Icon(Icons.skip_previous_rounded, color: Colors.white, size: 19),
@@ -5556,14 +5591,6 @@ Offstage(offstage: _tocFreeze != null, child: EpubViewer(
               ),
 
             _buildEpubProgressBar(bottomPadding),
-
-            // EPUB: 오른쪽 하단에 이전·다음 챕터 단추 (^ / v)
-            if (_isEpub && _showControls && !_slideShow)
-              Positioned(
-                right: 12.0 + _safeSides.right,
-                bottom: _chapterButtonsBottom(bottomPadding),
-                child: _buildChapterButtons(),
-              ),
 
             // EPUB 전용 글자 크기 스크롤 휠 (도구 모음 막대 바로 위)
             if (_isEpub && _showControls && _epubFontSizeOpen && !_slideShow)

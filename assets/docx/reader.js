@@ -736,14 +736,28 @@ function destroy() {
   if (incoming) incoming.fill(0); incoming = null; received = 0;
   clearPages(); pendingEvents = [];
 }
-const resizeObserver = new ResizeObserver(fitPages); resizeObserver.observe(host);
+let lastHostW = 0;
+const resizeObserver = new ResizeObserver(() => {
+  const w = host ? host.clientWidth : 0;
+  if (typeof docxEditMode !== 'undefined' && docxEditMode && lastHostW > 0 && Math.abs(w - lastHostW) < 2) return;
+  lastHostW = w;
+  fitPages();
+});
+resizeObserver.observe(host);
 // ── FReader: 스크롤 보기 — 쪽을 그대로 세로로 늘어놓고 쪽 사이를 살짝 띄움 (보이는 쪽 근처만 그림) ──
 let vertical = false, vhost = null, vSlots = [], vTops = [], vRaf = 0, vMetricsTimer = 0, vSerial = 0;
 const vMounted = new Map(); // 쪽 번호 → { frame, source, original, entry }
 const vOwner = new Map(); // 원래 글 덩어리 → 그것을 쓰고 있는 쪽 번호 (다른 쪽은 복사본)
 const V_GAP = 6; // 스크롤 보기 쪽 사이 간격 (예전 12의 절반)
 function pageFrames() { return vertical ? [...vMounted.values()].map(m => m.frame) : realFrames(); }
-const vResize = new ResizeObserver(() => { if (vertical) vLayout(true); });
+let lastVHostW = 0;
+const vResize = new ResizeObserver(() => {
+  if (!vertical || !vhost) return;
+  const w = vhost.clientWidth;
+  if (typeof docxEditMode !== 'undefined' && docxEditMode && lastVHostW > 0 && Math.abs(w - lastVHostW) < 2) return;
+  lastVHostW = w;
+  vLayout(true);
+});
 function setVertical(on) {
   on = !!on;
   if (on === vertical) return;
@@ -1564,7 +1578,7 @@ function docxRenderSelHandles() {
   docxRemoveSelHandles();
   if (!docxEditMode) return;
   const sel = window.getSelection();
-  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed || !sel.toString()) {
     docxSavedRange = null;
     return;
   }
@@ -1610,21 +1624,28 @@ function docxPreventContext(e) {
 }
 
 function docxCaretRangeAt(clientX, clientY) {
+  const handles = [...document.querySelectorAll('.eri-sel-handle')];
+  for (const h of handles) h.style.visibility = 'hidden';
   try {
+    let r = null;
     if (typeof document.caretRangeFromPoint === 'function') {
-      const r = document.caretRangeFromPoint(clientX, clientY);
-      if (r && r.startContainer) return r;
-    }
-    if (typeof document.caretPositionFromPoint === 'function') {
+      r = document.caretRangeFromPoint(clientX, clientY);
+    } else if (typeof document.caretPositionFromPoint === 'function') {
       const p = document.caretPositionFromPoint(clientX, clientY);
       if (p && p.offsetNode) {
-        const r = document.createRange();
+        r = document.createRange();
         r.setStart(p.offsetNode, p.offset);
         r.collapse(true);
-        return r;
       }
     }
+    if (r && r.startContainer && r.startContainer.nodeType === 3) {
+      const parentPage = r.startContainer.parentElement?.closest?.('.page');
+      if (parentPage) return r;
+    }
   } catch (_) {}
+  finally {
+    for (const h of handles) h.style.visibility = '';
+  }
   return null;
 }
 
@@ -1741,6 +1762,8 @@ function setKeyboardInset(px) {
 function setEditMode(enabled) {
   docxEditMode = Boolean(enabled);
   if (docxEditMode) {
+    lastHostW = host ? host.clientWidth : 0;
+    lastVHostW = vhost ? vhost.clientWidth : 0;
     docxEditOrigHtml = docxSnapshotPages();
     docxOrigParaTexts = [];
     for (const src of docxUniqueSources()) {

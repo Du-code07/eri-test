@@ -28,7 +28,7 @@ class ToolbarLayout {
   static const String _key = 'toolbar_layout_v1';
 
   static const List<String> defaultTop = ['find', 'slideshow', 'theme', 'toc'];
-  static const List<String> defaultBar = ['prev', 'next', 'rotate', 'display', 'mode', 'direction', 'fontsize', 'memo', 'edit', 'copy', 'bookmark'];
+  static const List<String> defaultBar = ['prevChapter', 'nextChapter', 'prev', 'next', 'rotate', 'display', 'mode', 'direction', 'fontsize', 'memo', 'edit', 'copy', 'bookmark'];
 
   /// 지금 쓰는 배치 (뷰어들이 함께 보고, 바뀌면 다시 그림)
   static final ValueNotifier<ToolbarLayout> current = ValueNotifier<ToolbarLayout>(ToolbarLayout.defaults());
@@ -46,6 +46,17 @@ class ToolbarLayout {
       final known = {...defaultTop, ...defaultBar};
       final List<String> top = [for (final e in (m['top'] as List? ?? const [])) if (known.contains(e)) e as String];
       final List<String> bar = [for (final e in (m['bar'] as List? ?? const [])) if (known.contains(e) && !top.contains(e)) e as String];
+      // 새로 추가된 EPUB 이전·다음 챕터 단추는 기존 사용자도 '이전 파일(prev)' 왼쪽에 자동 배치
+      for (final id in const ['nextChapter', 'prevChapter']) {
+        if (!top.contains(id) && !bar.contains(id)) {
+          final int prevIdx = bar.indexOf('prev');
+          if (prevIdx >= 0) {
+            bar.insert(prevIdx, id);
+          } else {
+            bar.insert(0, id);
+          }
+        }
+      }
       for (final id in [...defaultTop, ...defaultBar]) {
         if (!top.contains(id) && !bar.contains(id)) bar.add(id);
       }
@@ -76,6 +87,8 @@ Widget toolbarCatalogIcon(String id, Color color, {double size = 20}) => switch 
       'slideshow' => Icon(Icons.slideshow, color: color, size: size),
       'theme' => MoonMorphIcon(filled: false, size: size, color: color),
       'toc' => Icon(Icons.list, color: color, size: size),
+      'prevChapter' => Icon(Icons.keyboard_arrow_up_rounded, color: color, size: size + 2),
+      'nextChapter' => Icon(Icons.keyboard_arrow_down_rounded, color: color, size: size + 2),
       'prev' => Icon(Icons.skip_previous_rounded, color: color, size: size + 1),
       'next' => Icon(Icons.skip_next_rounded, color: color, size: size + 1),
       'rotate' => rotationGlyph('auto', size: size, color: color),
@@ -95,6 +108,8 @@ String toolbarCatalogLabel(String id, String Function(String ko, String en, Stri
       'slideshow' => tr('슬라이드 쇼', 'Slide Show', '幻灯片放映', 'スライドショー'),
       'theme' => tr('배경 색상', 'Background Color', '背景颜色', '背景色'),
       'toc' => tr('목차', 'Contents', '目录', '目次'),
+      'prevChapter' => tr('이전 챕터', 'Previous Chapter', '上一章', '前の章'),
+      'nextChapter' => tr('다음 챕터', 'Next Chapter', '下一章', '次の章'),
       'prev' => tr('이전 파일로 이동', 'Previous File', '上一个文件', '前のファイル'),
       'next' => tr('다음 파일로 이동', 'Next File', '下一个文件', '次のファイル'),
       'rotate' => tr('화면 회전', 'Rotate Screen', '旋转屏幕', '画面回転'),
