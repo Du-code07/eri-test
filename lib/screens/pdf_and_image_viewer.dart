@@ -1319,7 +1319,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
     });
     if (backup != null) {
       for (final p in touchedPages) {
-        await StorageService.savePageStrokes(_bookKey, p, backup[p] ?? const <MemoStroke>[]);
+        await StorageService.savePageMemoStrokes(_bookKey, p, backup[p] ?? const <MemoStroke>[]);
       }
     }
   }
