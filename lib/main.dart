@@ -1162,11 +1162,11 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
 
   void _maybeShowUpdateNotes() {
     if (!widget.splashDone || _updateNotesQueued) return;
-    if (!StorageService.guidePromptShown) {
-      StorageService.markAppVersionSeen();
+    // 이미 설치되어 있던 이전 버전에서 새 버전으로 업데이트한 경우에만 표시
+    if (StorageService.lastSeenAppVersion == null ||
+        StorageService.lastSeenAppVersion == StorageService.currentAppVersion) {
       return;
     }
-    if (StorageService.lastSeenAppVersion == StorageService.currentAppVersion) return;
     _updateNotesQueued = true;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;

@@ -5,6 +5,15 @@ s = open(p, encoding='utf-8').read()
 # 쓰지 않는 권한은 빼 둠 (저장소 읽기·모든 파일 접근·설치된 앱 목록)
 import re
 s = re.sub(r'\s*<uses-permission[^>]*(READ_EXTERNAL_STORAGE|MANAGE_EXTERNAL_STORAGE|QUERY_ALL_PACKAGES)[^>]*/>', '', s)
+# 앱 삭제 후 재설치 시 이전 서재 목록·설정이 자동 복원되지 않도록 안드로이드 자동 백업 비활성화
+if 'android:allowBackup=' in s:
+    s = re.sub(r'android:allowBackup="[^"]*"', 'android:allowBackup="false"', s)
+else:
+    s = s.replace('<application', '<application android:allowBackup="false"', 1)
+if 'android:fullBackupContent=' in s:
+    s = re.sub(r'android:fullBackupContent="[^"]*"', 'android:fullBackupContent="false"', s)
+else:
+    s = s.replace('<application', '<application android:fullBackupContent="false"', 1)
 if 'android.permission.CAMERA' not in s:
     s = s.replace('<application', '<uses-permission android:name="android.permission.CAMERA"/>\n    <uses-feature android:name="android.hardware.camera" android:required="false"/>\n    <application', 1)
 # 앱 잠금: 지문·얼굴 인식으로 잠금 해제

@@ -155,6 +155,14 @@ class StorageService {
     railPosition = prefs.getString('simple_rail_pos_v1') == 'right' ? 'right' : 'left';
     guidePromptShown = prefs.getBool('guide_prompt_shown_v1') ?? false;
     lastSeenAppVersion = prefs.getString('last_seen_app_version_v1');
+    // 신규 설치 직후: 업데이트 내역 창이 첫 실행·재실행에서 절대 뜨지 않도록 현재 버전을 즉시 기록
+    if (lastSeenAppVersion == null && !guidePromptShown) {
+      lastSeenAppVersion = currentAppVersion;
+      await prefs.setString('last_seen_app_version_v1', currentAppVersion);
+    } else if (lastSeenAppVersion == null && guidePromptShown) {
+      // 버전 기록 기능이 생기기 전 구버전에서 업데이트한 기존 사용자
+      lastSeenAppVersion = '';
+    }
     Anim.off.value = prefs.getBool('anim_off_v109') ?? false;
     pageCurl = prefs.getBool('page_curl_v109') ?? false;
     final zones = prefs.getString('tap_zones_v122');

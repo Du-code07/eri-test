@@ -23,6 +23,11 @@
 -keep class com.pichillilorenzo.flutter_inappwebview_android.** { *; }
 -keep class com.github.dart_lang.jni.** { *; }
 
+# AndroidX WebViewAssetLoader & WebView Support Boundary 보호 (HWP/DOCX/PPT/XLSX 로컬 에셋 로딩)
+-keep class androidx.webkit.** { *; }
+-keep class org.chromium.support_lib_boundary.** { *; }
+-dontwarn org.chromium.support_lib_boundary.**
+
 # OpenCV JNI 네이티브 브리지 보호 (문서 스캔)
 -keepclasseswithmembernames,includedescriptorclasses class org.opencv.** {
     native <methods>;
