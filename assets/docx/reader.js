@@ -1833,9 +1833,63 @@ function docxRenderCaret() {
   } catch (_) {}
 }
 
+function docxFindOffsetInTextNode(tn, x, y) {
+  const txt = tn.nodeValue || '';
+  const len = txt.length;
+  if (len === 0) return 0;
+  const cr = document.createRange();
+  // 여러 줄에 걸친 텍스트 노드도 정확한 Y 줄 + X 글자 위치로 찾음
+  let bestOff = 0, bestScore = Infinity;
+  // 긴 텍스트 노드는 8글자 단위로 먼저 근접 구간을 좁힌 뒤 주변 정밀 탐색
+  const step = len > 48 ? 8 : 1;
+  let approx = 0;
+  if (step > 1) {
+    let minS = Infinity;
+    for (let i = 0; i < len; i += step) {
+      cr.setStart(tn, i);
+      cr.setEnd(tn, Math.min(len, i + 1));
+      const br = cr.getBoundingClientRect();
+      if (!(br.height > 0)) continue;
+      const dy = y < br.top ? br.top - y : (y > br.bottom ? y - br.bottom : 0);
+      const dx = Math.abs((br.left + br.right) * 0.5 - x);
+      const s = dy * dy * 12 + dx * dx;
+      if (s < minS) { minS = s; approx = i; }
+    }
+  }
+  const startI = step > 1 ? Math.max(0, approx - 12) : 0;
+  const endI = step > 1 ? Math.min(len - 1, approx + 12) : len - 1;
+  for (let i = startI; i <= endI; i++) {
+    cr.setStart(tn, i);
+    cr.setEnd(tn, i + 1);
+    const br = cr.getBoundingClientRect();
+    if (!(br.height > 0)) continue;
+    const dy = y < br.top ? br.top - y : (y > br.bottom ? y - br.bottom : 0);
+    const midX = (br.left + br.right) * 0.5;
+    const dx = Math.abs(midX - x);
+    const s = dy * dy * 16 + dx * dx;
+    if (s < bestScore) {
+      bestScore = s;
+      bestOff = x >= midX ? i + 1 : i;
+    }
+  }
+  return Math.max(0, Math.min(len, bestOff));
+}
+
+function docxValidPageTextNode(tn) {
+  if (!tn || tn.nodeType !== 3) return false;
+  if ((tn.nodeValue || '').trim().length === 0) return false;
+  const pe = tn.parentElement;
+  if (!pe) return false;
+  const pg = pe.closest?.('.page');
+  if (!pg || pg.closest?.('#pages-under')) return false;
+  if (pe.closest?.('#measure, .eri-loupe, .eri-sel-handle, .docx-note-area')) return false;
+  return true;
+}
+
 function docxCaretPointAt(clientX, clientY) {
-  const overlays = [...document.querySelectorAll('.eri-sel-handle, .eri-docx-sel-rect, .eri-docx-caret')];
-  for (const el of overlays) el.style.visibility = 'hidden';
+  // 핸들 2개만 잠시 pointer-events: none 처리 (visibility 토글 없이 리페인트/깜빡임 0)
+  const hEls = [docxHandleEls.start, docxHandleEls.end].filter(Boolean);
+  for (const h of hEls) h.style.pointerEvents = 'none';
   try {
     const tryAt = (x, y) => {
       let r = null;
@@ -1849,41 +1903,19 @@ function docxCaretPointAt(clientX, clientY) {
           r.collapse(true);
         }
       }
-      if (r && r.startContainer) {
-        if (r.startContainer.nodeType === 3) {
-          if (r.startContainer.parentElement?.closest?.('.page')) {
-            return { node: r.startContainer, offset: r.startOffset };
-          }
-        } else if (r.startContainer.nodeType === 1 && r.startContainer.closest?.('.page')) {
-          // user-select:none 환경에서 Element가 반환되면 가장 가까운 자식 텍스트 노드로 해석
-          const tw = document.createTreeWalker(r.startContainer, NodeFilter.SHOW_TEXT);
-          let best = null, bestDist = Infinity, tn = tw.nextNode();
-          while (tn) {
-            if ((tn.nodeValue || '').trim().length > 0) {
-              const nr = document.createRange();
-              nr.selectNodeContents(tn);
-              const rc = nr.getBoundingClientRect();
-              if (rc.width > 0 && rc.height > 0) {
-                const dx0 = x < rc.left ? rc.left - x : (x > rc.right ? x - rc.right : 0);
-                const dy0 = y < rc.top ? rc.top - y : (y > rc.bottom ? y - rc.bottom : 0);
-                const d = dx0 * dx0 + dy0 * dy0;
-                if (d < bestDist) { bestDist = d; best = tn; }
-              }
-            }
-            tn = tw.nextNode();
-          }
-          if (best) {
-            const len = (best.nodeValue || '').length;
-            let lo = 0, hi = len;
-            while (lo < hi) {
-              const mid = (lo + hi) >> 1;
-              const cr = document.createRange();
-              cr.setStart(best, mid);
-              cr.setEnd(best, Math.min(len, mid + 1));
-              const br = cr.getBoundingClientRect();
-              if (br.left + br.width * 0.5 < x) lo = mid + 1; else hi = mid;
-            }
-            return { node: best, offset: Math.max(0, Math.min(len, lo)) };
+      if (r && r.startContainer && r.startContainer.nodeType === 3 && docxValidPageTextNode(r.startContainer)) {
+        // 빈 여백/문단 사이에서 페이지 맨 위 노드로 튀는 오판 차단: 실제 글자 사각형과 거리 검증
+        const len = (r.startContainer.nodeValue || '').length;
+        const off = Math.max(0, Math.min(len, r.startOffset));
+        const cr = document.createRange();
+        cr.setStart(r.startContainer, Math.min(off, Math.max(0, len - 1)));
+        cr.setEnd(r.startContainer, Math.min(len, Math.min(off, Math.max(0, len - 1)) + 1));
+        const br = cr.getBoundingClientRect();
+        if (br.height > 0 && br.height < 100) {
+          const dy = y < br.top ? br.top - y : (y > br.bottom ? y - br.bottom : 0);
+          const dx = x < br.left ? br.left - x : (x > br.right ? x - br.right : 0);
+          if (dy <= 26 && dx <= 48) {
+            return { node: r.startContainer, offset: off };
           }
         }
       }
@@ -1891,49 +1923,41 @@ function docxCaretPointAt(clientX, clientY) {
     };
     let pt = tryAt(clientX, clientY);
     if (pt) return pt;
-    for (const dx of [10, -10, 22, -22]) {
+    for (const dx of [10, -10, 20, -20]) {
       pt = tryAt(clientX + dx, clientY);
       if (pt) return pt;
     }
-    // 최종 폴백: 좌표가 속한 .page의 텍스트 노드 중 가장 가까운 글자 오프셋 직접 탐색
+    // 빈 간격/줄 사이 폴백: 현재 좌표에 실제로 가장 가까운 텍스트 노드(수직 32px 이내)만 정확히 선택
     for (const pg of document.querySelectorAll('.page')) {
+      if (pg.closest?.('#pages-under')) continue;
       const pr = pg.getBoundingClientRect();
-      if (clientX >= pr.left - 24 && clientX <= pr.right + 24 && clientY >= pr.top - 24 && clientY <= pr.bottom + 24) {
+      if (clientX >= pr.left - 24 && clientX <= pr.right + 24 && clientY >= pr.top - 16 && clientY <= pr.bottom + 16) {
         const tw = document.createTreeWalker(pg, NodeFilter.SHOW_TEXT);
         let best = null, bestDist = Infinity, tn = tw.nextNode();
         while (tn) {
-          if ((tn.nodeValue || '').trim().length > 0) {
+          if (docxValidPageTextNode(tn)) {
             const nr = document.createRange();
             nr.selectNodeContents(tn);
             for (const rc of nr.getClientRects()) {
-              if (rc.width > 0.5 && rc.height > 0.5) {
-                const dx0 = clientX < rc.left ? rc.left - clientX : (clientX > rc.right ? clientX - rc.right : 0);
+              if (rc.width > 0.5 && rc.height > 0.5 && rc.height < 100) {
                 const dy0 = clientY < rc.top ? rc.top - clientY : (clientY > rc.bottom ? clientY - rc.bottom : 0);
-                const d = dx0 * dx0 + dy0 * dy0 * 4;
+                if (dy0 > 32) continue;
+                const dx0 = clientX < rc.left ? rc.left - clientX : (clientX > rc.right ? clientX - rc.right : 0);
+                const d = dy0 * dy0 * 9 + dx0 * dx0;
                 if (d < bestDist) { bestDist = d; best = tn; }
               }
             }
           }
           tn = tw.nextNode();
         }
-        if (best && bestDist < 2500) {
-          const len = (best.nodeValue || '').length;
-          let lo = 0, hi = len;
-          while (lo < hi) {
-            const mid = (lo + hi) >> 1;
-            const cr = document.createRange();
-            cr.setStart(best, mid);
-            cr.setEnd(best, Math.min(len, mid + 1));
-            const br = cr.getBoundingClientRect();
-            if (br.left + br.width * 0.5 < clientX) lo = mid + 1; else hi = mid;
-          }
-          return { node: best, offset: Math.max(0, Math.min(len, lo)) };
+        if (best && bestDist < 1800) {
+          return { node: best, offset: docxFindOffsetInTextNode(best, clientX, clientY) };
         }
       }
     }
   } catch (_) {}
   finally {
-    for (const el of overlays) el.style.visibility = '';
+    for (const h of hEls) h.style.pointerEvents = '';
   }
   return null;
 }
@@ -1987,9 +2011,9 @@ let docxLoupeRaf = 0;
 let docxDragPending = null;
 
 function docxFindPageAtFast(clientX, clientY) {
-  if (docxLoupePage && docxLoupePage.isConnected && docxLoupeRect) {
-    const r = docxLoupeRect;
-    if (clientX >= r.left - 20 && clientX <= r.right + 20 && clientY >= r.top - 20 && clientY <= r.bottom + 20) {
+  if (docxLoupePage && docxLoupePage.isConnected) {
+    const r = docxLoupePage.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0 && clientX >= r.left - 20 && clientX <= r.right + 20 && clientY >= r.top - 20 && clientY <= r.bottom + 20) {
       return { pageEl: docxLoupePage, pr: r };
     }
   }
@@ -2148,7 +2172,7 @@ function docxRenderSelection() {
       const tw = document.createTreeWalker(ancestor, NodeFilter.SHOW_TEXT);
       let tn = tw.nextNode();
       while (tn) {
-        if ((tn.nodeValue || '').trim().length > 0 && docxSelRange.intersectsNode(tn)) {
+        if (docxValidPageTextNode(tn) && docxSelRange.intersectsNode(tn)) {
           const sOff = tn === docxSelRange.startContainer ? docxSelRange.startOffset : 0;
           const eOff = tn === docxSelRange.endContainer ? docxSelRange.endOffset : tn.nodeValue.length;
           if (eOff > sOff) {

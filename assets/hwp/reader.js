@@ -1959,9 +1959,9 @@ let eriLoupeRaf = 0;
 let eriDragPending = null;
 
 function findPageAtFast(clientX, clientY) {
-  if (eriLoupePage && eriLoupePage.isConnected && eriLoupeRect) {
-    const r = eriLoupeRect;
-    if (clientX >= r.left - 20 && clientX <= r.right + 20 && clientY >= r.top - 20 && clientY <= r.bottom + 20) {
+  if (eriLoupePage && eriLoupePage.isConnected) {
+    const r = eriLoupePage.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0 && clientX >= r.left - 20 && clientX <= r.right + 20 && clientY >= r.top - 20 && clientY <= r.bottom + 20) {
       return { pageEl: eriLoupePage, pr: r };
     }
   }
