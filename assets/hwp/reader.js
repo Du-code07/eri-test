@@ -790,6 +790,7 @@ function vSize() {
     vSlots[vSlots.length - 1].style.marginBottom = pad ? '0px' : '';
   }
   if (pad) for (let i = 0; i < vTops.length; i++) vTops[i] += pad;
+  if (editModeOn) { if (editSelection) renderEditSelection(); else if (editCursor) updateCaretPos(); }
 }
 function vLayout(keep) {
   if (!vhost || !doc) return;
@@ -838,7 +839,18 @@ function vScrollToRatio(t) {
   if (!vhost) return;
   vhost.scrollTop = Math.max(0, Math.min(1, Number(t) || 0)) * Math.max(0, vhost.scrollHeight - vhost.clientHeight);
 }
+let hwpScrollHideTimer = 0;
+function markHwpScrolling() {
+  if (!editModeOn || selHandleDragging || caretHandleDragging) return;
+  document.body.classList.add('eri-scrolling');
+  if (hwpScrollHideTimer) clearTimeout(hwpScrollHideTimer);
+  hwpScrollHideTimer = setTimeout(() => {
+    hwpScrollHideTimer = 0;
+    document.body.classList.remove('eri-scrolling');
+  }, 180);
+}
 function vSchedule() {
+  markHwpScrolling();
   if (vRaf) return;
   vRaf = requestAnimationFrame(() => { vRaf = 0; vUpdate(); });
   if (!vMetricsTimer) vMetricsTimer = setTimeout(() => { vMetricsTimer = 0; vReportMetrics(); }, 30);
@@ -873,7 +885,12 @@ function vUpdate() {
   // 지금 쪽: 화면 위에서 3분의 1 지점에 걸친 쪽
   const current = vIndexAt(st + H * 0.33);
   if (current !== page) { page = current; reportLocation(); }
-  for (const index of [...vMounted.keys()]) if (index < first - 3 || index > last + 3) vUnmount(index);
+  const keepPage = (idx) => {
+    if (editSelection && (idx === editSelection.start?.pageIdx || idx === editSelection.end?.pageIdx)) return true;
+    if (selAnchorHit && idx === selAnchorHit.pageIdx) return true;
+    return false;
+  };
+  for (const index of [...vMounted.keys()]) if ((index < first - 3 || index > last + 3) && !keepPage(index)) vUnmount(index);
   // 보이는 쪽부터, 한 번에 두 쪽까지만 새로 그림 (빨리 넘길 때도 끊기지 않게)
   const want = [];
   for (let i = Math.max(0, first - 1); i <= Math.min(count - 1, last + 1); i++) if (!vMounted.has(i)) want.push(i);
@@ -1482,6 +1499,7 @@ function ensureEditDom() {
       '.eri-sel-handle[data-kind="end"] .eri-sel-handle-knob{border-radius:0 50% 50% 50%;transform:rotate(45deg);left:20px;}',
       '.eri-caret-handle{position:absolute;width:48px;height:48px;z-index:45;touch-action:none;pointer-events:auto;}',
       '.eri-caret-handle-knob{position:absolute;left:14px;top:6px;width:20px;height:20px;background:#2f7d32;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.32);box-sizing:border-box;border-radius:0 50% 50% 50%;transform:rotate(45deg);}',
+      'body.eri-scrolling .eri-sel-handle,body.eri-scrolling .eri-caret-handle{opacity:0!important;pointer-events:none!important;transition:opacity 80ms ease;}',
       '#eri-ime{position:fixed;left:0;top:0;opacity:0.001;width:2px;height:20px;border:0;padding:0;margin:0;resize:none;z-index:9998;pointer-events:none;font-size:16px;background:transparent;color:transparent;caret-color:transparent;}',
     ].join(' ');
     document.head.appendChild(st);
@@ -1677,16 +1695,26 @@ function mountCaretHandle(frame, leftPct, topPct) {
     h.appendChild(knob);
     caretHandleEl = h;
   }
-  const cx = Math.max(2, Math.min(98, Number(leftPct) || 0));
-  const cy = Math.max(2, Math.min(96, Number(topPct) || 0));
-  caretHandleEl.style.left = `${cx}%`;
-  caretHandleEl.style.top = `${cy}%`;
+  const cx = Math.max(1, Math.min(99, Number(leftPct) || 0));
+  const cy = Math.max(1, Math.min(99, Number(topPct) || 0));
+  if (vertical && vinner) {
+    const vr = vinner.getBoundingClientRect();
+    const fr = frame.getBoundingClientRect();
+    const lx = (fr.left - vr.left) + (cx / 100) * fr.width;
+    const ly = (fr.top - vr.top) + (cy / 100) * fr.height;
+    caretHandleEl.style.left = `${lx}px`;
+    caretHandleEl.style.top = `${ly}px`;
+    if (caretHandleEl.parentNode !== vinner) vinner.appendChild(caretHandleEl);
+  } else {
+    caretHandleEl.style.left = `${cx}%`;
+    caretHandleEl.style.top = `${cy}%`;
+    if (caretHandleEl.parentNode !== frame) frame.appendChild(caretHandleEl);
+  }
   caretHandleEl.style.marginLeft = '-24px';
   caretHandleEl.style.marginTop = '-2px';
   caretHandleEl.style.display = 'block';
   caretHandleEl.style.visibility = 'visible';
   caretHandleEl.style.zIndex = '45';
-  if (caretHandleEl.parentNode !== frame) frame.appendChild(caretHandleEl);
 }
 
 function replaceBodyLocalChunked(sec, para, off, del, ins) {
@@ -1984,9 +2012,16 @@ function stopHwpAutoScroll() {
   hwpAutoScrollPt = null;
 }
 
+let hwpLastHitKey = '';
+let hwpCaretStartPt = null;
+let hwpCaretMoved = false;
+
 function applyHwpHandlePoint(x, y) {
-  const hit = hitTestClientPoint(x, y - 18);
+  const hit = hitTestClientPoint(x, caretHandleDragging ? (y - 26) : (y - 18));
   if (!hit) return;
+  const hk = `${hit.pageIdx}:${hit.sec}:${hit.para}:${hit.offset}:${hit.inTable}:${hit.cell}:${hit.cellPara}`;
+  if (hk === hwpLastHitKey) return;
+  hwpLastHitKey = hk;
   if (caretHandleDragging) {
     editCursor = { ...hit };
     editSelection = null;
@@ -2052,28 +2087,32 @@ function handleSelHandleDocStart(e) {
       e.preventDefault();
       if (selDragTimer) { clearTimeout(selDragTimer); selDragTimer = 0; }
       const kind = best.dataset.kind;
+      hwpLastHitKey = '';
       selHandleDragging = true;
       caretHandleDragging = false;
+      document.body.classList.remove('eri-scrolling');
       selDragActive = false;
       selAnchorHit = kind === 'start' ? { ...editSelection.end } : { ...editSelection.start };
       return;
     }
   }
 
-  // 2) 커서 밑 손잡이 확인
+  // 2) 커서 밑 손잡이 확인 (물방울 노브 28px 반경만 잡아 커서 주변 글자 탭을 방해하지 않음)
   if (!editSelection && editCursor && caretHandleEl && caretHandleEl.isConnected) {
     const r = caretHandleEl.getBoundingClientRect();
     const cx = (r.left + r.right) * 0.5;
-    const cy = r.top + 18;
-    if (Math.hypot(t.clientX - cx, t.clientY - cy) <= 58) {
+    const cy = r.top + 22;
+    if (Math.hypot(t.clientX - cx, t.clientY - cy) <= 28) {
       e.stopImmediatePropagation();
       e.stopPropagation();
       e.preventDefault();
       if (selDragTimer) { clearTimeout(selDragTimer); selDragTimer = 0; }
+      hwpLastHitKey = '';
+      hwpCaretStartPt = { x: t.clientX, y: t.clientY };
+      hwpCaretMoved = false;
       caretHandleDragging = true;
-      stopHwpAutoScroll();
-    caretHandleDragging = false;
-    selHandleDragging = false;
+      selHandleDragging = false;
+      document.body.classList.remove('eri-scrolling');
       return;
     }
   }
@@ -2085,6 +2124,9 @@ function handleSelHandleDocMove(e) {
   e.stopPropagation();
   e.preventDefault();
   const t = e.touches[0];
+  if (caretHandleDragging && hwpCaretStartPt && Math.hypot(t.clientX - hwpCaretStartPt.x, t.clientY - hwpCaretStartPt.y) >= 4) {
+    hwpCaretMoved = true;
+  }
   hwpAutoScrollPt = { x: t.clientX, y: t.clientY };
   if (vertical && vhost && !hwpAutoScrollRaf) {
     const topEdge = 64;
@@ -2114,7 +2156,16 @@ function handleSelHandleDocEnd(e) {
   selDragActive = false;
   selJustFinishedAt = Date.now();
   if (e && e.stopPropagation) e.stopPropagation();
-  if (wasCaret) updateCaretPos();
+  hwpLastHitKey = '';
+  if (wasCaret) {
+    if (!hwpCaretMoved && hwpCaretStartPt) {
+      const hitTap = hitTestClientPoint(hwpCaretStartPt.x, hwpCaretStartPt.y);
+      if (hitTap) editCursor = { ...hitTap };
+    }
+    hwpCaretStartPt = null;
+    hwpCaretMoved = false;
+    updateCaretPos();
+  }
   if (editImeEl) {
     suppressingImeReset = false;
     resetImeBuffer();
@@ -2146,10 +2197,21 @@ function mountSelHandle(frame, kind, leftPx, topPx) {
     }, { passive: false });
     selHandleEls[kind] = h;
   }
-  const cx = Math.max(2, Math.min(98, Number(leftPx) || 0));
-  const cy = Math.max(2, Math.min(96, Number(topPx) || 0));
-  h.style.left = `${cx}%`;
-  h.style.top = `${cy}%`;
+  const cx = Math.max(1, Math.min(99, Number(leftPx) || 0));
+  const cy = Math.max(1, Math.min(99, Number(topPx) || 0));
+  if (vertical && vinner) {
+    const vr = vinner.getBoundingClientRect();
+    const fr = frame.getBoundingClientRect();
+    const lx = (fr.left - vr.left) + (cx / 100) * fr.width;
+    const ly = (fr.top - vr.top) + (cy / 100) * fr.height;
+    h.style.left = `${lx}px`;
+    h.style.top = `${ly}px`;
+    if (h.parentNode !== vinner) vinner.appendChild(h);
+  } else {
+    h.style.left = `${cx}%`;
+    h.style.top = `${cy}%`;
+    if (h.parentNode !== frame) frame.appendChild(h);
+  }
   h.style.marginLeft = '-24px';
   h.style.marginTop = '-2px';
   h.style.display = 'block';
@@ -2157,7 +2219,6 @@ function mountSelHandle(frame, kind, leftPx, topPx) {
   h.style.opacity = '1';
   h.style.pointerEvents = 'auto';
   h.style.zIndex = '45';
-  if (h.parentNode !== frame) frame.appendChild(h);
 }
 
 function collectSelRects(st, en) {

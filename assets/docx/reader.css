@@ -183,3 +183,4 @@ body.eri-docx-edit, body.eri-docx-edit * {
   border-radius: 0 50% 50% 50%;
   transform: rotate(45deg);
 }
+body.eri-scrolling .eri-sel-handle, body.eri-scrolling .eri-caret-handle { opacity: 0 !important; pointer-events: none !important; transition: opacity 80ms ease; }

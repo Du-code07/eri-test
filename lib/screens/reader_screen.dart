@@ -1273,10 +1273,17 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           onScrollMetrics: (top, height, client) {
             final prev = _docScrollMetrics.value;
             if (_docSel.active) {
-              if ((height - prev[1]).abs() > 3.0) {
+              if ((_hwpController.scrollZoom - _docSelZoom).abs() > 0.02) {
                 _docSel.clear();
               } else if ((top - prev[0]).abs() > 0.5) {
                 _docSel.shiftBy(Offset(0, -(top - prev[0])));
+                if (!_docHandleDragging) {
+                  if (!_docCopyScrolling && mounted) setState(() => _docCopyScrolling = true);
+                  _docCopyScrollHideTimer?.cancel();
+                  _docCopyScrollHideTimer = Timer(const Duration(milliseconds: 180), () {
+                    if (mounted && _docCopyScrolling) setState(() => _docCopyScrolling = false);
+                  });
+                }
               }
             }
             _docScrollMetrics.value = [top, height, client];
@@ -2767,6 +2774,10 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   bool _docPressSelecting = false;
   bool _docHandleDragging = false;
   Timer? _docCopyAutoScrollTimer;
+  Timer? _docCopyScrollHideTimer;
+  bool _docCopyScrolling = false;
+  double _docSelZoom = 1.0;
+  bool _docCopyRefreshing = false;
   bool _docCopyDragStart = false;
   Offset? _docCopyDragGlobal;
   bool _docScrollLocked = false;
@@ -2817,7 +2828,26 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       if (!mounted || !_docHandleDragging) return;
       final box = _docSelKey.currentContext?.findRenderObject() as RenderBox?;
       if (box != null && box.hasSize) {
-        _docSel.moveHandle(_docCopyDragStart, box.globalToLocal(gp) - const Offset(0, 28));
+        if (!_docCopyRefreshing) {
+          _docCopyRefreshing = true;
+          try {
+            final raw = await _hwpController.visibleTextBoxes();
+            if (mounted && _docSel.active && raw.isNotEmpty) {
+              final s = box.size;
+              double v(Object? x) => (x as num?)?.toDouble() ?? 0;
+              final fresh = PageTextSelection.linesFromWords([
+                for (final b in raw)
+                  SelLine('${b['t'] ?? ''}', Rect.fromLTWH(v(b['x']) * s.width, v(b['y']) * s.height, v(b['w']) * s.width, v(b['h']) * s.height)),
+              ]);
+              _docSel.mergeVisibleLines(fresh);
+            }
+          } catch (_) {} finally {
+            _docCopyRefreshing = false;
+          }
+        }
+        if (mounted && _docHandleDragging) {
+          _docSel.moveHandle(_docCopyDragStart, box.globalToLocal(gp) - const Offset(0, 28));
+        }
       }
     });
   }
@@ -2868,6 +2898,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     _docSel.lines = PageTextSelection.linesFromWords(words);
     final local = box.globalToLocal(global);
     if (_docSel.selectWordAt(local)) {
+      _docSelZoom = _hwpController.scrollZoom;
       HapticFeedback.selectionClick();
       final pending = _docPendingExtend;
       if (pending != null) {
@@ -3392,7 +3423,10 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                 sel: _docSel,
                 tr: _tr,
                 onHighlight: _docHighlight,
+                hideHandles: _docCopyScrolling && !_docHandleDragging,
                 onHandleDragStart: () {
+                  _docCopyScrollHideTimer?.cancel();
+                  if (_docCopyScrolling && mounted) setState(() => _docCopyScrolling = false);
                   _docHandleDragging = true;
                   _syncDocScrollLock();
                 },
@@ -3465,6 +3499,11 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   }
 
   void _swipeTrackUp(PointerEvent e, {bool cancelled = false}) {
+    if (_docHandleDragging || _docCopyAutoScrollTimer != null) {
+      _stopDocCopyAutoScroll();
+      _docHandleDragging = false;
+      _syncDocScrollLock();
+    }
     if (_isSpreadsheet) return;
     if (_isMemoMode && _isStylusEvent(e)) return;
     if (_swipeActivePointers > 0) _swipeActivePointers--;
@@ -4238,6 +4277,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     _book.dispose();
     _docPressTimer?.cancel();
     _stopDocCopyAutoScroll();
+    _docCopyScrollHideTimer?.cancel();
     _docSel.removeListener(_syncDocScrollLock);
     _docSel.dispose();
     _pageBar.hide();

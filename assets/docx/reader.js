@@ -1042,6 +1042,7 @@ function vSize() {
   }
   if (pad) for (let i = 0; i < vTops.length; i++) vTops[i] += pad;
   for (const m of vMounted.values()) m.source.style.transform = `scale(${W / m.entry.width})`;
+  if (docxEditMode) { if (docxSelRange && !docxSelRange.collapsed) docxRenderSelection(); else if (docxCursor) docxRenderCaret(); }
 }
 function vLayout(keep) {
   if (!vhost || !pages.length) return;
@@ -1083,7 +1084,18 @@ function vScrollToRatio(t) {
   if (!vhost) return;
   vhost.scrollTop = Math.max(0, Math.min(1, Number(t) || 0)) * Math.max(0, vhost.scrollHeight - vhost.clientHeight);
 }
+let docxScrollHideTimer = 0;
+function markDocxScrolling() {
+  if (!docxEditMode || docxActiveHandleSide || docxCaretHandleDragging) return;
+  document.body.classList.add('eri-scrolling');
+  if (docxScrollHideTimer) clearTimeout(docxScrollHideTimer);
+  docxScrollHideTimer = setTimeout(() => {
+    docxScrollHideTimer = 0;
+    document.body.classList.remove('eri-scrolling');
+  }, 180);
+}
 function vSchedule() {
+  markDocxScrolling();
   if (!vRaf) vRaf = requestAnimationFrame(() => { vRaf = 0; vUpdate(); });
   if (!vMetricsTimer) vMetricsTimer = setTimeout(() => { vMetricsTimer = 0; vReportMetrics(); }, 30);
 }
@@ -1144,7 +1156,14 @@ function vUpdate() {
   const current = vIndexAt(st + H * 0.33);
   if (current !== page) { page = current; reportLocation(); }
   let removed = false;
-  for (const index of [...vMounted.keys()]) if (index < first - 3 || index > last + 3) { vUnmount(index); removed = true; }
+  const keepPage = (idx) => {
+    const m = vMounted.get(idx);
+    if (!m) return false;
+    if (docxHandleFixedPt?.node && m.frame.contains(docxHandleFixedPt.node)) return true;
+    if (docxSelRange && (m.frame.contains(docxSelRange.startContainer) || m.frame.contains(docxSelRange.endContainer))) return true;
+    return false;
+  };
+  for (const index of [...vMounted.keys()]) if ((index < first - 3 || index > last + 3) && !keepPage(index)) { vUnmount(index); removed = true; }
   if (removed) {
     activeImagePaths = new Set();
     for (const m of vMounted.values()) for (const img of m.frame.querySelectorAll('img[data-resource][src]')) activeImagePaths.add(img.dataset.resource);
@@ -1808,16 +1827,26 @@ function docxMountCaretHandle(pageEl, leftPct, topPct) {
     h.className = 'eri-caret-handle';
     docxCaretHandleEl = h;
   }
-  const cx = Math.max(2, Math.min(98, Number(leftPct) || 0));
-  const cy = Math.max(2, Math.min(96, Number(topPct) || 0));
-  docxCaretHandleEl.style.left = `${cx}%`;
-  docxCaretHandleEl.style.top = `${cy}%`;
+  const cx = Math.max(1, Math.min(99, Number(leftPct) || 0));
+  const cy = Math.max(1, Math.min(99, Number(topPct) || 0));
+  if (vertical && vinner) {
+    const vr = vinner.getBoundingClientRect();
+    const fr = pageEl.getBoundingClientRect();
+    const lx = (fr.left - vr.left) + (cx / 100) * fr.width;
+    const ly = (fr.top - vr.top) + (cy / 100) * fr.height;
+    docxCaretHandleEl.style.left = `${lx}px`;
+    docxCaretHandleEl.style.top = `${ly}px`;
+    if (docxCaretHandleEl.parentNode !== vinner) vinner.appendChild(docxCaretHandleEl);
+  } else {
+    docxCaretHandleEl.style.left = `${cx}%`;
+    docxCaretHandleEl.style.top = `${cy}%`;
+    if (docxCaretHandleEl.parentNode !== pageEl) pageEl.appendChild(docxCaretHandleEl);
+  }
   docxCaretHandleEl.style.marginLeft = '-24px';
   docxCaretHandleEl.style.marginTop = '-2px';
   docxCaretHandleEl.style.display = 'block';
   docxCaretHandleEl.style.visibility = 'visible';
   docxCaretHandleEl.style.zIndex = '45';
-  if (docxCaretHandleEl.parentNode !== pageEl) pageEl.appendChild(docxCaretHandleEl);
 }
 
 const docxHandleEls = { start: null, end: null };
@@ -2037,9 +2066,17 @@ function stopDocxAutoScroll() {
   docxAutoScrollPt = null;
 }
 
+let docxLastPtNode = null;
+let docxLastPtOff = -1;
+let docxCaretStartPt = null;
+let docxCaretMoved = false;
+
 function applyDocxHandlePoint(x, y) {
-  const pt = docxCaretPointAt(x, y - 18);
+  const pt = docxCaretPointAt(x, docxCaretHandleDragging ? (y - 26) : (y - 18));
   if (!pt) return;
+  if (pt.node === docxLastPtNode && pt.offset === docxLastPtOff) return;
+  docxLastPtNode = pt.node;
+  docxLastPtOff = pt.offset;
   if (docxCaretHandleDragging) {
     docxCursor = { ...pt };
     docxSelRange = null;
@@ -2099,8 +2136,11 @@ function docxOnHandleStart(ev) {
       ev.preventDefault();
       if (docxSelTimer) { clearTimeout(docxSelTimer); docxSelTimer = 0; }
       const side = best.dataset.side;
+      docxLastPtNode = null;
+      docxLastPtOff = -1;
       docxActiveHandleSide = side;
       docxCaretHandleDragging = false;
+      document.body.classList.remove('eri-scrolling');
       docxHandleFixedPt = side === 'start'
         ? { node: docxSelRange.endContainer, offset: docxSelRange.endOffset }
         : { node: docxSelRange.startContainer, offset: docxSelRange.startOffset };
@@ -2108,20 +2148,23 @@ function docxOnHandleStart(ev) {
     }
   }
 
-  // 2) 커서 밑 손잡이 확인
+  // 2) 커서 밑 손잡이 확인 (물방울 노브 28px 반경만 잡아 커서 주변 글자 탭을 방해하지 않음)
   if ((!docxSelRange || docxSelRange.collapsed) && docxCursor && docxCaretHandleEl && docxCaretHandleEl.isConnected) {
     const r = docxCaretHandleEl.getBoundingClientRect();
     const cx = (r.left + r.right) * 0.5;
-    const cy = r.top + 18;
-    if (Math.hypot(t.clientX - cx, t.clientY - cy) <= 58) {
+    const cy = r.top + 22;
+    if (Math.hypot(t.clientX - cx, t.clientY - cy) <= 28) {
       ev.stopImmediatePropagation();
       ev.stopPropagation();
       ev.preventDefault();
       if (docxSelTimer) { clearTimeout(docxSelTimer); docxSelTimer = 0; }
+      docxLastPtNode = null;
+      docxLastPtOff = -1;
+      docxCaretStartPt = { x: t.clientX, y: t.clientY };
+      docxCaretMoved = false;
       docxCaretHandleDragging = true;
-      stopDocxAutoScroll();
-    docxCaretHandleDragging = false;
-    docxActiveHandleSide = null;
+      docxActiveHandleSide = null;
+      document.body.classList.remove('eri-scrolling');
       return;
     }
   }
@@ -2133,6 +2176,9 @@ function docxOnHandleMove(ev) {
   ev.stopPropagation();
   ev.preventDefault();
   const t = ev.touches[0];
+  if (docxCaretHandleDragging && docxCaretStartPt && Math.hypot(t.clientX - docxCaretStartPt.x, t.clientY - docxCaretStartPt.y) >= 4) {
+    docxCaretMoved = true;
+  }
   docxAutoScrollPt = { x: t.clientX, y: t.clientY };
   if (vertical && vhost && !docxAutoScrollRaf) {
     const topEdge = 64;
@@ -2162,7 +2208,17 @@ function docxOnHandleEnd(ev) {
   docxHandleFixedPt = null;
   docxSelJustEndedAt = Date.now();
   if (ev && ev.stopPropagation) ev.stopPropagation();
-  if (wasCaret) docxRenderCaret();
+  docxLastPtNode = null;
+  docxLastPtOff = -1;
+  if (wasCaret) {
+    if (!docxCaretMoved && docxCaretStartPt) {
+      const tapPt = docxCaretPointAt(docxCaretStartPt.x, docxCaretStartPt.y);
+      if (tapPt) docxCursor = { ...tapPt };
+    }
+    docxCaretStartPt = null;
+    docxCaretMoved = false;
+    docxRenderCaret();
+  }
   docxFocusIme();
   docxEmitEditState(false);
 }
@@ -2185,10 +2241,21 @@ function docxMountSelHandle(pageEl, side, relX, relY) {
     }, { passive: false });
     docxHandleEls[side] = h;
   }
-  const cx = Math.max(2, Math.min(98, Number(relX) || 0));
-  const cy = Math.max(2, Math.min(96, Number(relY) || 0));
-  h.style.left = `${cx}%`;
-  h.style.top = `${cy}%`;
+  const cx = Math.max(1, Math.min(99, Number(relX) || 0));
+  const cy = Math.max(1, Math.min(99, Number(relY) || 0));
+  if (vertical && vinner) {
+    const vr = vinner.getBoundingClientRect();
+    const fr = pageEl.getBoundingClientRect();
+    const lx = (fr.left - vr.left) + (cx / 100) * fr.width;
+    const ly = (fr.top - vr.top) + (cy / 100) * fr.height;
+    h.style.left = `${lx}px`;
+    h.style.top = `${ly}px`;
+    if (h.parentNode !== vinner) vinner.appendChild(h);
+  } else {
+    h.style.left = `${cx}%`;
+    h.style.top = `${cy}%`;
+    if (h.parentNode !== pageEl) pageEl.appendChild(h);
+  }
   h.style.marginLeft = '-24px';
   h.style.marginTop = '-2px';
   h.style.display = 'block';
@@ -2196,7 +2263,6 @@ function docxMountSelHandle(pageEl, side, relX, relY) {
   h.style.opacity = '1';
   h.style.pointerEvents = 'auto';
   h.style.zIndex = '45';
-  if (h.parentNode !== pageEl) pageEl.appendChild(h);
 }
 
 function docxRenderSelection() {

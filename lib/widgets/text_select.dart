@@ -206,6 +206,31 @@ class PageTextSelection extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 자동 스크롤로 새로 화면에 들어온 줄들을 기존 선택 인덱스를 유지하며 앞·뒤에 병합
+  void mergeVisibleLines(List<SelLine> fresh) {
+    if (!active || fresh.isEmpty) return;
+    bool changed = false;
+    final double lastBottom = lines.last.rect.bottom;
+    for (final nl in fresh) {
+      if (nl.rect.center.dy > lastBottom + 2) {
+        lines.add(nl);
+        changed = true;
+      }
+    }
+    final double firstTop = lines.first.rect.top;
+    final above = <SelLine>[
+      for (final nl in fresh)
+        if (nl.rect.center.dy < firstTop - 2) nl,
+    ];
+    if (above.isNotEmpty) {
+      lines.insertAll(0, above);
+      _aLine += above.length;
+      _bLine += above.length;
+      changed = true;
+    }
+    if (changed) notifyListeners();
+  }
+
   /// [p]에 가장 가까운 줄과 그 줄 안의 글자 자리
   (int, int)? hit(Offset p) {
     if (lines.isEmpty) return null;
@@ -351,6 +376,7 @@ class PageTextSelectLayer extends StatelessWidget {
     this.onHandleDragStart,
     this.onHandleDragUpdate,
     this.onHandleDragEnd,
+    this.hideHandles = false,
   });
 
   /// 형광펜 칠하기: 고른 부분의 네모들(이 층 기준)을 받음. 없으면 단추를 숨김
@@ -364,6 +390,7 @@ class PageTextSelectLayer extends StatelessWidget {
   final VoidCallback? onHandleDragStart;
   final void Function(bool start, Offset globalPosition)? onHandleDragUpdate;
   final VoidCallback? onHandleDragEnd;
+  final bool hideHandles;
 
   @override
   Widget build(BuildContext context) {
@@ -408,8 +435,9 @@ class PageTextSelectLayer extends StatelessWidget {
             children: [
               IgnorePointer(child: CustomPaint(size: Size.infinite, painter: _HighlightPainter(rects))),
 
-              handle(true, s),
-              handle(false, e),
+              if (!hideHandles) handle(true, s),
+              if (!hideHandles) handle(false, e),
+              if (!hideHandles)
               Positioned(
                 top: barTop,
                 left: 0,
