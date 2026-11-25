@@ -77,7 +77,11 @@ jobs:
             echo "::warning::FREADER_KEYSTORE_BASE64 비밀값이 없어 디버그 키로 서명합니다 (Play 스토어에 올릴 수 없음)"
           fi
 
-          touch android/app/proguard-rules.pro
+          if [ -f /tmp/v7_backup/android_override/proguard-rules.pro ]; then
+            cp -f /tmp/v7_backup/android_override/proguard-rules.pro android/app/proguard-rules.pro
+          else
+            touch android/app/proguard-rules.pro
+          fi
 
           if [ -f android/app/build.gradle.kts ]; then
             sed -i 's/compileSdk = .*/compileSdk = 36/g' android/app/build.gradle.kts
@@ -97,8 +101,8 @@ jobs:
             echo '    buildTypes {' >> android/app/build.gradle.kts
             echo '        getByName("release") {' >> android/app/build.gradle.kts
             echo '            signingConfig = if (file("freader_release.keystore").exists()) signingConfigs.getByName("release") else signingConfigs.getByName("debug")' >> android/app/build.gradle.kts
-            echo '            isMinifyEnabled = false' >> android/app/build.gradle.kts
-            echo '            isShrinkResources = false' >> android/app/build.gradle.kts
+            echo '            isMinifyEnabled = true' >> android/app/build.gradle.kts
+            echo '            isShrinkResources = true' >> android/app/build.gradle.kts
             echo '            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")' >> android/app/build.gradle.kts
             echo '        }' >> android/app/build.gradle.kts
             echo '    }' >> android/app/build.gradle.kts
