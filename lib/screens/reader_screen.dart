@@ -1445,7 +1445,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       if (!mounted || serial != _snapCaptureSerial || page != _docPage || _book.busy) return;
       // 넘기는 중·확대 중·필기 중·다른 화면이 덮고 있을 때는 저장하지 않음
       if (_snapShown != null) return;
-      if (_epubZoomScale > 1.03 || _isStylusDown || _activeStrokePoints.isNotEmpty || _slideShow || _findOpen) return;
+      if (_isHwpEditMode || _epubZoomScale > 1.03 || _isStylusDown || _activeStrokePoints.isNotEmpty || _slideShow || _findOpen) return;
       try {
         final bytes = await _pdfChannel.invokeMethod<Uint8List>(
           'snapshotWebView',
@@ -4521,6 +4521,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     _docPressSelecting = false;
     _docDownOnControls = false;
     _hwpHasSelection = false;
+    _snapCaptureSerial++;
     _syncDocScrollLock();
   }
 
@@ -4609,6 +4610,8 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       _isMemoMode = false;
       _isEraserMode = false;
     });
+    _snapCaptureSerial++;
+    _snapHide();
     if (_docVertical) unawaited(_hwpController.setScrollMemos(const {}));
     _hwpController.setEditMode(true);
   }

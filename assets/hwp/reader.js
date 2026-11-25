@@ -1473,9 +1473,13 @@ function ensureEditDom() {
       '@keyframes eriBlink{0%,49%{opacity:1}50%,100%{opacity:0}}',
       '.eri-caret-rect{fill:#2F7D32;pointer-events:none;animation:eriBlink 1s step-end infinite;}',
       '.eri-sel-rect{fill:rgba(47,125,50,0.28);pointer-events:none;}',
-      '.eri-sel-handle{position:absolute;width:44px;height:44px;z-index:20;touch-action:none;pointer-events:auto;}',
-      '.eri-sel-handle-stem{position:absolute;left:21px;top:4px;width:2px;height:14px;background:#2f7d32;}',
-      '.eri-sel-handle-knob{position:absolute;left:15px;top:16px;width:14px;height:14px;border-radius:50%;background:#2f7d32;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.35);box-sizing:border-box;}',
+      '.eri-sel-handle{position:absolute;width:48px;height:48px;z-index:20;touch-action:none;pointer-events:auto;}',
+      '.eri-sel-handle-stem{display:none;}',
+      '.eri-sel-handle-knob{position:absolute;left:14px;top:6px;width:20px;height:20px;background:#2f7d32;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.32);box-sizing:border-box;border-radius:0 50% 50% 50%;transform:rotate(45deg);}',
+      '.eri-sel-handle[data-kind="start"] .eri-sel-handle-knob{border-radius:50% 0 50% 50%;transform:rotate(45deg);left:8px;}',
+      '.eri-sel-handle[data-kind="end"] .eri-sel-handle-knob{border-radius:0 50% 50% 50%;transform:rotate(45deg);left:20px;}',
+      '.eri-loupe{position:fixed;width:148px;height:54px;border-radius:27px;overflow:hidden;background:#fff;border:1.5px solid rgba(47,125,50,0.45);box-shadow:0 6px 20px rgba(0,0,0,0.28);pointer-events:none;z-index:9999;display:none;}',
+      '.eri-loupe-inner{position:absolute;left:0;top:0;transform-origin:0 0;pointer-events:none;}',
       '#eri-ime{position:fixed;left:0;top:0;opacity:0.001;width:2px;height:20px;border:0;padding:0;margin:0;resize:none;z-index:9998;pointer-events:none;font-size:16px;background:transparent;color:transparent;caret-color:transparent;}',
     ].join(' ');
     document.head.appendChild(st);
@@ -1902,13 +1906,65 @@ function removeAllSelRects() {
 }
 
 let selHandleDragging = false;
+let eriLoupeEl = null;
+let eriLoupeInner = null;
+let eriLoupePage = null;
+
+function ensureLoupe() {
+  if (eriLoupeEl) return eriLoupeEl;
+  eriLoupeEl = document.createElement('div');
+  eriLoupeEl.className = 'eri-loupe';
+  eriLoupeInner = document.createElement('div');
+  eriLoupeInner.className = 'eri-loupe-inner';
+  eriLoupeEl.appendChild(eriLoupeInner);
+  document.body.appendChild(eriLoupeEl);
+  return eriLoupeEl;
+}
+
+function updateLoupe(clientX, clientY) {
+  const el = document.elementFromPoint(clientX, clientY);
+  const pageEl = (el && el.closest && el.closest('.page')) || document.querySelector('.page');
+  if (!pageEl) return;
+  ensureLoupe();
+  const pr = pageEl.getBoundingClientRect();
+  if (!(pr.width > 0 && pr.height > 0)) return;
+  if (eriLoupePage !== pageEl || !eriLoupeInner.firstChild) {
+    eriLoupePage = pageEl;
+    const clone = pageEl.cloneNode(true);
+    for (const h of clone.querySelectorAll('.eri-sel-handle, .eri-caret-rect')) h.remove();
+    clone.style.position = 'relative';
+    clone.style.left = '0';
+    clone.style.top = '0';
+    clone.style.margin = '0';
+    clone.style.width = `${pr.width}px`;
+    clone.style.height = `${pr.height}px`;
+    eriLoupeInner.replaceChildren(clone);
+  }
+  const zoom = 1.65;
+  const lw = 148, lh = 54;
+  const rx = clientX - pr.left;
+  const ry = clientY - pr.top;
+  const tx = (lw * 0.5) - rx * zoom;
+  const ty = (lh * 0.5) - ry * zoom;
+  eriLoupeInner.style.transform = `translate(${tx}px, ${ty}px) scale(${zoom})`;
+  const left = Math.max(10, Math.min(window.innerWidth - lw - 10, clientX - lw * 0.5));
+  const top = Math.max(12, clientY - lh - 34);
+  eriLoupeEl.style.left = `${left}px`;
+  eriLoupeEl.style.top = `${top}px`;
+  eriLoupeEl.style.display = 'block';
+}
+
+function hideLoupe() {
+  if (eriLoupeEl) eriLoupeEl.style.display = 'none';
+  eriLoupePage = null;
+}
 
 function handleSelHandleDocStart(e) {
   if (!editModeOn || !editSelection || e.touches.length !== 1) return;
   const handles = [...document.querySelectorAll('.eri-sel-handle')];
   if (handles.length === 0) return;
   const t = e.touches[0];
-  let best = null, bestDist = 36;
+  let best = null, bestDist = 44;
   for (const h of handles) {
     const r = h.getBoundingClientRect();
     const cx = (r.left + r.right) * 0.5;
@@ -1920,6 +1976,7 @@ function handleSelHandleDocStart(e) {
     }
   }
   if (!best) return;
+  e.stopImmediatePropagation();
   e.stopPropagation();
   e.preventDefault();
   if (selDragTimer) { clearTimeout(selDragTimer); selDragTimer = 0; }
@@ -1931,6 +1988,7 @@ function handleSelHandleDocStart(e) {
 
 function handleSelHandleDocMove(e) {
   if (!selHandleDragging || !selAnchorHit || !e.touches.length) return;
+  e.stopImmediatePropagation();
   e.stopPropagation();
   e.preventDefault();
   const t = e.touches[0];
@@ -1941,10 +1999,13 @@ function handleSelHandleDocMove(e) {
   const en = cmp <= 0 ? { ...hit } : { ...selAnchorHit };
   editSelection = { start: st, end: en };
   renderEditSelection();
+  eriLoupePage = null;
+  updateLoupe(t.clientX, t.clientY - 18);
 }
 
 function handleSelHandleDocEnd(e) {
   if (!selHandleDragging) return;
+  hideLoupe();
   selHandleDragging = false;
   selDragActive = false;
   selJustFinishedAt = Date.now();
@@ -1961,8 +2022,8 @@ function mountSelHandle(frame, kind, leftPx, topPx) {
   const h = document.createElement('div');
   h.className = 'eri-sel-handle';
   h.dataset.kind = kind;
-  h.style.left = `${leftPx - 22}px`;
-  h.style.top = `${topPx - 4}px`;
+  h.style.left = `${leftPx - 24}px`;
+  h.style.top = `${topPx - 2}px`;
   const stem = document.createElement('div');
   stem.className = 'eri-sel-handle-stem';
   const knob = document.createElement('div');
@@ -2256,7 +2317,7 @@ function hitTestClientPoint(clientX, clientY) {
 let selDownX = 0, selDownY = 0;
 
 function handleEditTouchStart(e) {
-  if (!editModeOn || !doc || disposed) return;
+  if (!editModeOn || !doc || disposed || selHandleDragging) return;
   if (e.target && e.target.closest && e.target.closest('.eri-sel-handle')) return;
   if (e.touches.length !== 1) {
     if (selDragTimer) { clearTimeout(selDragTimer); selDragTimer = 0; }
@@ -2311,9 +2372,12 @@ function handleEditTouchMove(e) {
   }
   editSelection = { start: st, end: en };
   renderEditSelection();
+  eriLoupePage = null;
+  updateLoupe(t.clientX, t.clientY);
 }
 
 function handleEditTouchEnd() {
+  hideLoupe();
   if (selDragTimer) { clearTimeout(selDragTimer); selDragTimer = 0; }
   if (!selDragActive) return;
   selDragActive = false;
@@ -2613,6 +2677,7 @@ function setEditMode(enabled) {
     document.removeEventListener('click', handleDirectEditClick, true);
     document.removeEventListener('touchstart', handleSelHandleDocStart, true);
     document.removeEventListener('touchstart', handleEditTouchStart, true);
+    hideLoupe();
     selHandleDragging = false;
     document.removeEventListener('touchmove', handleSelHandleDocMove, true);
     document.removeEventListener('touchend', handleSelHandleDocEnd, true);

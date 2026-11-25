@@ -103,6 +103,19 @@ class DocxSaveService {
       }
     }
 
+    // 글자 크기가 커졌을 때 고정(exact) 줄 간격으로 글자가 겹치지 않도록 auto 줄 간격으로 완화
+    final bool hasCustomSize = runs.any((r) => r is Map && (r['fontSizePt'] as num?) != null && (r['fontSizePt'] as num) > 12);
+    if (hasCustomSize) {
+      for (final XmlElement pPr in para.childElements.where((e) => e.name.local == 'pPr')) {
+        for (final XmlElement sp in pPr.childElements.where((e) => e.name.local == 'spacing')) {
+          final ruleAttr = sp.attributes.where((a) => a.name.local == 'lineRule').firstOrNull;
+          if (ruleAttr != null && ruleAttr.value == 'exact') {
+            sp.setAttribute('w:lineRule', 'auto');
+          }
+        }
+      }
+    }
+
     // <w:pPr>(정렬·줄간격·들여쓰기 등)는 유지하고 기존 <w:r>만 교체
     final List<XmlNode> toRemove = para.children
         .where((n) => n is XmlElement && (n.name.local == 'r' || n.name.local == 'hyperlink'))

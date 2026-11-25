@@ -1641,7 +1641,18 @@ function docxPrepareStyledInsertNode() {
   if (docxPendingFmt.bold !== undefined) span.style.fontWeight = docxPendingFmt.bold ? 'bold' : 'normal';
   if (docxPendingFmt.italic !== undefined) span.style.fontStyle = docxPendingFmt.italic ? 'italic' : 'normal';
   if (docxPendingFmt.underline !== undefined) span.style.textDecoration = docxPendingFmt.underline ? 'underline' : 'none';
-  if (docxPendingFmt.fontSizePt !== undefined) span.style.fontSize = `${docxPendingFmt.fontSizePt}pt`;
+  if (docxPendingFmt.fontSizePt !== undefined) {
+    const pt = Number(docxPendingFmt.fontSizePt);
+    span.style.fontSize = `${pt}pt`;
+    span.style.lineHeight = '1.45';
+    const paraEl = afterNode.parentElement?.closest?.('x-p, p');
+    if (paraEl) {
+      const curLh = parseFloat(getComputedStyle(paraEl).lineHeight);
+      if (Number.isFinite(curLh) && curLh < pt * 1.45 * 1.333) {
+        paraEl.style.lineHeight = '1.45';
+      }
+    }
+  }
   if (docxPendingFmt.textColor !== undefined) span.style.color = docxPendingFmt.textColor;
   const newText = document.createTextNode('');
   span.appendChild(newText);
@@ -1846,6 +1857,65 @@ function docxBuildRangeFromPts(p1, p2) {
 }
 
 let docxActiveHandleSide = null;
+let docxLoupeEl = null;
+let docxLoupeInner = null;
+let docxLoupePage = null;
+
+function docxEnsureLoupe() {
+  if (docxLoupeEl) return docxLoupeEl;
+  docxLoupeEl = document.createElement('div');
+  docxLoupeEl.className = 'eri-loupe';
+  docxLoupeInner = document.createElement('div');
+  docxLoupeInner.className = 'eri-loupe-inner';
+  docxLoupeEl.appendChild(docxLoupeInner);
+  document.body.appendChild(docxLoupeEl);
+  return docxLoupeEl;
+}
+
+function docxUpdateLoupe(clientX, clientY) {
+  const overlays = [...document.querySelectorAll('.eri-sel-handle, .eri-docx-sel-rect, .eri-docx-caret')];
+  for (const el of overlays) el.style.visibility = 'hidden';
+  let pageEl = null;
+  try {
+    const el = document.elementFromPoint(clientX, clientY);
+    pageEl = (el && el.closest && el.closest('.page')) || document.querySelector('.page');
+  } finally {
+    for (const el of overlays) el.style.visibility = '';
+  }
+  if (!pageEl) return;
+  docxEnsureLoupe();
+  const pr = pageEl.getBoundingClientRect();
+  if (!(pr.width > 0 && pr.height > 0)) return;
+  if (docxLoupePage !== pageEl || !docxLoupeInner.firstChild) {
+    docxLoupePage = pageEl;
+    const clone = pageEl.cloneNode(true);
+    for (const h of clone.querySelectorAll('.eri-sel-handle, .eri-docx-caret')) h.remove();
+    clone.style.position = 'relative';
+    clone.style.left = '0';
+    clone.style.top = '0';
+    clone.style.margin = '0';
+    clone.style.width = `${pr.width}px`;
+    clone.style.height = `${pr.height}px`;
+    docxLoupeInner.replaceChildren(clone);
+  }
+  const zoom = 1.65;
+  const lw = 148, lh = 54;
+  const rx = clientX - pr.left;
+  const ry = clientY - pr.top;
+  const tx = (lw * 0.5) - rx * zoom;
+  const ty = (lh * 0.5) - ry * zoom;
+  docxLoupeInner.style.transform = `translate(${tx}px, ${ty}px) scale(${zoom})`;
+  const left = Math.max(10, Math.min(window.innerWidth - lw - 10, clientX - lw * 0.5));
+  const top = Math.max(12, clientY - lh - 34);
+  docxLoupeEl.style.left = `${left}px`;
+  docxLoupeEl.style.top = `${top}px`;
+  docxLoupeEl.style.display = 'block';
+}
+
+function docxHideLoupe() {
+  if (docxLoupeEl) docxLoupeEl.style.display = 'none';
+  docxLoupePage = null;
+}
 let docxHandleFixedPt = null;
 
 function docxOnHandleStart(ev) {
@@ -1853,7 +1923,7 @@ function docxOnHandleStart(ev) {
   const handles = [...document.querySelectorAll('.eri-sel-handle')];
   if (handles.length === 0) return;
   const t = ev.touches[0];
-  let best = null, bestDist = 36;
+  let best = null, bestDist = 44;
   for (const h of handles) {
     const r = h.getBoundingClientRect();
     const cx = (r.left + r.right) * 0.5;
@@ -1865,6 +1935,7 @@ function docxOnHandleStart(ev) {
     }
   }
   if (!best) return;
+  ev.stopImmediatePropagation();
   ev.stopPropagation();
   ev.preventDefault();
   if (docxSelTimer) { clearTimeout(docxSelTimer); docxSelTimer = 0; }
@@ -1877,6 +1948,7 @@ function docxOnHandleStart(ev) {
 
 function docxOnHandleMove(ev) {
   if (!docxActiveHandleSide || !docxHandleFixedPt || !ev.touches.length) return;
+  ev.stopImmediatePropagation();
   ev.stopPropagation();
   ev.preventDefault();
   const t = ev.touches[0];
@@ -1886,11 +1958,14 @@ function docxOnHandleMove(ev) {
   if (next && !next.collapsed) {
     docxSelRange = next;
     docxRenderSelection();
+    docxLoupePage = null;
+    docxUpdateLoupe(t.clientX, t.clientY - 18);
   }
 }
 
 function docxOnHandleEnd(ev) {
   if (!docxActiveHandleSide) return;
+  docxHideLoupe();
   docxActiveHandleSide = null;
   docxHandleFixedPt = null;
   docxSelJustEndedAt = Date.now();
@@ -1904,8 +1979,8 @@ function docxMountSelHandle(pageEl, side, relX, relY) {
   const h = document.createElement('div');
   h.className = 'eri-sel-handle';
   h.dataset.side = side;
-  h.style.left = `${relX - 22}px`;
-  h.style.top = `${relY - 4}px`;
+  h.style.left = `${relX - 24}px`;
+  h.style.top = `${relY - 2}px`;
   h.addEventListener('touchstart', (ev) => {
     if (ev.touches.length !== 1 || !docxSelRange) return;
     docxActiveHandleSide = side;
@@ -2062,7 +2137,7 @@ function docxPreventContext(e) {
 }
 
 function docxOnTouchStart(e) {
-  if (!docxEditMode || disposed) return;
+  if (!docxEditMode || disposed || docxActiveHandleSide) return;
   if (e.target && e.target.closest && e.target.closest('.eri-sel-handle')) return;
   if (e.touches.length !== 1) {
     if (docxSelTimer) { clearTimeout(docxSelTimer); docxSelTimer = 0; }
@@ -2111,11 +2186,14 @@ function docxOnTouchMove(e) {
     if (r && !r.collapsed) {
       docxSelRange = r;
       docxRenderSelection();
+      docxLoupePage = null;
+      docxUpdateLoupe(t.clientX, t.clientY);
     }
   }
 }
 
 function docxOnTouchEnd() {
+  docxHideLoupe();
   if (docxSelTimer) { clearTimeout(docxSelTimer); docxSelTimer = 0; }
   if (!docxSelDragging) return;
   docxSelDragging = false;
@@ -2208,6 +2286,7 @@ function setEditMode(enabled) {
     docxClearSelectionOverlays();
     document.removeEventListener('contextmenu', docxPreventContext, true);
     document.removeEventListener('dblclick', docxOnDblClick, true);
+    docxHideLoupe();
     docxActiveHandleSide = null;
     docxHandleFixedPt = null;
     document.removeEventListener('touchstart', docxOnHandleStart, true);
@@ -2293,7 +2372,18 @@ function docxApplyStyleToRange(range, opts) {
       span.style.textDecoration = opts.underline ? 'underline' : 'none';
       span.style.textDecorationLine = opts.underline ? 'underline' : 'none';
     }
-    if (opts.fontSizePt !== undefined) span.style.fontSize = `${Math.max(6, Math.min(48, Number(opts.fontSizePt) || 11))}pt`;
+    if (opts.fontSizePt !== undefined) {
+      const pt = Math.max(6, Math.min(48, Number(opts.fontSizePt) || 11));
+      span.style.fontSize = `${pt}pt`;
+      span.style.lineHeight = '1.45';
+      const paraEl = span.closest?.('x-p, p');
+      if (paraEl) {
+        const curLh = parseFloat(getComputedStyle(paraEl).lineHeight);
+        if (Number.isFinite(curLh) && curLh < pt * 1.45 * 1.333) {
+          paraEl.style.lineHeight = '1.45';
+        }
+      }
+    }
     if (opts.textColor !== undefined) span.style.color = String(opts.textColor);
     if (!firstSpan) firstSpan = span;
     lastSpan = span;
