@@ -36,6 +36,7 @@ flutter:
   uses-material-design: true
   # TXT / 한글(HWP·HWPX) / 워드(DOC·DOCX) 열람용 화면·엔진·글꼴 (기기 안에서만 처리)
   assets:
+    - assets/scan_icons/
     - assets/txt/
     - assets/hwp/
     - assets/hwp/fonts/

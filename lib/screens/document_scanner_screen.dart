@@ -884,7 +884,7 @@ class _DocumentScannerScreenState extends State<DocumentScannerScreen>
                   ),
                 ),
                 const SizedBox(width: 8),
-                Icon(Icons.edit_outlined, size: 18, color: _fg2),
+                _scanAssetIcon('ic_scan_edit.png', size: 18, color: _fg2),
               ],
             ),
           ),
@@ -893,7 +893,7 @@ class _DocumentScannerScreenState extends State<DocumentScannerScreen>
         actions: [
           IconButton(
             tooltip: _tr('이 쪽 지우기', 'Delete This Page', '删除此页', 'このページを削除'),
-            icon: TrashLidIcon(open: false, color: _fg),
+            icon: _scanAssetIcon('ic_scan_delete.png', size: 22, color: _fg),
             onPressed: _deleteCurrentPage,
           ),
           const SizedBox(width: 4),
@@ -1114,7 +1114,7 @@ class _DocumentScannerScreenState extends State<DocumentScannerScreen>
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.compare_rounded, color: _fg, size: 16),
+                          _scanAssetIcon('ic_scan_compare.png', size: 17, color: _fg),
                           const SizedBox(width: 5),
                           Text(
                             _tr('비교', 'Compare', '对比', '比較'),
@@ -1301,12 +1301,12 @@ class _DocumentScannerScreenState extends State<DocumentScannerScreen>
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
                         _buildBottomToolItem(
-                          icon: Icons.add_a_photo_outlined,
+                          iconAsset: 'ic_scan_add.png',
                           label: _tr('추가', 'Add', '添加', '追加'),
                           onTap: () => _openNativeCamera(batchMode: true),
                         ),
                         _buildBottomToolItem(
-                          icon: Icons.cameraswitch_outlined,
+                          iconAsset: 'ic_scan_retake.png',
                           label: _tr('다시 찍기', 'Retake', '重拍', '撮り直し'),
                           onTap: () => _openNativeCamera(
                             batchMode: false,
@@ -1314,7 +1314,7 @@ class _DocumentScannerScreenState extends State<DocumentScannerScreen>
                           ),
                         ),
                         _buildBottomToolItem(
-                          icon: Icons.rotate_left_rounded,
+                          iconAsset: 'ic_scan_rotate.png',
                           label: _tr('회전', 'Rotate', '旋转', '回転'),
                           onTap: () {
                             setState(() {
@@ -1326,7 +1326,7 @@ class _DocumentScannerScreenState extends State<DocumentScannerScreen>
                           },
                         ),
                         _buildBottomToolItem(
-                          icon: Icons.crop_rotate_rounded,
+                          iconAsset: 'ic_scan_crop.png',
                           label: _tr('사진 자르기', 'Crop', '裁剪', '切り抜き'),
                           onTap: () {
                             setState(() {
@@ -1353,7 +1353,7 @@ class _DocumentScannerScreenState extends State<DocumentScannerScreen>
                         ),
                       ),
                       onPressed: _saveAndCreatePdf,
-                      child: const Icon(Icons.check_rounded, size: 26),
+                      child: _scanAssetIcon('ic_scan_done.png', size: 26, color: Colors.white),
                     ),
                   ),
                 ],
@@ -1365,8 +1365,19 @@ class _DocumentScannerScreenState extends State<DocumentScannerScreen>
     );
   }
 
+  Widget _scanAssetIcon(String filename, {required double size, required Color color}) {
+    return Image.asset(
+      'assets/scan_icons/$filename',
+      width: size,
+      height: size,
+      color: color,
+      colorBlendMode: BlendMode.srcIn,
+      filterQuality: FilterQuality.medium,
+    );
+  }
+
   Widget _buildBottomToolItem({
-    required IconData icon,
+    required String iconAsset,
     required String label,
     required VoidCallback onTap,
   }) {
@@ -1379,7 +1390,7 @@ class _DocumentScannerScreenState extends State<DocumentScannerScreen>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: color, size: 22),
+            _scanAssetIcon(iconAsset, size: 23, color: color),
             const SizedBox(height: 3),
             Text(
               label,

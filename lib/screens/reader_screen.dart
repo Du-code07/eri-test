@@ -336,6 +336,8 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   // S펜 전용 페이지별 필기 및 지우개 상태 (필기 모드에서 S펜이 닿으면 화면 이동 100% 차단 + 해당 페이지에서만 필기 표시)
   bool _isMemoMode = false;
   bool _isHwpEditMode = false;
+  DateTime? _hwpEditExitedAt;
+  bool get _inHwpEditCooldown => _hwpEditExitedAt != null && DateTime.now().difference(_hwpEditExitedAt!).inMilliseconds < 800;
   bool _hwpHasEdits = false;
   bool _hwpHasSelection = false;
   bool get _editBlockSwipe => _isHwpEditMode && (MediaQuery.viewInsetsOf(context).bottom > 0 || _hwpHasSelection);
@@ -1384,8 +1386,12 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   }
 
   void _snapShow(int page) {
-    // 스크롤 보기는 저장해 둔 쪽 화면을 쓰지 않음
+    // 스크롤 보기는 저장해 둔 쪽 화면을 쓰지 않음 (편집 모드 중에도 스냅샷 덮어쓰지 않음)
     if (!_snapEligible || !mounted || _docVertical) return;
+    if (_isHwpEditMode) {
+      _snapHide();
+      return;
+    }
     if (page < 0 || (_docPageCount > 0 && page >= _docPageCount) || _epubZoomScale > 1.03) {
       _snapHide();
       return;
@@ -1445,7 +1451,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       if (!mounted || serial != _snapCaptureSerial || page != _docPage || _book.busy) return;
       // 넘기는 중·확대 중·필기 중·다른 화면이 덮고 있을 때는 저장하지 않음
       if (_snapShown != null) return;
-      if (_isHwpEditMode || _epubZoomScale > 1.03 || _isStylusDown || _activeStrokePoints.isNotEmpty || _slideShow || _findOpen) return;
+      if (_isHwpEditMode || _inHwpEditCooldown || _epubZoomScale > 1.03 || _isStylusDown || _activeStrokePoints.isNotEmpty || _slideShow || _findOpen) return;
       try {
         final bytes = await _pdfChannel.invokeMethod<Uint8List>(
           'snapshotWebView',
@@ -2680,10 +2686,10 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
 
   void _scheduleIdleShot() {
     _dropIdleShot();
-    // 책처럼 넘기기용
-    if (!_curlOn || _isTxt) return;
+    // 책처럼 넘기기용 (편집 모드 중이거나 방금 종료한 직후에는 찍지 않음)
+    if (!_curlOn || _isTxt || _isHwpEditMode || _inHwpEditCooldown) return;
     _idleShotTimer = Timer(const Duration(milliseconds: 380), () async {
-      if (!mounted || !_curlOn || _book.busy) return;
+      if (!mounted || !_curlOn || _book.busy || _isHwpEditMode || _inHwpEditCooldown) return;
       if (_epubZoomScale > 1.03 || !_docViewNone) return; // 확대해 둔 동안은 찍지 않음
       if (_isOfflineDocument && _lastReadyPage != _docPage) return; // 다 그려지면 다시 불림
       final key = _curlShotKey();
@@ -2902,6 +2908,8 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   bool get _screenCleanForShot =>
       mounted &&
       !_showControls &&
+      !_isHwpEditMode &&
+      !_inHwpEditCooldown &&
       !(_tapGuide?.mounted ?? false) &&
       !_bgMenuOpen &&
       !_book.busy &&
@@ -4557,11 +4565,19 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       await _hwpController.setEditMode(false);
       if (_docVertical) unawaited(_hwpController.setScrollMemos({for (final e in _scrollMemos.entries) e.key: _jsStrokes(e.value)}));
       if (!mounted) return;
+      _hwpEditExitedAt = DateTime.now();
+      _dropIdleShot();
+      _snapHide();
       _resetTouchAfterEdit();
+      unawaited(() async {
+        try {
+          final dir = await PageSnapshotService.documentDir(widget.filePath);
+          if (dir != null && dir.existsSync()) dir.deleteSync(recursive: true);
+        } catch (_) {}
+      }());
       setState(() {
         _isHwpEditMode = false;
         _hwpHasEdits = false;
-      _hwpHasSelection = false;
         _hwpHasSelection = false;
         _hwpCanUndo = false;
         _hwpCanRedo = false;
@@ -4577,7 +4593,16 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   /// 취소 단추: 아무런 편집이 없어도 즉시 편집 종료, 수정 내용이 있으면 모두 원복 후 종료
   Future<void> _cancelHwpEditMode() async {
     if (!_isHwpEditMode) return;
+    _hwpEditExitedAt = DateTime.now();
+    _dropIdleShot();
+    _snapHide();
     _resetTouchAfterEdit();
+    unawaited(() async {
+      try {
+        final dir = await PageSnapshotService.documentDir(widget.filePath);
+        if (dir != null && dir.existsSync()) dir.deleteSync(recursive: true);
+      } catch (_) {}
+    }());
     setState(() {
       _isHwpEditMode = false;
       _hwpHasEdits = false;
@@ -4612,6 +4637,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     });
     _snapCaptureSerial++;
     _snapHide();
+    _dropIdleShot();
     if (_docVertical) unawaited(_hwpController.setScrollMemos(const {}));
     _hwpController.setEditMode(true);
   }

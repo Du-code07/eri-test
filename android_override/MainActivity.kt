@@ -3903,7 +3903,7 @@ class DocumentCameraActivity : android.app.Activity(), android.view.TextureView.
         }
         root.addView(cameraFrame, cameraFrameLp)
 
-        // 상단 컨트롤 바 (좌측 ✕ 닫기 버튼 + 우측 플래시 [끄기 / 오토 / 켜기] 전환 버튼)
+        // 상단 컨트롤 바 (좌측 ✕ 닫기 버튼)
         val topBar = android.widget.RelativeLayout(this).apply {
             setBackgroundColor(uiBg)
             setPadding(dp(12f), dp(6f), dp(14f), dp(6f))
@@ -3923,32 +3923,6 @@ class DocumentCameraActivity : android.app.Activity(), android.view.TextureView.
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply {
                 addRule(android.widget.RelativeLayout.ALIGN_PARENT_LEFT)
-                addRule(android.widget.RelativeLayout.CENTER_VERTICAL)
-            }
-        )
-
-        val flashBtnContainer = android.widget.FrameLayout(this).apply {
-            setPadding(dp(10f), dp(8f), dp(10f), dp(8f))
-            setOnClickListener {
-                flashMode = (flashMode + 1) % 3
-                updateFlashUiAndHardware()
-            }
-        }
-        flashIconView = android.widget.ImageView(this).apply {
-            setImageBitmap(getFlashIconBitmap(flashMode))
-        }
-        flashBtnContainer.addView(
-            flashIconView,
-            android.widget.FrameLayout.LayoutParams(dp(24f), dp(24f), android.view.Gravity.CENTER)
-        )
-
-        topBar.addView(
-            flashBtnContainer,
-            android.widget.RelativeLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                addRule(android.widget.RelativeLayout.ALIGN_PARENT_RIGHT)
                 addRule(android.widget.RelativeLayout.CENTER_VERTICAL)
             }
         )
@@ -4121,6 +4095,24 @@ class DocumentCameraActivity : android.app.Activity(), android.view.TextureView.
         )
 
         val rightZone = android.widget.FrameLayout(this)
+        val flashBtnContainer = android.widget.FrameLayout(this).apply {
+            setPadding(dp(10f), dp(10f), dp(10f), dp(10f))
+            setOnClickListener {
+                flashMode = (flashMode + 1) % 3
+                updateFlashUiAndHardware()
+            }
+        }
+        flashIconView = android.widget.ImageView(this).apply {
+            setImageBitmap(getFlashIconBitmap(flashMode))
+        }
+        flashBtnContainer.addView(
+            flashIconView,
+            android.widget.FrameLayout.LayoutParams(dp(28f), dp(28f), android.view.Gravity.CENTER)
+        )
+        rightZone.addView(
+            flashBtnContainer,
+            android.widget.FrameLayout.LayoutParams(dp(56f), dp(56f), android.view.Gravity.CENTER)
+        )
         actionRow.addView(
             rightZone,
             android.widget.LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
