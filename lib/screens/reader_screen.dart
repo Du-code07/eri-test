@@ -350,6 +350,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   String? _hwpSubPanel; // 'size' | 'color' | null
   double _lastSlideEditKb = 0.0;
   double _lastHwpKbInset = 0;
+  Timer? _hwpKbTimer;
   bool get _canHwpEdit => _isHwpFile || _isDocxFile;
   bool _isEraserMode = false;
   bool _allowFingerDrawing = false;
@@ -3398,9 +3399,16 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   }
 
   void _swipeTrackUp(PointerEvent e, {bool cancelled = false}) {
-    if (_isSpreadsheet || _editBlockSwipe) return;
+    if (_isSpreadsheet) return;
     if (_isMemoMode && _isStylusEvent(e)) return;
     if (_swipeActivePointers > 0) _swipeActivePointers--;
+    if (_editBlockSwipe) {
+      if (_swipeActivePointers == 0) {
+        _swipeStartPos = null;
+        _swipeStartTime = null;
+      }
+      return;
+    }
     if (_swipeActivePointers > 0) return;
 
     final start = _swipeStartPos;
@@ -4139,6 +4147,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
 
   @override
   void dispose() {
+    _hwpKbTimer?.cancel();
     ToolbarLayout.current.removeListener(_onToolbarLayout);
     MemoTools.changed.removeListener(_onToolbarLayout);
     _outlineProgress.dispose();
@@ -4494,6 +4503,27 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     return '#${rgb.toRadixString(16).padLeft(6, '0')}';
   }
 
+  /// 편집 모드 종료 직후 남아 있을 수 있는 터치·제스처 상태를 모두 초기화 (편집 후 터치 먹통 방지)
+  void _resetTouchAfterEdit() {
+    _hwpKbTimer?.cancel();
+    _hwpKbTimer = null;
+    _swipeActivePointers = 0;
+    _tapPointers = 0;
+    _swipeMultiTouch = false;
+    _swipeHandledByDrag = false;
+    _swipeScaleStarted = false;
+    _swipeStartPos = null;
+    _swipeStartTime = null;
+    _pointerDownPosition = null;
+    _pointerDownTime = null;
+    _docPressTimer?.cancel();
+    _docPressAt = null;
+    _docPressSelecting = false;
+    _docDownOnControls = false;
+    _hwpHasSelection = false;
+    _syncDocScrollLock();
+  }
+
   /// 저장 단추를 눌렀을 때만 파일에 수정 내용을 기록하고 편집 종료
   Future<void> _saveHwpEdits() async {
     if (!_canHwpEdit || _hwpSaving) return;
@@ -4526,6 +4556,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       await _hwpController.setEditMode(false);
       if (_docVertical) unawaited(_hwpController.setScrollMemos({for (final e in _scrollMemos.entries) e.key: _jsStrokes(e.value)}));
       if (!mounted) return;
+      _resetTouchAfterEdit();
       setState(() {
         _isHwpEditMode = false;
         _hwpHasEdits = false;
@@ -4545,6 +4576,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   /// 취소 단추: 아무런 편집이 없어도 즉시 편집 종료, 수정 내용이 있으면 모두 원복 후 종료
   Future<void> _cancelHwpEditMode() async {
     if (!_isHwpEditMode) return;
+    _resetTouchAfterEdit();
     setState(() {
       _isHwpEditMode = false;
       _hwpHasEdits = false;
@@ -4725,10 +4757,14 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   /// 문서 편집 막대: 메모 도구 모음 막대(MemoToolbar)와 동일한 형태
   /// 순서: 볼드체 · 글자 크기 · 글자 색 · 되돌리기 · 다시 실행 · 취소 · 저장
   Widget _buildHwpInlineEditBar(double bottomPadding) {
-    final double kb = MediaQuery.of(context).viewInsets.bottom;
+    final double kb = MediaQuery.viewInsetsOf(context).bottom;
     if ((kb - _lastHwpKbInset).abs() > 1.0) {
       _lastHwpKbInset = kb;
-      unawaited(_hwpController.setKeyboardInset(kb));
+      // 자판이 올라오는 매 프레임마다 WebView 리플로우를 유발하지 않도록 애니메이션 종료 후 1회만 전달
+      _hwpKbTimer?.cancel();
+      _hwpKbTimer = Timer(const Duration(milliseconds: 140), () {
+        if (mounted && _isHwpEditMode) unawaited(_hwpController.setKeyboardInset(_lastHwpKbInset));
+      });
     }
     final double bottomOffset = kb > 0 ? kb + 8.0 : math.max<double>(bottomPadding + 24.0, 28.0);
     final List<Widget> items = [

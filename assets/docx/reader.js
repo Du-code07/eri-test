@@ -1923,10 +1923,34 @@ function docxRenderSelection() {
   if (!docxEditMode || !docxSelRange || docxSelRange.collapsed) return;
   docxRemoveCaret();
   try {
-    const rawRects = [...docxSelRange.getClientRects()]
-      .filter(r => r.width > 0.5 && r.height > 0.5)
-      .map(r => ({ left: r.left, right: r.right, top: r.top, bottom: r.bottom, midY: (r.top + r.bottom) * 0.5 }))
-      .sort((a, b) => a.midY - b.midY || a.left - b.left);
+    // 다중 문단 Range.getClientRects()는 <x-p> 블록 전체 박스를 함께 반환해 하이라이트가 2겹으로 생김 →
+    // 선택 범위와 겹치는 실제 텍스트 노드(NodeFilter.SHOW_TEXT)만 순회해 줄 단위 사각형만 추출
+    const ancestor = docxSelRange.commonAncestorContainer.nodeType === 1
+      ? docxSelRange.commonAncestorContainer
+      : docxSelRange.commonAncestorContainer.parentElement;
+    const rawRects = [];
+    if (ancestor) {
+      const tw = document.createTreeWalker(ancestor, NodeFilter.SHOW_TEXT);
+      let tn = tw.nextNode();
+      while (tn) {
+        if ((tn.nodeValue || '').trim().length > 0 && docxSelRange.intersectsNode(tn)) {
+          const sOff = tn === docxSelRange.startContainer ? docxSelRange.startOffset : 0;
+          const eOff = tn === docxSelRange.endContainer ? docxSelRange.endOffset : tn.nodeValue.length;
+          if (eOff > sOff) {
+            const sub = document.createRange();
+            sub.setStart(tn, sOff);
+            sub.setEnd(tn, eOff);
+            for (const r of sub.getClientRects()) {
+              if (r.width > 0.5 && r.height > 0.5 && r.height < 120) {
+                rawRects.push({ left: r.left, right: r.right, top: r.top, bottom: r.bottom, midY: (r.top + r.bottom) * 0.5 });
+              }
+            }
+          }
+        }
+        tn = tw.nextNode();
+      }
+    }
+    rawRects.sort((a, b) => a.midY - b.midY || a.left - b.left);
     if (rawRects.length === 0) return;
 
     // 같은 줄에 중복 생성되는 인라인 사각형을 하나로 병합해 하이라이트 겹침(진해짐) 제거
