@@ -361,7 +361,21 @@ jobs:
               for name in ('LICENSE', 'THIRD_PARTY_NOTICES.md'):
                   if not (root / group / name).is_file():
                       raise SystemExit(f'Missing Excel license notice: {group}/{name}')
-          print(f'Excel assets verified (integration revision {revision})')
+          for req in (
+              'assets/hwp/index.html',
+              'assets/hwp/reader.css',
+              'assets/hwp/reader.js',
+              'assets/hwp/rhwp.js',
+              'assets/hwp/rhwp_bg.wasm',
+              'assets/hwp/fonts/NotoSansKR-Regular.woff2',
+              'assets/hwp/fonts/NotoSansKR-Bold.woff2',
+              'assets/hwp/fonts/NotoSerifKR-Regular.woff2',
+              'assets/hwp/fonts/NotoSerifKR-Bold.woff2',
+              'assets/hwp/fonts/LatinModernMath-Regular.woff2',
+          ):
+              if not Path(req).is_file():
+                  raise SystemExit(f'Missing HWP asset: {req} — upload the full assets/hwp folder!')
+          print(f'Excel & HWP assets verified (integration revision {revision})')
           PY
 
       - name: 5. Build Release APK (Direct Install/Update) & AAB (Google Play Store)
