@@ -724,12 +724,8 @@ class _HwpViewerState extends State<HwpViewer> {
     final String ta = locked ? 'none' : '';
     final String flag = locked ? 'true' : 'false';
     try {
-      unawaited(_web?.setSettings(
-        settings: InAppWebViewSettings(
-          disableVerticalScroll: locked || (!_isSpreadsheet && !widget.vertical),
-          disableHorizontalScroll: locked || (!_isSpreadsheet && !widget.vertical),
-        ),
-      ));
+      // 주의: _web.setSettings()를 드래그 도중 호출하면 InAppWebViewSettings 기본값 덮어쓰기 및
+      // 진행 중인 터치 시퀀스 취소가 발생하므로 JS/CSS 잠금만 사용해 드래그를 끊지 않고 스크롤만 차단
       _web?.evaluateJavascript(
         source: "try{"
             "window.__eriScrollLocked=$flag;"
