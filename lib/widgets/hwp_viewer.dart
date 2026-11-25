@@ -74,6 +74,7 @@ class HwpReaderController {
 
   /// 한글·워드 스크롤 보기: 전체 중 비율 위치(0~1)로 바로 이동 (오른쪽 회색 막대)
   Future<void> scrollToRatio(double ratio) async => _invoke?.call('scrollToRatio', [ratio]);
+  Future<void> scrollByPx(double dy) async => _invoke?.call('scrollByPx', [dy]);
 
   // ── 파일 내 단어 검색 ──
   Future<Object?> Function(String, List<Object?>)? _query;
@@ -760,7 +761,10 @@ class _HwpViewerState extends State<HwpViewer> {
           // 슬라이드→스크롤로 바꾸면 스크롤이 먹통이 됐었음. 그래서 목록은 그대로 두고, 누를 때마다 지금 보기 방식을 확인함
           gestureRecognizers: {
             Factory<OneSequenceGestureRecognizer>(() => _ModeEagerRecognizer(() => mounted && (_isSpreadsheet || widget.vertical))),
-            // 문서 편집 모드(슬라이드 포함): 길게 눌러 드래그 선택할 때만 WebView가 터치를 받아 핀치 줌·이동과 충돌 없이 동작
+            // 슬라이드 편집 모드에서 하이라이트 선택 중: 한 손가락 드래그는 0ms 즉시 WebView(손잡이)로 넘기고,
+            // 두 손가락이 닿으면 즉시 양보해 InteractiveViewer 핀치 줌 인·아웃이 막히지 않게 함
+            Factory<OneSequenceGestureRecognizer>(() => _SingleFingerDragRecognizer(() => mounted && widget.editMode && !widget.vertical && (widget.hasSelection || MediaQuery.viewInsetsOf(context).bottom > 0))),
+            // 문서 편집 모드(슬라이드 포함): 길게 눌러 드래그 선택할 때 WebView가 터치를 받음
             Factory<LongPressGestureRecognizer>(() => _ModeLongPressRecognizer(() => mounted && (_isSpreadsheet || widget.editMode))),
           },
           initialUrlRequest: URLRequest(url: WebUri(_entry)),
@@ -864,6 +868,59 @@ class _ModeLongPressRecognizer extends LongPressGestureRecognizer {
 
   @override
   bool isPointerAllowed(PointerDownEvent event) => active() && super.isPointerAllowed(event);
+}
+
+
+/// 슬라이드 편집 모드 하이라이트 중 한 손가락 손잡이 드래그만 즉시 WebView로 넘기고,
+/// 두 손가락 핀치 줌은 즉시 거절해 InteractiveViewer가 처리하도록 함
+class _SingleFingerDragRecognizer extends OneSequenceGestureRecognizer {
+  _SingleFingerDragRecognizer(this.active);
+  final bool Function() active;
+  final Map<int, Offset> _downPos = <int, Offset>{};
+  bool _accepted = false;
+
+  @override
+  bool isPointerAllowed(PointerDownEvent event) => active() && super.isPointerAllowed(event);
+
+  @override
+  void addAllowedPointer(PointerDownEvent event) {
+    super.addAllowedPointer(event);
+    _downPos[event.pointer] = event.position;
+    if (_downPos.length >= 2) {
+      // 두 손가락 핀치: 즉시 거절해 InteractiveViewer가 줌 처리
+      _accepted = false;
+      resolve(GestureDisposition.rejected);
+      _downPos.clear();
+    }
+  }
+
+  @override
+  void handleEvent(PointerEvent event) {
+    if (event is PointerMoveEvent) {
+      if (_downPos.length == 1 && !_accepted) {
+        final start = _downPos[event.pointer];
+        if (start != null && (event.position - start).distance >= 4.0) {
+          _accepted = true;
+          resolve(GestureDisposition.accepted);
+        }
+      }
+    } else if (event is PointerUpEvent || event is PointerCancelEvent) {
+      _downPos.remove(event.pointer);
+      if (_downPos.isEmpty) {
+        _accepted = false;
+        stopTrackingPointer(event.pointer);
+      }
+    }
+  }
+
+  @override
+  void didStopTrackingLastPointer(int pointer) {
+    _downPos.clear();
+    _accepted = false;
+  }
+
+  @override
+  String get debugDescription => 'single finger edit handle drag';
 }
 
 class _ModeEagerRecognizer extends OneSequenceGestureRecognizer {

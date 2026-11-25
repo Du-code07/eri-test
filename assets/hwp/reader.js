@@ -1480,6 +1480,8 @@ function ensureEditDom() {
       '.eri-sel-handle-knob{position:absolute;left:14px;top:6px;width:20px;height:20px;background:#2f7d32;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.32);box-sizing:border-box;border-radius:0 50% 50% 50%;transform:rotate(45deg);}',
       '.eri-sel-handle[data-kind="start"] .eri-sel-handle-knob{border-radius:50% 0 50% 50%;transform:rotate(45deg);left:8px;}',
       '.eri-sel-handle[data-kind="end"] .eri-sel-handle-knob{border-radius:0 50% 50% 50%;transform:rotate(45deg);left:20px;}',
+      '.eri-caret-handle{position:absolute;width:48px;height:48px;z-index:45;touch-action:none;pointer-events:auto;}',
+      '.eri-caret-handle-knob{position:absolute;left:14px;top:6px;width:20px;height:20px;background:#2f7d32;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.32);box-sizing:border-box;border-radius:0 50% 50% 50%;transform:rotate(45deg);}',
       '#eri-ime{position:fixed;left:0;top:0;opacity:0.001;width:2px;height:20px;border:0;padding:0;margin:0;resize:none;z-index:9998;pointer-events:none;font-size:16px;background:transparent;color:transparent;caret-color:transparent;}',
     ].join(' ');
     document.head.appendChild(st);
@@ -1654,8 +1656,37 @@ function markEditDirty() {
   }
 }
 
-function removeAllCarets() {
+let caretHandleEl = null;
+let caretHandleDragging = false;
+
+function removeAllCarets(keepHandle = false) {
   for (const el of document.querySelectorAll('.eri-caret-rect')) el.remove();
+  if (!keepHandle) {
+    for (const el of document.querySelectorAll('.eri-caret-handle')) el.remove();
+    caretHandleEl = null;
+  }
+}
+
+function mountCaretHandle(frame, leftPct, topPct) {
+  if (!frame) return;
+  if (!caretHandleEl) {
+    const h = document.createElement('div');
+    h.className = 'eri-caret-handle';
+    const knob = document.createElement('div');
+    knob.className = 'eri-caret-handle-knob';
+    h.appendChild(knob);
+    caretHandleEl = h;
+  }
+  const cx = Math.max(2, Math.min(98, Number(leftPct) || 0));
+  const cy = Math.max(2, Math.min(96, Number(topPct) || 0));
+  caretHandleEl.style.left = `${cx}%`;
+  caretHandleEl.style.top = `${cy}%`;
+  caretHandleEl.style.marginLeft = '-24px';
+  caretHandleEl.style.marginTop = '-2px';
+  caretHandleEl.style.display = 'block';
+  caretHandleEl.style.visibility = 'visible';
+  caretHandleEl.style.zIndex = '45';
+  if (caretHandleEl.parentNode !== frame) frame.appendChild(caretHandleEl);
 }
 
 function replaceBodyLocalChunked(sec, para, off, del, ins) {
@@ -1945,63 +1976,145 @@ function cancelDragRaf() {
   eriDragPending = null;
 }
 
+let hwpAutoScrollRaf = 0;
+let hwpAutoScrollPt = null;
+
+function stopHwpAutoScroll() {
+  if (hwpAutoScrollRaf) { cancelAnimationFrame(hwpAutoScrollRaf); hwpAutoScrollRaf = 0; }
+  hwpAutoScrollPt = null;
+}
+
+function applyHwpHandlePoint(x, y) {
+  const hit = hitTestClientPoint(x, y - 18);
+  if (!hit) return;
+  if (caretHandleDragging) {
+    editCursor = { ...hit };
+    editSelection = null;
+    updateCaretPos();
+    return;
+  }
+  if (!selHandleDragging || !selAnchorHit || !sameSelContainer(selAnchorHit, hit)) return;
+  const cmp = compareEditPos(selAnchorHit, hit);
+  const st = cmp <= 0 ? { ...selAnchorHit } : { ...hit };
+  const en = cmp <= 0 ? { ...hit } : { ...selAnchorHit };
+  if (compareEditPos(st, en) === 0) {
+    const pLen = getParagraphLenAt(st);
+    const ne = Math.min(pLen, st.offset + 1);
+    editSelection = { start: st, end: { ...en, offset: ne } };
+  } else {
+    editSelection = { start: st, end: en };
+  }
+  renderEditSelection();
+}
+
+function tickHwpAutoScroll() {
+  hwpAutoScrollRaf = 0;
+  if ((!selHandleDragging && !caretHandleDragging) || !hwpAutoScrollPt || !vertical || !vhost) return;
+  const { x, y } = hwpAutoScrollPt;
+  const topEdge = 64;
+  const botEdge = window.innerHeight - (editKeyboardInset > 0 ? editKeyboardInset + 72 : 48);
+  let dy = 0;
+  if (y > botEdge - 48) {
+    dy = Math.min(18, Math.max(4, ((y - (botEdge - 48)) / 48) * 14));
+  } else if (y < topEdge + 44) {
+    dy = -Math.min(18, Math.max(4, (((topEdge + 44) - y) / 44) * 14));
+  }
+  if (dy !== 0) {
+    const prevTop = vhost.scrollTop;
+    vhost.scrollTop = Math.max(0, Math.min(vhost.scrollHeight - vhost.clientHeight, prevTop + dy));
+    if (vhost.scrollTop !== prevTop) {
+      vUpdate();
+      vReportMetrics();
+      applyHwpHandlePoint(x, y);
+    }
+    hwpAutoScrollRaf = requestAnimationFrame(tickHwpAutoScroll);
+  }
+}
+
 function handleSelHandleDocStart(e) {
-  if (!editModeOn || !editSelection || e.touches.length !== 1) return;
-  const handles = [...document.querySelectorAll('.eri-sel-handle')];
-  if (handles.length === 0) return;
+  if (!editModeOn || !doc || disposed || e.touches.length !== 1) return;
   const t = e.touches[0];
-  let best = null, bestDist = 44;
-  for (const h of handles) {
-    const r = h.getBoundingClientRect();
-    const cx = (r.left + r.right) * 0.5;
-    const cy = (r.top + r.bottom) * 0.5;
-    const d = Math.hypot(t.clientX - cx, t.clientY - cy);
-    if (d <= bestDist) {
-      bestDist = d;
-      best = h;
+
+  // 1) 선택 손잡이(양쪽) 우선 확인
+  if (editSelection) {
+    const handles = [...document.querySelectorAll('.eri-sel-handle')];
+    let best = null, bestDist = 64;
+    for (const h of handles) {
+      const r = h.getBoundingClientRect();
+      const cx = (r.left + r.right) * 0.5;
+      const cy = r.top + 18;
+      const d = Math.hypot(t.clientX - cx, t.clientY - cy);
+      if (d <= bestDist) { bestDist = d; best = h; }
+    }
+    if (best) {
+      e.stopImmediatePropagation();
+      e.stopPropagation();
+      e.preventDefault();
+      if (selDragTimer) { clearTimeout(selDragTimer); selDragTimer = 0; }
+      const kind = best.dataset.kind;
+      selHandleDragging = true;
+      caretHandleDragging = false;
+      selDragActive = false;
+      selAnchorHit = kind === 'start' ? { ...editSelection.end } : { ...editSelection.start };
+      return;
     }
   }
-  if (!best) return;
-  e.stopImmediatePropagation();
-  e.stopPropagation();
-  e.preventDefault();
-  if (selDragTimer) { clearTimeout(selDragTimer); selDragTimer = 0; }
-  const kind = best.dataset.kind;
-  selHandleDragging = true;
-  selDragActive = true;
-  selAnchorHit = kind === 'start' ? { ...editSelection.end } : { ...editSelection.start };
+
+  // 2) 커서 밑 손잡이 확인
+  if (!editSelection && editCursor && caretHandleEl && caretHandleEl.isConnected) {
+    const r = caretHandleEl.getBoundingClientRect();
+    const cx = (r.left + r.right) * 0.5;
+    const cy = r.top + 18;
+    if (Math.hypot(t.clientX - cx, t.clientY - cy) <= 58) {
+      e.stopImmediatePropagation();
+      e.stopPropagation();
+      e.preventDefault();
+      if (selDragTimer) { clearTimeout(selDragTimer); selDragTimer = 0; }
+      caretHandleDragging = true;
+      stopHwpAutoScroll();
+    caretHandleDragging = false;
+    selHandleDragging = false;
+      return;
+    }
+  }
 }
 
 function handleSelHandleDocMove(e) {
-  if (!selHandleDragging || !selAnchorHit || !e.touches.length) return;
+  if ((!selHandleDragging && !caretHandleDragging) || !e.touches.length) return;
   e.stopImmediatePropagation();
   e.stopPropagation();
   e.preventDefault();
   const t = e.touches[0];
-  eriDragPending = { mode: 'handle', x: t.clientX, y: t.clientY - 18 };
+  hwpAutoScrollPt = { x: t.clientX, y: t.clientY };
+  if (vertical && vhost && !hwpAutoScrollRaf) {
+    const topEdge = 64;
+    const botEdge = window.innerHeight - (editKeyboardInset > 0 ? editKeyboardInset + 72 : 48);
+    if (t.clientY > botEdge - 48 || t.clientY < topEdge + 44) {
+      hwpAutoScrollRaf = requestAnimationFrame(tickHwpAutoScroll);
+    }
+  }
+  eriDragPending = { x: t.clientX, y: t.clientY };
   if (eriDragRaf) return;
   eriDragRaf = requestAnimationFrame(() => {
     eriDragRaf = 0;
     const p = eriDragPending;
     eriDragPending = null;
-    if (!p || !selHandleDragging || !selAnchorHit) return;
-    const hit = hitTestClientPoint(p.x, p.y);
-    if (!hit || !sameSelContainer(selAnchorHit, hit)) return;
-    const cmp = compareEditPos(selAnchorHit, hit);
-    const st = cmp <= 0 ? { ...selAnchorHit } : { ...hit };
-    const en = cmp <= 0 ? { ...hit } : { ...selAnchorHit };
-    editSelection = { start: st, end: en };
-    renderEditSelection();
+    if (!p || (!selHandleDragging && !caretHandleDragging)) return;
+    applyHwpHandlePoint(p.x, p.y);
   });
 }
 
 function handleSelHandleDocEnd(e) {
-  if (!selHandleDragging) return;
+  stopHwpAutoScroll();
+  if (!selHandleDragging && !caretHandleDragging) return;
   cancelDragRaf();
+  const wasCaret = caretHandleDragging;
   selHandleDragging = false;
+  caretHandleDragging = false;
   selDragActive = false;
   selJustFinishedAt = Date.now();
-  e.stopPropagation();
+  if (e && e.stopPropagation) e.stopPropagation();
+  if (wasCaret) updateCaretPos();
   if (editImeEl) {
     suppressingImeReset = false;
     resetImeBuffer();
@@ -2325,90 +2438,72 @@ function hitTestClientPoint(clientX, clientY) {
 
 let selDownX = 0, selDownY = 0;
 
+function expandHwpWordBounds(h) {
+  const pLen = getParagraphLenAt(h);
+  if (pLen <= 0) return { s0: 0, e0: 0 };
+  const idx = Math.max(0, Math.min(pLen - 1, h.offset >= pLen ? pLen - 1 : h.offset));
+  const winStart = Math.max(0, idx - 32);
+  const winLen = Math.min(pLen - winStart, 64);
+  const txt = readTextSliceAt(h, winStart, winLen);
+  if (!txt) {
+    return { s0: idx, e0: Math.min(pLen, idx + 1) };
+  }
+  const rel = Math.max(0, Math.min(txt.length - 1, idx - winStart));
+  const isWordChar = (ch) => ch && !/[\s.,!?;:()\[\]{}"'·•❖\-\/]/.test(ch);
+  let l = rel, r = rel + 1;
+  if (isWordChar(txt[rel])) {
+    while (l > 0 && isWordChar(txt[l - 1])) l--;
+    while (r < txt.length && isWordChar(txt[r])) r++;
+  }
+  return { s0: winStart + l, e0: Math.min(pLen, winStart + r) };
+}
+
 function handleEditTouchStart(e) {
-  if (!editModeOn || !doc || disposed || selHandleDragging) return;
-  if (e.target && e.target.closest && e.target.closest('.eri-sel-handle')) return;
+  if (!editModeOn || !doc || disposed || selHandleDragging || caretHandleDragging) return;
+  if (e.target && e.target.closest && e.target.closest('.eri-sel-handle, .eri-caret-handle')) return;
   if (e.touches.length !== 1) {
     if (selDragTimer) { clearTimeout(selDragTimer); selDragTimer = 0; }
-    selDragActive = false;
     return;
   }
   const t = e.touches[0];
   selDownX = t.clientX;
   selDownY = t.clientY;
   if (selDragTimer) { clearTimeout(selDragTimer); selDragTimer = 0; }
+  // 한 단어를 길게 누르면 단어 전체를 하이라이트하고 양쪽 손잡이 표시 (영역 확장은 손잡이로만)
   selDragTimer = setTimeout(() => {
     selDragTimer = 0;
     const h = hitTestClientPoint(selDownX, selDownY);
     if (!h) return;
-    selDragActive = true;
-    selAnchorHit = h;
-    editCursor = { ...h };
-    const pLen = getParagraphLenAt(h);
-    const s0 = Math.max(0, h.offset > 0 && h.offset >= pLen ? h.offset - 1 : h.offset);
-    const e0 = Math.min(pLen, s0 + 1);
+    const { s0, e0 } = expandHwpWordBounds(h);
+    if (e0 <= s0) return;
+    selDragActive = false;
+    selAnchorHit = null;
+    selJustFinishedAt = Date.now();
+    editCursor = { ...h, offset: e0 };
     editSelection = { start: { ...h, offset: s0 }, end: { ...h, offset: e0 } };
     removeAllCarets();
     renderEditSelection();
     emitEditState();
-  }, 260);
+  }, 300);
 }
 
 function handleEditTouchMove(e) {
   if (!editModeOn || !doc || disposed) return;
   if (e.touches.length !== 1) {
     if (selDragTimer) { clearTimeout(selDragTimer); selDragTimer = 0; }
-    selDragActive = false;
     return;
   }
   const t = e.touches[0];
-  if (selDragTimer && !selDragActive) {
-    if (Math.hypot(t.clientX - selDownX, t.clientY - selDownY) > 16) {
-      clearTimeout(selDragTimer);
-      selDragTimer = 0;
-    }
-    return;
+  if (selDragTimer && Math.hypot(t.clientX - selDownX, t.clientY - selDownY) > 14) {
+    clearTimeout(selDragTimer);
+    selDragTimer = 0;
   }
-  if (!selDragActive || !selAnchorHit) return;
-  e.preventDefault();
-  eriDragPending = { mode: 'drag', x: t.clientX, y: t.clientY };
-  if (eriDragRaf) return;
-  eriDragRaf = requestAnimationFrame(() => {
-    eriDragRaf = 0;
-    const p = eriDragPending;
-    eriDragPending = null;
-    if (!p || !selDragActive || !selAnchorHit) return;
-    const h = hitTestClientPoint(p.x, p.y);
-    if (!h || !sameSelContainer(selAnchorHit, h)) return;
-    const cmp = compareEditPos(selAnchorHit, h);
-    let st = cmp <= 0 ? { ...selAnchorHit } : { ...h };
-    let en = cmp <= 0 ? { ...h } : { ...selAnchorHit };
-    if (compareEditPos(st, en) === 0) {
-      const pLen = getParagraphLenAt(st);
-      en = { ...en, offset: Math.min(pLen, st.offset + 1) };
-    }
-    editSelection = { start: st, end: en };
-    renderEditSelection();
-  });
 }
 
 function handleEditTouchEnd() {
-  cancelDragRaf();
   if (selDragTimer) { clearTimeout(selDragTimer); selDragTimer = 0; }
-  if (!selDragActive) return;
-  selDragActive = false;
-  selJustFinishedAt = Date.now();
-  if (editSelection && compareEditPos(editSelection.start, editSelection.end) < 0) {
-    if (editImeEl) {
-      suppressingImeReset = false;
-      resetImeBuffer();
-      editImeEl.focus({ preventScroll: true });
-    }
-    emitEditState();
-  } else {
-    editSelection = null;
-    removeAllSelRects();
-    updateCaretPos();
+  if (editSelection && Date.now() - selJustFinishedAt < 800) {
+    selJustFinishedAt = Date.now();
   }
 }
 
@@ -2537,7 +2632,7 @@ function findPageFrameByIndex(pIdx) {
 }
 
 function updateCaretPos() {
-  removeAllCarets();
+  removeAllCarets(caretHandleDragging);
   if (!editModeOn || !editCursor || !doc) return;
   const c = editCursor;
   try {
@@ -2574,6 +2669,14 @@ function updateCaretPos() {
     caret.setAttribute('height', String(caretH));
     caret.setAttribute('rx', String(caretW * 0.35));
     svg.appendChild(caret);
+    if (!editSelection) {
+      const fRect = frame.getBoundingClientRect();
+      if (fRect.width > 0 && fRect.height > 0 && rectPx.width > 0 && rectPx.height > 0) {
+        const px = (rectPx.left - fRect.left) + (r.x / engW) * rectPx.width;
+        const py = (rectPx.top - fRect.top) + ((r.y + (r.height > 0 ? r.height : 14)) / engH) * rectPx.height;
+        mountCaretHandle(frame, (px / fRect.width) * 100, (py / fRect.height) * 100);
+      }
+    }
   } catch (err) {
     console.warn('HWP updateCaretPos failed:', err);
   }
@@ -2581,7 +2684,8 @@ function updateCaretPos() {
 
 function handleDirectEditClick(e) {
   if (!editModeOn || !doc || disposed) return;
-  if (Date.now() - lastPinchEndedAt < 350 || Date.now() - selJustFinishedAt < 350) return;
+  if (Date.now() - lastPinchEndedAt < 350 || Date.now() - selJustFinishedAt < 650) return;
+  if (e.target && e.target.closest && e.target.closest('.eri-sel-handle, .eri-caret-handle')) return;
   const targetPageEl = e.target && e.target.closest ? e.target.closest('.page, .vslot') : null;
   const frame = targetPageEl && targetPageEl.classList.contains('page')
     ? targetPageEl
@@ -2699,6 +2803,8 @@ function setEditMode(enabled) {
     document.removeEventListener('touchstart', handleSelHandleDocStart, true);
     document.removeEventListener('touchstart', handleEditTouchStart, true);
     cancelDragRaf();
+    stopHwpAutoScroll();
+    caretHandleDragging = false;
     selHandleDragging = false;
     document.removeEventListener('touchmove', handleSelHandleDocMove, true);
     document.removeEventListener('touchend', handleSelHandleDocEnd, true);
@@ -2771,7 +2877,7 @@ function exportEditedBytes(preferHwpx) {
   }
 }
 
-window.freaderHwp = { setView, resetScrollZoom: vResetZoom, setScrollMarks, setScrollMemos, setScrollMemo, visibleSlots: vVisibleSlots, mostVisiblePage: vMostVisible, highlightBoxes: withoutZoom(highlightBoxes), beginDocument, pageSizes, setVertical, scrollToRatio: vScrollToRatio, appendChunk, openDocument, configure, display, next, previous, progress, highlightSelection: withoutZoom(highlightSelection), destroy,
+window.freaderHwp = { setView, resetScrollZoom: vResetZoom, setScrollMarks, setScrollMemos, setScrollMemo, visibleSlots: vVisibleSlots, mostVisiblePage: vMostVisible, highlightBoxes: withoutZoom(highlightBoxes), beginDocument, pageSizes, setVertical, scrollToRatio: vScrollToRatio, scrollByPx: (dy) => { if (!vhost) return false; vhost.scrollTop = Math.max(0, Math.min(vhost.scrollHeight - vhost.clientHeight, vhost.scrollTop + (Number(dy) || 0))); vUpdate(); vReportMetrics(); return true; }, appendChunk, openDocument, configure, display, next, previous, progress, highlightSelection: withoutZoom(highlightSelection), destroy,
   search, showSearchResult, clearSearch, headingCandidates, pageText, visibleTextBoxes: withoutZoom(visibleTextBoxes), pageRect: withoutZoom(pageRect), setEditMode, setKeyboardInset, exportEditedBytes, editApplyFormat, editUndo, editRedo, cancelEditSession,
   getState: () => ({ ready: readyReported, page, count, cachedPages: cache.size, cachedBytes, received, spread: options.spread, maxBytes: MAX_BYTES }) };
 window.addEventListener('pagehide', destroy, { once: true });

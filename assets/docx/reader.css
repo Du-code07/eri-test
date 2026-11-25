@@ -161,3 +161,25 @@ body.eri-docx-edit, body.eri-docx-edit * {
   left: 20px;
 }
 
+.eri-caret-handle {
+  position: absolute;
+  width: 48px;
+  height: 48px;
+  z-index: 45;
+  touch-action: none;
+  pointer-events: auto;
+}
+.eri-caret-handle::after {
+  content: '';
+  position: absolute;
+  left: 14px;
+  top: 6px;
+  width: 20px;
+  height: 20px;
+  background: #2f7d32;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.32);
+  box-sizing: border-box;
+  border-radius: 0 50% 50% 50%;
+  transform: rotate(45deg);
+}

@@ -1229,7 +1229,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           child: ListenableBuilder(
           listenable: _docSel,
           builder: (context, child) => IgnorePointer(
-            ignoring: _docPressSelecting || _docSel.active,
+            ignoring: _docHandleDragging,
             child: child!,
           ),
           child: HwpViewer(
@@ -1272,8 +1272,12 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           vertical: _docVertical,
           onScrollMetrics: (top, height, client) {
             final prev = _docScrollMetrics.value;
-            if (_docSel.active && ((top - prev[0]).abs() > 3.0 || (height - prev[1]).abs() > 3.0)) {
-              _docSel.clear();
+            if (_docSel.active) {
+              if ((height - prev[1]).abs() > 3.0) {
+                _docSel.clear();
+              } else if ((top - prev[0]).abs() > 0.5) {
+                _docSel.shiftBy(Offset(0, -(top - prev[0])));
+              }
             }
             _docScrollMetrics.value = [top, height, client];
           },
@@ -2761,15 +2765,61 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   final GlobalKey _docSelKey = GlobalKey();
   Timer? _docPressTimer;
   bool _docPressSelecting = false;
+  bool _docHandleDragging = false;
+  Timer? _docCopyAutoScrollTimer;
+  bool _docCopyDragStart = false;
+  Offset? _docCopyDragGlobal;
   bool _docScrollLocked = false;
   Offset? _docPendingExtend;
 
   void _syncDocScrollLock() {
-    final bool lock = _docPressSelecting || _docSel.active || (_isHwpEditMode && _hwpHasSelection);
+    // 하이라이트가 있어도 스크롤 모드는 자유롭게 동작하고, 손잡이를 잡고 끌 때만 임시 잠금
+    final bool lock = _docHandleDragging;
     if (lock == _docScrollLocked) return;
     _docScrollLocked = lock;
     _hwpController.setScrollLocked(lock);
     if (mounted) setState(() {});
+  }
+
+  void _stopDocCopyAutoScroll() {
+    _docCopyAutoScrollTimer?.cancel();
+    _docCopyAutoScrollTimer = null;
+    _docCopyDragGlobal = null;
+  }
+
+  void _onDocCopyHandleUpdate(bool start, Offset globalPos) {
+    _docCopyDragStart = start;
+    _docCopyDragGlobal = globalPos;
+    if (!_docVertical) return;
+    final h = MediaQuery.sizeOf(context).height;
+    final bool nearBot = globalPos.dy > h - 84;
+    final bool nearTop = globalPos.dy < 84;
+    if (!nearBot && !nearTop) {
+      _docCopyAutoScrollTimer?.cancel();
+      _docCopyAutoScrollTimer = null;
+      return;
+    }
+    _docCopyAutoScrollTimer ??= Timer.periodic(const Duration(milliseconds: 32), (_) async {
+      final gp = _docCopyDragGlobal;
+      if (!mounted || !_docHandleDragging || gp == null || !_docVertical) {
+        _stopDocCopyAutoScroll();
+        return;
+      }
+      final vh = MediaQuery.sizeOf(context).height;
+      double dy = 0;
+      if (gp.dy > vh - 84) {
+        dy = ((gp.dy - (vh - 84)) / 60 * 14).clamp(5.0, 18.0);
+      } else if (gp.dy < 84) {
+        dy = -(((84 - gp.dy) / 60 * 14).clamp(5.0, 18.0));
+      }
+      if (dy == 0) return;
+      await _hwpController.scrollByPx(dy);
+      if (!mounted || !_docHandleDragging) return;
+      final box = _docSelKey.currentContext?.findRenderObject() as RenderBox?;
+      if (box != null && box.hasSize) {
+        _docSel.moveHandle(_docCopyDragStart, box.globalToLocal(gp) - const Offset(0, 28));
+      }
+    });
   }
   bool _docDownOnControls = false;
 
@@ -2835,27 +2885,14 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     _syncDocScrollLock();
   }
 
-  /// 손을 떼지 않고 끌면 범위를 늘림 (슬라이드·스크롤 모두 글자 선택 중에는 페이지가 움직이지 않게 고정)
+  /// 길게 누르면 단어 하나만 선택하고, 영역 확장은 양쪽 손잡이로만 처리 (하이라이트 중에도 스크롤 허용)
   bool _docSelMove(PointerMoveEvent e) {
     final pressAt = _docPressAt;
-    if (pressAt != null && (e.position - pressAt).distance > 12) _docPressMoved = true;
-    if (_docPressSelecting) {
-      final l = _docLocal(e.position);
-      if (l != null) {
-        if (_docSel.active) {
-          _docSel.extendTo(l);
-        } else {
-          _docPendingExtend = l;
-        }
-      }
-      return true;
+    if (pressAt != null && (e.position - pressAt).distance > 12) {
+      _docPressMoved = true;
+      _docPressTimer?.cancel();
     }
-    if (_docPressMoved) _docPressTimer?.cancel();
-    if (_docSel.active) {
-      // 글자 복사 선택 상태에서는 상하좌우로 움직여도 페이지가 넘어가거나 스크롤되지 않도록 고정
-      return true;
-    }
-    return false;
+    return _docHandleDragging;
   }
 
   void _docHighlight(List<Rect> rects) {
@@ -3351,7 +3388,21 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           Positioned.fill(
             child: SizedBox.expand(
               key: _docSelKey,
-              child: PageTextSelectLayer(sel: _docSel, tr: _tr, onHighlight: _docHighlight),
+              child: PageTextSelectLayer(
+                sel: _docSel,
+                tr: _tr,
+                onHighlight: _docHighlight,
+                onHandleDragStart: () {
+                  _docHandleDragging = true;
+                  _syncDocScrollLock();
+                },
+                onHandleDragUpdate: _onDocCopyHandleUpdate,
+                onHandleDragEnd: () {
+                  _stopDocCopyAutoScroll();
+                  _docHandleDragging = false;
+                  _syncDocScrollLock();
+                },
+              ),
             ),
           ),
       ],
@@ -4186,6 +4237,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     }
     _book.dispose();
     _docPressTimer?.cancel();
+    _stopDocCopyAutoScroll();
     _docSel.removeListener(_syncDocScrollLock);
     _docSel.dispose();
     _pageBar.hide();

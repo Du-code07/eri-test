@@ -199,6 +199,13 @@ class PageTextSelection extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 스크롤 보기에서 문서가 움직일 때 하이라이트와 손잡이도 글과 함께 이동
+  void shiftBy(Offset delta) {
+    if (!active || delta == Offset.zero) return;
+    lines = [for (final l in lines) SelLine(l.text, l.rect.shift(delta))];
+    notifyListeners();
+  }
+
   /// [p]에 가장 가까운 줄과 그 줄 안의 글자 자리
   (int, int)? hit(Offset p) {
     if (lines.isEmpty) return null;
@@ -335,7 +342,16 @@ class PageTextSelection extends ChangeNotifier {
 
 /// [PageTextSelection]을 그리는 층: 고른 글 바탕, 손잡이 두 개, 막대
 class PageTextSelectLayer extends StatelessWidget {
-  const PageTextSelectLayer({super.key, required this.sel, required this.tr, this.onDone, this.onHighlight});
+  const PageTextSelectLayer({
+    super.key,
+    required this.sel,
+    required this.tr,
+    this.onDone,
+    this.onHighlight,
+    this.onHandleDragStart,
+    this.onHandleDragUpdate,
+    this.onHandleDragEnd,
+  });
 
   /// 형광펜 칠하기: 고른 부분의 네모들(이 층 기준)을 받음. 없으면 단추를 숨김
   final void Function(List<Rect> rects)? onHighlight;
@@ -345,6 +361,9 @@ class PageTextSelectLayer extends StatelessWidget {
 
   /// 복사·공유를 누른 뒤
   final VoidCallback? onDone;
+  final VoidCallback? onHandleDragStart;
+  final void Function(bool start, Offset globalPosition)? onHandleDragUpdate;
+  final VoidCallback? onHandleDragEnd;
 
   @override
   Widget build(BuildContext context) {
@@ -359,18 +378,22 @@ class PageTextSelectLayer extends StatelessWidget {
         const double hr = 11; // 손잡이 반지름
 
         Widget handle(bool start, Offset at) => Positioned(
-              left: at.dx - (start ? hr * 2 : 0) - 8,
-              top: at.dy - 8,
+              left: at.dx - (start ? hr * 2 : 0) - 14,
+              top: at.dy - 10,
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
+                onPanStart: (_) => onHandleDragStart?.call(),
                 onPanUpdate: (d) {
                   final box = context.findRenderObject() as RenderBox?;
                   if (box == null) return;
                   // 손가락이 손잡이를 가리지 않게 조금 위의 글자를 기준으로
                   sel.moveHandle(start, box.globalToLocal(d.globalPosition) - const Offset(0, 28));
+                  onHandleDragUpdate?.call(start, d.globalPosition);
                 },
+                onPanEnd: (_) => onHandleDragEnd?.call(),
+                onPanCancel: () => onHandleDragEnd?.call(),
                 child: Padding(
-                  padding: const EdgeInsets.all(8),
+                  padding: const EdgeInsets.all(14),
                   child: CustomPaint(size: const Size(hr * 2, hr * 2), painter: _HandlePainter(start)),
                 ),
               ),
@@ -384,25 +407,7 @@ class PageTextSelectLayer extends StatelessWidget {
             clipBehavior: Clip.none,
             children: [
               IgnorePointer(child: CustomPaint(size: Size.infinite, painter: _HighlightPainter(rects))),
-              // 고른 글(파란 바탕)을 잡고 끌면 가까운 쪽 손잡이가 따라와 범위를 고침 (지우지 않음)
-              Positioned.fill(
-                key: const ValueKey('sel-body'),
-                child: GestureDetector(
-                  behavior: HitTestBehavior.deferToChild,
-                  onPanStart: (d) {
-                    final box = context.findRenderObject() as RenderBox?;
-                    if (box != null) sel.beginBodyDrag(box.globalToLocal(d.globalPosition));
-                  },
-                  onPanUpdate: (d) {
-                    final box = context.findRenderObject() as RenderBox?;
-                    if (box != null) sel.bodyDragTo(box.globalToLocal(d.globalPosition));
-                  },
-                  onPanEnd: (_) => sel.endBodyDrag(),
-                  onPanCancel: sel.endBodyDrag,
-                  // 고른 글 자리만 손가락을 받음 (나머지 화면은 그대로 아래로 전달)
-                  child: CustomPaint(size: Size.infinite, painter: _BodyHit([for (final r in rects) r.inflate(10)])),
-                ),
-              ),
+
               handle(true, s),
               handle(false, e),
               Positioned(
