@@ -1635,6 +1635,7 @@ function docxResetImeBuffer() {
 }
 
 function docxFocusIme() {
+  docxSuppressImeReset = false;
   const el = docxEnsureIme();
   el.disabled = false;
   el.style.display = '';
@@ -2007,6 +2008,19 @@ function docxHideLoupe() {
 }
 let docxHandleFixedPt = null;
 
+function docxBlurImeForDrag() {
+  if (!docxImeEl) return;
+  docxSuppressImeReset = true;
+  try {
+    docxImeComposing = false;
+    docxImeCompLen = 0;
+    docxImeCompNode = null;
+    docxImeEl.value = '\u200B';
+    docxImeEl.blur();
+  } catch (_) {}
+  setTimeout(() => { docxSuppressImeReset = false; }, 60);
+}
+
 function docxOnHandleStart(ev) {
   if (!docxEditMode || !docxSelRange || docxSelRange.collapsed || ev.touches.length !== 1) return;
   const handles = [...document.querySelectorAll('.eri-sel-handle')];
@@ -2033,6 +2047,7 @@ function docxOnHandleStart(ev) {
   docxHandleFixedPt = side === 'start'
     ? { node: docxSelRange.endContainer, offset: docxSelRange.endOffset }
     : { node: docxSelRange.startContainer, offset: docxSelRange.startOffset };
+  docxBlurImeForDrag();
 }
 
 function docxOnHandleMove(ev) {
@@ -2076,6 +2091,7 @@ function docxMountSelHandle(pageEl, side, relX, relY) {
     docxHandleFixedPt = side === 'start'
       ? { node: docxSelRange.endContainer, offset: docxSelRange.endOffset }
       : { node: docxSelRange.startContainer, offset: docxSelRange.startOffset };
+    docxBlurImeForDrag();
     ev.stopPropagation();
     ev.preventDefault();
   }, { passive: false });
@@ -2246,6 +2262,7 @@ function docxOnTouchStart(e) {
     docxCursor = { ...pt };
     docxSelRange = docxBuildRangeFromPts(pt, pt);
     docxRenderSelection();
+    docxBlurImeForDrag();
     docxEmitEditState(false);
   }, 180);
 }

@@ -1974,6 +1974,18 @@ function hideLoupe() {
   eriLoupePage = null;
 }
 
+function blurImeForDrag() {
+  if (!editImeEl) return;
+  suppressingImeReset = true;
+  try {
+    imeComposing = false;
+    imeCompLen = 0;
+    editImeEl.value = '\u200B';
+    editImeEl.blur();
+  } catch (_) {}
+  setTimeout(() => { suppressingImeReset = false; }, 60);
+}
+
 function handleSelHandleDocStart(e) {
   if (!editModeOn || !editSelection || e.touches.length !== 1) return;
   const handles = [...document.querySelectorAll('.eri-sel-handle')];
@@ -1999,6 +2011,7 @@ function handleSelHandleDocStart(e) {
   selHandleDragging = true;
   selDragActive = true;
   selAnchorHit = kind === 'start' ? { ...editSelection.end } : { ...editSelection.start };
+  blurImeForDrag();
 }
 
 function handleSelHandleDocMove(e) {
@@ -2026,6 +2039,7 @@ function handleSelHandleDocEnd(e) {
   selJustFinishedAt = Date.now();
   e.stopPropagation();
   if (editImeEl) {
+    suppressingImeReset = false;
     resetImeBuffer();
     editImeEl.focus({ preventScroll: true });
   }
@@ -2053,6 +2067,7 @@ function mountSelHandle(frame, kind, leftPx, topPx) {
     selHandleDragging = true;
     selDragActive = true;
     selAnchorHit = kind === 'start' ? { ...editSelection.end } : { ...editSelection.start };
+    blurImeForDrag();
   }, { passive: false });
   frame.appendChild(h);
 }
@@ -2356,6 +2371,7 @@ function handleEditTouchStart(e) {
     editSelection = { start: { ...h, offset: s0 }, end: { ...h, offset: e0 } };
     removeAllCarets();
     renderEditSelection();
+    blurImeForDrag();
   }, 260);
 }
 
@@ -2399,6 +2415,7 @@ function handleEditTouchEnd() {
   selJustFinishedAt = Date.now();
   if (editSelection && compareEditPos(editSelection.start, editSelection.end) < 0) {
     if (editImeEl) {
+      suppressingImeReset = false;
       resetImeBuffer();
       editImeEl.focus({ preventScroll: true });
     }
