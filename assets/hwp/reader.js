@@ -541,6 +541,7 @@ function vTouchInfo(t) {
 }
 function vPinchStart(e) {
   if (!vertical || !vhost || e.touches.length !== 2 || !vTops.length) return;
+  if (editModeOn) document.body.classList.add('eri-scrolling');
   const t = vTouchInfo(e.touches);
   // 손가락 가운데에 있던 글 자리 (몇째 쪽의 어느 비율 자리인지) — 크기를 바꿔도 그 글이 손가락 아래 남게
   const cy = vhost.scrollTop + t.y, cx = vhost.scrollLeft + t.x, i = vIndexAt(cy);
@@ -584,6 +585,7 @@ function vPinchEnd(e) {
   const maxSt = Math.max(0, vhost.scrollHeight - vhost.clientHeight);
   const maxSl = Math.max(0, vhost.scrollWidth - vhost.clientWidth);
   vhost.scrollTop = Math.max(0, Math.min(maxSt, vTops[p.i] + p.fy * sh - p.y));
+  if (editModeOn) { if (hwpScrollHideTimer) clearTimeout(hwpScrollHideTimer); hwpScrollHideTimer = setTimeout(() => { hwpScrollHideTimer = 0; document.body.classList.remove('eri-scrolling'); }, 180); }
   vhost.scrollLeft = Math.max(0, Math.min(maxSl, vLeft() + p.fx * vPageWidth() - p.x));
   vUpdate();
   lastPinchEndedAt = Date.now();
@@ -1100,6 +1102,7 @@ function zoomClear() {
   updateCaretPos();
 }
 function setView(s, tx, ty) {
+  if (editModeOn) markHwpScrolling();
   if (typeof resetSlideKbShift === 'function') resetSlideKbShift();
   if (!(s > 1.001)) { if (zoomView) zoomClear(); return true; }
   if (!zoomView) {

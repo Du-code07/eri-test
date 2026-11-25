@@ -206,6 +206,24 @@ class PageTextSelection extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 스크롤 보기 핀치 줌 인·아웃 시 하이라이트 영역도 배율에 맞게 함께 확대·축소
+  void scaleAround(double factor, double anchorX, double anchorY) {
+    if (!active || (factor - 1.0).abs() < 0.001) return;
+    lines = [
+      for (final l in lines)
+        SelLine(
+          l.text,
+          Rect.fromLTRB(
+            anchorX + (l.rect.left - anchorX) * factor,
+            anchorY + (l.rect.top - anchorY) * factor,
+            anchorX + (l.rect.right - anchorX) * factor,
+            anchorY + (l.rect.bottom - anchorY) * factor,
+          ),
+        ),
+    ];
+    notifyListeners();
+  }
+
   /// 자동 스크롤로 새로 화면에 들어온 줄들을 기존 선택 인덱스를 유지하며 앞·뒤에 병합
   void mergeVisibleLines(List<SelLine> fresh) {
     if (!active || fresh.isEmpty) return;

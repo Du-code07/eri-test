@@ -1152,7 +1152,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       _dropIdleShot();
     }
     if (_snapShownPage != null && _snapShownPage != page) _snapShow(page);
-    if (page != _docPage) _docSel.clear();
+    if (page != _docPage && !_docVertical) _docSel.clear();
     final String memoKey = _memoKeyFor(position);
     setState(() {
       _docPage = page;
@@ -1238,6 +1238,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           controller: _hwpController,
           editMode: _isHwpEditMode,
           hasSelection: _hwpHasSelection,
+          zoomed: _epubZoomScale > 1.03,
           onEditState: (st) {
             if (!mounted) return;
             Color parsed = _hwpTextColor;
@@ -1273,10 +1274,22 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           onScrollMetrics: (top, height, client) {
             final prev = _docScrollMetrics.value;
             if (_docSel.active) {
-              if ((_hwpController.scrollZoom - _docSelZoom).abs() > 0.02) {
-                _docSel.clear();
+              final box = _docSelKey.currentContext?.findRenderObject() as RenderBox?;
+              final double cssToFlutter = (client > 0 && box != null && box.hasSize) ? (box.size.height / client) : 1.0;
+              final double curZoom = _hwpController.scrollZoom;
+              if ((curZoom - _docSelZoom).abs() > 0.01 && _docSelZoom > 0) {
+                final double ratio = curZoom / _docSelZoom;
+                _docSelZoom = curZoom;
+                final double cx = (box != null && box.hasSize) ? box.size.width * 0.5 : 0.0;
+                final double cy = (box != null && box.hasSize) ? box.size.height * 0.5 : 0.0;
+                _docSel.scaleAround(ratio, cx, cy);
+                if (!_docCopyScrolling && mounted) setState(() => _docCopyScrolling = true);
+                _docCopyScrollHideTimer?.cancel();
+                _docCopyScrollHideTimer = Timer(const Duration(milliseconds: 180), () {
+                  if (mounted && _docCopyScrolling) setState(() => _docCopyScrolling = false);
+                });
               } else if ((top - prev[0]).abs() > 0.5) {
-                _docSel.shiftBy(Offset(0, -(top - prev[0])));
+                _docSel.shiftBy(Offset(0, -(top - prev[0]) * cssToFlutter));
                 if (!_docHandleDragging) {
                   if (!_docCopyScrolling && mounted) setState(() => _docCopyScrolling = true);
                   _docCopyScrollHideTimer?.cancel();
@@ -3417,9 +3430,18 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
         // 워드·한글: 길게 눌러 고른 글 — 바탕·손잡이·[복사 | 모두 선택 | 공유 | 형광펜] 막대
         if (_docSelectable)
           Positioned.fill(
-            child: SizedBox.expand(
-              key: _docSelKey,
-              child: PageTextSelectLayer(
+            child: AnimatedBuilder(
+              animation: _epubZoomController,
+              builder: (context, child) {
+                if (_docVertical) return child!;
+                return Transform(
+                  transform: _epubZoomController.value,
+                  child: child,
+                );
+              },
+              child: SizedBox.expand(
+                key: _docSelKey,
+                child: PageTextSelectLayer(
                 sel: _docSel,
                 tr: _tr,
                 onHighlight: _docHighlight,
@@ -3436,6 +3458,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                   _docHandleDragging = false;
                   _syncDocScrollLock();
                 },
+              ),
               ),
             ),
           ),
@@ -3481,7 +3504,13 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       _swipeFirstMoveTime = null;
     } else {
       _swipeMultiTouch = true;
-      if (_docSel.active) _docSel.clear();
+      if (_docSel.active) {
+        if (!_docCopyScrolling && mounted) setState(() => _docCopyScrolling = true);
+        _docCopyScrollHideTimer?.cancel();
+        _docCopyScrollHideTimer = Timer(const Duration(milliseconds: 220), () {
+          if (mounted && _docCopyScrolling) setState(() => _docCopyScrolling = false);
+        });
+      }
       _docPressTimer?.cancel();
       if (_book.tracking) _book.end(cancel: true); // 두 손가락: 넘기기 취소
     }
@@ -5323,7 +5352,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                               ? EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom + 96.0)
                               : EdgeInsets.fromLTRB(260, 260, 260, math.max(260.0, MediaQuery.viewInsetsOf(context).bottom + 96.0)))
                           : (_epubZoomScale < 0.98 ? const EdgeInsets.all(220) : EdgeInsets.zero),
-                      panEnabled: !_isSpreadsheet && !_docScrollActive && !_docSel.active && !(_isHwpEditMode && _hwpHasSelection) && (!_isMemoMode || !_allowFingerDrawing) && (_epubZoomScale > 1.03 || _epubZoomScale < 0.98 || (_isHwpEditMode && MediaQuery.viewInsetsOf(context).bottom > 0)),
+                      panEnabled: !_isSpreadsheet && !_docScrollActive && !_docHandleDragging && (!_isMemoMode || !_allowFingerDrawing) && (_epubZoomScale > 1.03 || _epubZoomScale < 0.98 || (_isHwpEditMode && !_hwpHasSelection && MediaQuery.viewInsetsOf(context).bottom > 0)),
                       scaleEnabled: !_isSpreadsheet && !(_pageModeScroll && _isOfflineDocument) && (!_isMemoMode || !_allowFingerDrawing),
                       minScale: 0.6,
                       maxScale: 4.5,
@@ -5334,7 +5363,11 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                       onInteractionUpdate: (_) {
                         final s = _epubZoomController.value.getMaxScaleOnAxis();
                         if ((s - _epubZoomScale).abs() > 0.02) {
-                          if (_docSel.active) _docSel.clear();
+                          if (_docSel.active && !_docCopyScrolling) _docCopyScrolling = true;
+                          _docCopyScrollHideTimer?.cancel();
+                          _docCopyScrollHideTimer = Timer(const Duration(milliseconds: 200), () {
+                            if (mounted && _docCopyScrolling) setState(() => _docCopyScrolling = false);
+                          });
                           setState(() => _epubZoomScale = s);
                         }
                       },

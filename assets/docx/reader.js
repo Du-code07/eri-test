@@ -795,6 +795,7 @@ function vTouchInfo(t) {
 }
 function vPinchStart(e) {
   if (!vertical || !vhost || e.touches.length !== 2 || !vTops.length) return;
+  if (docxEditMode) document.body.classList.add('eri-scrolling');
   const t = vTouchInfo(e.touches);
   // 손가락 가운데에 있던 글 자리 (몇째 쪽의 어느 비율 자리인지) — 크기를 바꿔도 그 글이 손가락 아래 남게
   const cy = vhost.scrollTop + t.y, cx = vhost.scrollLeft + t.x, i = vIndexAt(cy);
@@ -837,6 +838,7 @@ function vPinchEnd(e) {
   const sh = Math.max(1, vTops[p.i + 1] - vTops[p.i] - V_GAP);
   vhost.scrollTop = vTops[p.i] + p.fy * sh - p.y;
   vhost.scrollLeft = vLeft() + p.fx * vPageWidth() - p.x;
+  if (docxEditMode) { if (docxScrollHideTimer) clearTimeout(docxScrollHideTimer); docxScrollHideTimer = setTimeout(() => { docxScrollHideTimer = 0; document.body.classList.remove('eri-scrolling'); }, 180); }
   vUpdate();
   vReportMetrics();
 }
@@ -1395,6 +1397,7 @@ function zoomClear() {
   fitPages();
 }
 function setView(s, tx, ty) {
+  if (docxEditMode) markDocxScrolling();
   if (!(s > 1.001)) { if (zoomView) zoomClear(); return true; }
   if (!zoomView) {
     zoomBase = [host.clientWidth, host.clientHeight]; zoomDrawn = 1;
@@ -1999,7 +2002,7 @@ function docxCaretPointAt(clientX, clientY) {
             for (const rc of nr.getClientRects()) {
               if (rc.width > 0.5 && rc.height > 0.5 && rc.height < 100) {
                 const dy0 = clientY < rc.top ? rc.top - clientY : (clientY > rc.bottom ? clientY - rc.bottom : 0);
-                if (dy0 > 32) continue;
+                if (dy0 > 90) continue;
                 const dx0 = clientX < rc.left ? rc.left - clientX : (clientX > rc.right ? clientX - rc.right : 0);
                 const d = dy0 * dy0 * 9 + dx0 * dx0;
                 if (d < bestDist) { bestDist = d; best = tn; }
@@ -2008,7 +2011,7 @@ function docxCaretPointAt(clientX, clientY) {
           }
           tn = tw.nextNode();
         }
-        if (best && bestDist < 1800) {
+        if (best && bestDist < 12000) {
           return { node: best, offset: docxFindOffsetInTextNode(best, clientX, clientY) };
         }
       }
@@ -2098,8 +2101,8 @@ function tickDocxAutoScroll() {
   const topEdge = 64;
   const botEdge = window.innerHeight - (docxKbInset > 0 ? docxKbInset + 72 : 48);
   let dy = 0;
-  if (y > botEdge - 48) {
-    dy = Math.min(18, Math.max(4, ((y - (botEdge - 48)) / 48) * 14));
+  if (y > botEdge - 68) {
+    dy = Math.min(20, Math.max(5, ((y - (botEdge - 68)) / 68) * 16));
   } else if (y < topEdge + 44) {
     dy = -Math.min(18, Math.max(4, (((topEdge + 44) - y) / 44) * 14));
   }
@@ -2183,7 +2186,7 @@ function docxOnHandleMove(ev) {
   if (vertical && vhost && !docxAutoScrollRaf) {
     const topEdge = 64;
     const botEdge = window.innerHeight - (docxKbInset > 0 ? docxKbInset + 72 : 48);
-    if (t.clientY > botEdge - 48 || t.clientY < topEdge + 44) {
+    if (t.clientY > botEdge - 68 || t.clientY < topEdge + 54) {
       docxAutoScrollRaf = requestAnimationFrame(tickDocxAutoScroll);
     }
   }
@@ -2270,14 +2273,16 @@ function docxRenderSelection() {
   docxClearSelectionOverlays(true);
   docxRemoveCaret();
   try {
-    // 다중 문단 Range.getClientRects()는 <x-p> 블록 전체 박스를 함께 반환해 하이라이트가 2겹으로 생김 →
-    // 선택 범위와 겹치는 실제 텍스트 노드(NodeFilter.SHOW_TEXT)만 순회해 줄 단위 사각형만 추출
-    const ancestor = docxSelRange.commonAncestorContainer.nodeType === 1
-      ? docxSelRange.commonAncestorContainer
-      : docxSelRange.commonAncestorContainer.parentElement;
-    const rawRects = [];
-    if (ancestor) {
-      const tw = document.createTreeWalker(ancestor, NodeFilter.SHOW_TEXT);
+    const pageEls = [...document.querySelectorAll('#pages > .page, #vpages .page')].filter(p => !p.closest('#pages-under'));
+    let firstHandle = null, lastHandle = null;
+    for (const p of pageEls) {
+      if (!docxSelRange.intersectsNode(p)) continue;
+      const pr = p.getBoundingClientRect();
+      if (!(pr.width > 0 && pr.height > 0)) continue;
+      const pw = pr.width, ph = pr.height;
+
+      const rawRects = [];
+      const tw = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
       let tn = tw.nextNode();
       while (tn) {
         if (docxValidPageTextNode(tn) && docxSelRange.intersectsNode(tn)) {
@@ -2288,7 +2293,7 @@ function docxRenderSelection() {
             sub.setStart(tn, sOff);
             sub.setEnd(tn, eOff);
             for (const r of sub.getClientRects()) {
-              if (r.width > 0.5 && r.height > 0.5 && r.height < 120) {
+              if (r.width > 0.5 && r.height > 0.5 && r.height < 140) {
                 rawRects.push({ left: r.left, right: r.right, top: r.top, bottom: r.bottom, midY: (r.top + r.bottom) * 0.5 });
               }
             }
@@ -2296,52 +2301,41 @@ function docxRenderSelection() {
         }
         tn = tw.nextNode();
       }
-    }
-    rawRects.sort((a, b) => a.midY - b.midY || a.left - b.left);
-    if (rawRects.length === 0) return;
+      if (rawRects.length === 0) continue;
+      rawRects.sort((a, b) => a.midY - b.midY || a.left - b.left);
 
-    // 같은 줄에 중복 생성되는 인라인 사각형을 하나로 병합해 하이라이트 겹침(진해짐) 제거
-    const merged = [];
-    for (const r of rawRects) {
-      const prev = merged.length > 0 ? merged[merged.length - 1] : null;
-      const minH = prev ? Math.min(prev.bottom - prev.top, r.bottom - r.top) : 0;
-      if (prev && Math.abs(r.midY - prev.midY) <= Math.max(4, minH * 0.55)) {
-        prev.left = Math.min(prev.left, r.left);
-        prev.right = Math.max(prev.right, r.right);
-        prev.top = Math.min(prev.top, r.top);
-        prev.bottom = Math.max(prev.bottom, r.bottom);
-        prev.midY = (prev.top + prev.bottom) * 0.5;
-      } else {
-        merged.push({ ...r });
+      const merged = [];
+      for (const r of rawRects) {
+        const prev = merged.length > 0 ? merged[merged.length - 1] : null;
+        const minH = prev ? Math.min(prev.bottom - prev.top, r.bottom - r.top) : 0;
+        if (prev && Math.abs(r.midY - prev.midY) <= Math.max(4, minH * 0.55)) {
+          prev.left = Math.min(prev.left, r.left);
+          prev.right = Math.max(prev.right, r.right);
+          prev.top = Math.min(prev.top, r.top);
+          prev.bottom = Math.max(prev.bottom, r.bottom);
+          prev.midY = (prev.top + prev.bottom) * 0.5;
+        } else {
+          merged.push({ ...r });
+        }
       }
-    }
 
-    const pageEls = [...document.querySelectorAll('#pages > .page, #vpages .page')].filter(p => !p.closest('#pages-under'));
-    const findPageForRect = (rc) => {
-      const cx = (rc.left + rc.right) * 0.5;
-      const cy = (rc.top + rc.bottom) * 0.5;
-      for (const p of pageEls) {
-        const pr = p.getBoundingClientRect();
-        if (cx >= pr.left - 8 && cx <= pr.right + 8 && cy >= pr.top - 8 && cy <= pr.bottom + 8) return { p, pr };
+      const frag = document.createDocumentFragment();
+      for (const rc of merged) {
+        const box = document.createElement('div');
+        box.className = 'eri-docx-sel-rect';
+        const lPct = ((rc.left - pr.left) / pw) * 100;
+        const tPct = ((rc.top - pr.top) / ph) * 100;
+        const wPct = (Math.max(2, rc.right - rc.left) / pw) * 100;
+        const hPct = (Math.max(8, rc.bottom - rc.top) / ph) * 100;
+        box.style.left = `${lPct}%`;
+        box.style.top = `${tPct}%`;
+        box.style.width = `${wPct}%`;
+        box.style.height = `${hPct}%`;
+        frag.appendChild(box);
+        if (!firstHandle) firstHandle = { p, x: lPct, y: ((rc.bottom - pr.top) / ph) * 100 };
+        lastHandle = { p, x: ((rc.right - pr.left) / pw) * 100, y: ((rc.bottom - pr.top) / ph) * 100 };
       }
-      return pageEls[0] ? { p: pageEls[0], pr: pageEls[0].getBoundingClientRect() } : null;
-    };
-    let firstHandle = null, lastHandle = null;
-    for (const rc of merged) {
-      const hit = findPageForRect(rc);
-      if (!hit) continue;
-      const { p, pr } = hit;
-      const box = document.createElement('div');
-      box.className = 'eri-docx-sel-rect';
-      const pw = Math.max(1, pr.width);
-      const ph = Math.max(1, pr.height);
-      box.style.left = `${((rc.left - pr.left) / pw) * 100}%`;
-      box.style.top = `${((rc.top - pr.top) / ph) * 100}%`;
-      box.style.width = `${(Math.max(2, rc.right - rc.left) / pw) * 100}%`;
-      box.style.height = `${(Math.max(8, rc.bottom - rc.top) / ph) * 100}%`;
-      p.appendChild(box);
-      if (!firstHandle) firstHandle = { p, x: ((rc.left - pr.left) / pw) * 100, y: ((rc.bottom - pr.top) / ph) * 100 };
-      lastHandle = { p, x: ((rc.right - pr.left) / pw) * 100, y: ((rc.bottom - pr.top) / ph) * 100 };
+      p.appendChild(frag);
     }
     if (firstHandle) docxMountSelHandle(firstHandle.p, 'start', firstHandle.x, firstHandle.y);
     if (lastHandle) docxMountSelHandle(lastHandle.p, 'end', lastHandle.x, lastHandle.y);

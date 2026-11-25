@@ -289,6 +289,7 @@ class HwpViewer extends StatefulWidget {
   final void Function(double top, double height, double client)? onScrollMetrics;
   final bool editMode;
   final bool hasSelection;
+  final bool zoomed;
   final void Function(Map<String, Object?> state)? onEditState;
 
   const HwpViewer({
@@ -313,6 +314,7 @@ class HwpViewer extends StatefulWidget {
     this.onScrollMetrics,
     this.editMode = false,
     this.hasSelection = false,
+    this.zoomed = false,
     this.onEditState,
   });
 
@@ -763,7 +765,7 @@ class _HwpViewerState extends State<HwpViewer> {
             Factory<OneSequenceGestureRecognizer>(() => _ModeEagerRecognizer(() => mounted && (_isSpreadsheet || widget.vertical))),
             // 슬라이드 편집 모드에서 하이라이트 선택 중: 한 손가락 드래그는 0ms 즉시 WebView(손잡이)로 넘기고,
             // 두 손가락이 닿으면 즉시 양보해 InteractiveViewer 핀치 줌 인·아웃이 막히지 않게 함
-            Factory<OneSequenceGestureRecognizer>(() => _SingleFingerDragRecognizer(() => mounted && widget.editMode && !widget.vertical && (widget.hasSelection || MediaQuery.viewInsetsOf(context).bottom > 0))),
+            Factory<OneSequenceGestureRecognizer>(() => _SingleFingerDragRecognizer(() => mounted && widget.editMode && !widget.vertical && !widget.zoomed && (widget.hasSelection || MediaQuery.viewInsetsOf(context).bottom > 0))),
             // 문서 편집 모드(슬라이드 포함): 길게 눌러 드래그 선택할 때 WebView가 터치를 받음
             Factory<LongPressGestureRecognizer>(() => _ModeLongPressRecognizer(() => mounted && (_isSpreadsheet || widget.editMode))),
           },
