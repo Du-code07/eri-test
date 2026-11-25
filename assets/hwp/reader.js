@@ -1603,6 +1603,18 @@ function ensureEditDom() {
         resetImeBuffer();
       }
     });
+    editImeEl.addEventListener('blur', () => {
+      if (editModeOn && !suppressingImeReset && (selDragActive || selHandleDragging || selDragTimer)) {
+        try { editImeEl.focus({ preventScroll: true }); } catch (_) {}
+      }
+    });
+  }
+}
+
+function preventEditBlurMouseDown(e) {
+  if (!editModeOn || !editImeEl) return;
+  if (document.activeElement === editImeEl && e.target !== editImeEl) {
+    e.preventDefault();
   }
 }
 
@@ -1915,9 +1927,15 @@ function sameSelContainer(a, b) {
   return a.parentPara === b.parentPara && a.ctrl === b.ctrl && a.cell === b.cell && a.pathJson === b.pathJson;
 }
 
-function removeAllSelRects() {
+const selHandleEls = { start: null, end: null };
+
+function removeAllSelRects(keepHandles = false) {
   for (const el of document.querySelectorAll('.eri-sel-rect')) el.remove();
-  for (const el of document.querySelectorAll('.eri-sel-handle')) el.remove();
+  if (!keepHandles) {
+    for (const el of document.querySelectorAll('.eri-sel-handle')) el.remove();
+    selHandleEls.start = null;
+    selHandleEls.end = null;
+  }
 }
 
 let selHandleDragging = false;
@@ -2068,27 +2086,30 @@ function handleSelHandleDocEnd(e) {
 
 function mountSelHandle(frame, kind, leftPx, topPx) {
   if (!frame) return;
-  const h = document.createElement('div');
-  h.className = 'eri-sel-handle';
-  h.dataset.kind = kind;
+  let h = selHandleEls[kind];
+  if (!h) {
+    h = document.createElement('div');
+    h.className = 'eri-sel-handle';
+    h.dataset.kind = kind;
+    const stem = document.createElement('div');
+    stem.className = 'eri-sel-handle-stem';
+    const knob = document.createElement('div');
+    knob.className = 'eri-sel-handle-knob';
+    h.appendChild(stem);
+    h.appendChild(knob);
+    h.addEventListener('touchstart', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      if (!editSelection) return;
+      selHandleDragging = true;
+      selDragActive = true;
+      selAnchorHit = kind === 'start' ? { ...editSelection.end } : { ...editSelection.start };
+    }, { passive: false });
+    selHandleEls[kind] = h;
+  }
   h.style.left = `${leftPx - 24}px`;
   h.style.top = `${topPx - 2}px`;
-  const stem = document.createElement('div');
-  stem.className = 'eri-sel-handle-stem';
-  const knob = document.createElement('div');
-  knob.className = 'eri-sel-handle-knob';
-  h.appendChild(stem);
-  h.appendChild(knob);
-
-  h.addEventListener('touchstart', (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    if (!editSelection) return;
-    selHandleDragging = true;
-    selDragActive = true;
-    selAnchorHit = kind === 'start' ? { ...editSelection.end } : { ...editSelection.start };
-  }, { passive: false });
-  frame.appendChild(h);
+  if (h.parentNode !== frame) frame.appendChild(h);
 }
 
 function collectSelRects(st, en) {
@@ -2256,10 +2277,10 @@ function renderBodySelectionBySvgLines(st, en) {
 }
 
 function renderEditSelection() {
-  removeAllSelRects();
-  if (!editModeOn || !doc || !editSelection) return;
+  if (!editModeOn || !doc || !editSelection) { removeAllSelRects(false); return; }
   const st = editSelection.start, en = editSelection.end;
-  if (!st || !en || compareEditPos(st, en) >= 0) return;
+  if (!st || !en || compareEditPos(st, en) >= 0) { removeAllSelRects(false); return; }
+  removeAllSelRects(true);
   try {
     if (!st.inTable && renderBodySelectionBySvgLines(st, en)) return;
     const rects = collectSelRects(st, en);
@@ -2723,15 +2744,19 @@ function setEditMode(enabled) {
       editImeEl.style.display = '';
     }
     document.addEventListener('click', handleDirectEditClick, true);
+    document.addEventListener('mousedown', preventEditBlurMouseDown, true);
     document.addEventListener('touchstart', handleSelHandleDocStart, { passive: false, capture: true });
     document.addEventListener('touchstart', handleEditTouchStart, { passive: true, capture: true });
     document.addEventListener('touchmove', handleSelHandleDocMove, { passive: false, capture: true });
     document.addEventListener('touchend', handleSelHandleDocEnd, { passive: true, capture: true });
+    document.addEventListener('touchcancel', handleSelHandleDocEnd, { passive: true, capture: true });
     document.addEventListener('touchmove', handleEditTouchMove, { passive: false, capture: true });
     document.addEventListener('touchend', handleEditTouchEnd, { passive: true, capture: true });
+    document.addEventListener('touchcancel', handleEditTouchEnd, { passive: true, capture: true });
     emitEditState();
   } else {
     document.removeEventListener('click', handleDirectEditClick, true);
+    document.removeEventListener('mousedown', preventEditBlurMouseDown, true);
     document.removeEventListener('touchstart', handleSelHandleDocStart, true);
     document.removeEventListener('touchstart', handleEditTouchStart, true);
     hideLoupe();
@@ -2739,8 +2764,10 @@ function setEditMode(enabled) {
     selHandleDragging = false;
     document.removeEventListener('touchmove', handleSelHandleDocMove, true);
     document.removeEventListener('touchend', handleSelHandleDocEnd, true);
+    document.removeEventListener('touchcancel', handleSelHandleDocEnd, true);
     document.removeEventListener('touchmove', handleEditTouchMove, true);
     document.removeEventListener('touchend', handleEditTouchEnd, true);
+    document.removeEventListener('touchcancel', handleEditTouchEnd, true);
     editSelection = null;
     removeAllSelRects();
     flushPendingPaginationNow(true);

@@ -1620,7 +1620,20 @@ function docxEnsureIme() {
     }
   });
 
+  el.addEventListener('blur', () => {
+    if (docxEditMode && !docxSuppressImeReset && (docxSelDragging || docxActiveHandleSide || docxSelTimer)) {
+      try { el.focus({ preventScroll: true }); } catch (_) {}
+    }
+  });
+
   return el;
+}
+
+function docxPreventBlurMouseDown(e) {
+  if (!docxEditMode || !docxImeEl) return;
+  if (document.activeElement === docxImeEl && e.target !== docxImeEl) {
+    e.preventDefault();
+  }
 }
 
 function docxResetImeBuffer() {
@@ -1781,8 +1794,15 @@ function docxRemoveCaret() {
   for (const el of document.querySelectorAll('.eri-docx-caret')) el.remove();
 }
 
-function docxClearSelectionOverlays() {
-  for (const el of document.querySelectorAll('.eri-docx-sel-rect, .eri-sel-handle')) el.remove();
+const docxHandleEls = { start: null, end: null };
+
+function docxClearSelectionOverlays(keepHandles = false) {
+  for (const el of document.querySelectorAll('.eri-docx-sel-rect')) el.remove();
+  if (!keepHandles) {
+    for (const el of document.querySelectorAll('.eri-sel-handle')) el.remove();
+    docxHandleEls.start = null;
+    docxHandleEls.end = null;
+  }
 }
 
 function docxRenderCaret() {
@@ -2092,26 +2112,30 @@ function docxOnHandleEnd(ev) {
 
 function docxMountSelHandle(pageEl, side, relX, relY) {
   if (!pageEl) return;
-  const h = document.createElement('div');
-  h.className = 'eri-sel-handle';
-  h.dataset.side = side;
+  let h = docxHandleEls[side];
+  if (!h) {
+    h = document.createElement('div');
+    h.className = 'eri-sel-handle';
+    h.dataset.side = side;
+    h.addEventListener('touchstart', (ev) => {
+      if (ev.touches.length !== 1 || !docxSelRange) return;
+      docxActiveHandleSide = side;
+      docxHandleFixedPt = side === 'start'
+        ? { node: docxSelRange.endContainer, offset: docxSelRange.endOffset }
+        : { node: docxSelRange.startContainer, offset: docxSelRange.startOffset };
+      ev.stopPropagation();
+      ev.preventDefault();
+    }, { passive: false });
+    docxHandleEls[side] = h;
+  }
   h.style.left = `${relX - 24}px`;
   h.style.top = `${relY - 2}px`;
-  h.addEventListener('touchstart', (ev) => {
-    if (ev.touches.length !== 1 || !docxSelRange) return;
-    docxActiveHandleSide = side;
-    docxHandleFixedPt = side === 'start'
-      ? { node: docxSelRange.endContainer, offset: docxSelRange.endOffset }
-      : { node: docxSelRange.startContainer, offset: docxSelRange.startOffset };
-    ev.stopPropagation();
-    ev.preventDefault();
-  }, { passive: false });
-  pageEl.appendChild(h);
+  if (h.parentNode !== pageEl) pageEl.appendChild(h);
 }
 
 function docxRenderSelection() {
-  docxClearSelectionOverlays();
-  if (!docxEditMode || !docxSelRange || docxSelRange.collapsed) return;
+  if (!docxEditMode || !docxSelRange || docxSelRange.collapsed) { docxClearSelectionOverlays(false); return; }
+  docxClearSelectionOverlays(true);
   docxRemoveCaret();
   try {
     // 다중 문단 Range.getClientRects()는 <x-p> 블록 전체 박스를 함께 반환해 하이라이트가 2겹으로 생김 →
@@ -2390,12 +2414,15 @@ function setEditMode(enabled) {
     docxEnsureIme();
     document.addEventListener('contextmenu', docxPreventContext, true);
     document.addEventListener('dblclick', docxOnDblClick, true);
+    document.addEventListener('mousedown', docxPreventBlurMouseDown, true);
     document.addEventListener('touchstart', docxOnHandleStart, { passive: false, capture: true });
     document.addEventListener('touchstart', docxOnTouchStart, { passive: true, capture: true });
     document.addEventListener('touchmove', docxOnHandleMove, { passive: false, capture: true });
     document.addEventListener('touchend', docxOnHandleEnd, { passive: true, capture: true });
+    document.addEventListener('touchcancel', docxOnHandleEnd, { passive: true, capture: true });
     document.addEventListener('touchmove', docxOnTouchMove, { passive: false, capture: true });
     document.addEventListener('touchend', docxOnTouchEnd, { passive: true, capture: true });
+    document.addEventListener('touchcancel', docxOnTouchEnd, { passive: true, capture: true });
     document.addEventListener('click', docxOnClick, true);
     docxEmitEditState(false);
   } else {
@@ -2413,12 +2440,15 @@ function setEditMode(enabled) {
     docxLoupePage = null;
     docxActiveHandleSide = null;
     docxHandleFixedPt = null;
+    document.removeEventListener('mousedown', docxPreventBlurMouseDown, true);
     document.removeEventListener('touchstart', docxOnHandleStart, true);
     document.removeEventListener('touchstart', docxOnTouchStart, true);
     document.removeEventListener('touchmove', docxOnHandleMove, true);
     document.removeEventListener('touchend', docxOnHandleEnd, true);
+    document.removeEventListener('touchcancel', docxOnHandleEnd, true);
     document.removeEventListener('touchmove', docxOnTouchMove, true);
     document.removeEventListener('touchend', docxOnTouchEnd, true);
+    document.removeEventListener('touchcancel', docxOnTouchEnd, true);
     document.removeEventListener('click', docxOnClick, true);
     if (docxImeEl) {
       docxImeEl.value = '';
