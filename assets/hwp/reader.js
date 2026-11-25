@@ -1965,8 +1965,8 @@ function findPageAtFast(clientX, clientY) {
       return { pageEl: eriLoupePage, pr: r };
     }
   }
-  for (const p of document.querySelectorAll('.page')) {
-    if (p.closest && p.closest('#pages-under')) continue;
+  for (const p of document.querySelectorAll('#pages > .page, #vpages .page')) {
+    if (p.closest && p.closest('#pages-under, .eri-loupe')) continue;
     const pr = p.getBoundingClientRect();
     if (pr.width > 0 && pr.height > 0 && clientX >= pr.left - 24 && clientX <= pr.right + 24 && clientY >= pr.top - 24 && clientY <= pr.bottom + 24) {
       return { pageEl: p, pr };
@@ -2203,11 +2203,13 @@ function renderBodySelectionBySvgLines(st, en) {
     const fRect = frame.getBoundingClientRect();
     const sRect = svg.getBoundingClientRect();
     const toFramePt = (vx, vy) => {
-      if (!(sRect.width > 0 && sRect.height > 0)) return null;
+      if (!(sRect.width > 0 && sRect.height > 0 && fRect.width > 0 && fRect.height > 0)) return null;
+      const px = (sRect.left - fRect.left) + ((vx - vb.x) / vb.width) * sRect.width;
+      const py = (sRect.top - fRect.top) + ((vy - vb.y) / vb.height) * sRect.height;
       return {
         frame,
-        x: (sRect.left - fRect.left) + ((vx - vb.x) / vb.width) * sRect.width,
-        y: (sRect.top - fRect.top) + ((vy - vb.y) / vb.height) * sRect.height,
+        x: (px / fRect.width) * 100,
+        y: (py / fRect.height) * 100,
       };
     };
 

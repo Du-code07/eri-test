@@ -1822,7 +1822,7 @@ function docxRenderCaret() {
       const parentEl = node.parentElement;
       if (parentEl) rect = parentEl.getBoundingClientRect();
     }
-    const pageEl = node.parentElement?.closest?.('.page');
+    const pageEl = node.parentElement?.closest?.('#pages > .page, #vpages .page');
     if (!pageEl || !(rect.height > 0)) return;
     const pr = pageEl.getBoundingClientRect();
     const caret = document.createElement('div');
@@ -1929,8 +1929,8 @@ function docxCaretPointAt(clientX, clientY) {
       if (pt) return pt;
     }
     // 빈 간격/줄 사이 폴백: 현재 좌표에 실제로 가장 가까운 텍스트 노드(수직 32px 이내)만 정확히 선택
-    for (const pg of document.querySelectorAll('.page')) {
-      if (pg.closest?.('#pages-under')) continue;
+    for (const pg of document.querySelectorAll('#pages > .page, #vpages .page')) {
+      if (pg.closest?.('#pages-under, .eri-loupe')) continue;
       const pr = pg.getBoundingClientRect();
       if (clientX >= pr.left - 24 && clientX <= pr.right + 24 && clientY >= pr.top - 16 && clientY <= pr.bottom + 16) {
         const tw = document.createTreeWalker(pg, NodeFilter.SHOW_TEXT);
@@ -2018,8 +2018,8 @@ function docxFindPageAtFast(clientX, clientY) {
       return { pageEl: docxLoupePage, pr: r };
     }
   }
-  for (const p of document.querySelectorAll('.page')) {
-    if (p.closest && p.closest('#pages-under')) continue;
+  for (const p of document.querySelectorAll('#pages > .page, #vpages .page')) {
+    if (p.closest && p.closest('#pages-under, .eri-loupe')) continue;
     const pr = p.getBoundingClientRect();
     if (pr.width > 0 && pr.height > 0 && clientX >= pr.left - 24 && clientX <= pr.right + 24 && clientY >= pr.top - 24 && clientY <= pr.bottom + 24) {
       return { pageEl: p, pr };
@@ -2215,7 +2215,7 @@ function docxRenderSelection() {
       }
     }
 
-    const pageEls = [...document.querySelectorAll('.page')];
+    const pageEls = [...document.querySelectorAll('#pages > .page, #vpages .page')].filter(p => !p.closest('#pages-under, .eri-loupe'));
     const findPageForRect = (rc) => {
       const cx = (rc.left + rc.right) * 0.5;
       const cy = (rc.top + rc.bottom) * 0.5;
