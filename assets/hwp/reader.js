@@ -2000,18 +2000,6 @@ function hideLoupe() {
   eriLoupeRect = null;
 }
 
-function blurImeForDrag() {
-  if (!editImeEl) return;
-  suppressingImeReset = true;
-  try {
-    imeComposing = false;
-    imeCompLen = 0;
-    editImeEl.value = '\u200B';
-    editImeEl.blur();
-  } catch (_) {}
-  setTimeout(() => { suppressingImeReset = false; }, 60);
-}
-
 function handleSelHandleDocStart(e) {
   if (!editModeOn || !editSelection || e.touches.length !== 1) return;
   const handles = [...document.querySelectorAll('.eri-sel-handle')];
@@ -2037,7 +2025,6 @@ function handleSelHandleDocStart(e) {
   selHandleDragging = true;
   selDragActive = true;
   selAnchorHit = kind === 'start' ? { ...editSelection.end } : { ...editSelection.start };
-  blurImeForDrag();
 }
 
 function handleSelHandleDocMove(e) {
@@ -2100,7 +2087,6 @@ function mountSelHandle(frame, kind, leftPx, topPx) {
     selHandleDragging = true;
     selDragActive = true;
     selAnchorHit = kind === 'start' ? { ...editSelection.end } : { ...editSelection.start };
-    blurImeForDrag();
   }, { passive: false });
   frame.appendChild(h);
 }
@@ -2404,7 +2390,6 @@ function handleEditTouchStart(e) {
     editSelection = { start: { ...h, offset: s0 }, end: { ...h, offset: e0 } };
     removeAllCarets();
     renderEditSelection();
-    blurImeForDrag();
   }, 260);
 }
 
