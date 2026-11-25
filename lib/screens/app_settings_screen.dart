@@ -111,7 +111,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
   String _t(String ko, String en, String zh, String ja) => AppI18n.t(_lang, ko: ko, en: en, zh: zh, ja: ja);
 
   String _viewModeLabel(String mode) => mode == 'grid'
-      ? _t('표지형 (썸네일)', 'Cover View (Thumbnail)', '封面视图 (缩略图)', '表紙表示 (サムネイル)')
+      ? _t('표지형 (그리드)', 'Cover View (Grid)', '封面视图 (网格)', '表紙表示 (グリッド)')
       : _t('목록형 (리스트)', 'List View', '列表视图', 'リスト表示');
 
   String _themeLabel(String mode) => switch (mode) {

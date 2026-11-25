@@ -338,6 +338,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   bool _isHwpEditMode = false;
   bool _hwpHasEdits = false;
   bool _hwpHasSelection = false;
+  bool get _editBlockSwipe => _isHwpEditMode && (MediaQuery.viewInsetsOf(context).bottom > 0 || _hwpHasSelection);
   bool _hwpSaving = false;
   bool _hwpBold = false;
   bool _hwpItalic = false;
@@ -3363,7 +3364,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       e.kind == PointerDeviceKind.stylus || e.kind == PointerDeviceKind.invertedStylus;
 
   void _swipeTrackDown(PointerDownEvent e) {
-    if (_isSpreadsheet || _isHwpEditMode) return;
+    if (_isSpreadsheet || _editBlockSwipe) return;
     if (_isMemoMode && _isStylusEvent(e)) return;
     _swipeActivePointers++;
     if (_swipeActivePointers == 1) {
@@ -3386,7 +3387,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   }
 
   void _swipeTrackMove(PointerMoveEvent e) {
-    if (_isHwpEditMode) return;
+    if (_editBlockSwipe) return;
     if (_docSelMove(e)) return; // 글 고르는 중: 넘기지 않음
     _bookTrackMove(e);
     final start = _swipeStartPos;
@@ -3397,7 +3398,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   }
 
   void _swipeTrackUp(PointerEvent e, {bool cancelled = false}) {
-    if (_isSpreadsheet || _isHwpEditMode) return;
+    if (_isSpreadsheet || _editBlockSwipe) return;
     if (_isMemoMode && _isStylusEvent(e)) return;
     if (_swipeActivePointers > 0) _swipeActivePointers--;
     if (_swipeActivePointers > 0) return;
@@ -3492,18 +3493,18 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   }
 
   void _onFlickStart(DragStartDetails details) {
-    if (_isHwpEditMode || _docSel.active || _docPressSelecting || WordSelectionLayer.locked) return;
+    if (_editBlockSwipe || _docSel.active || _docPressSelecting || WordSelectionLayer.locked) return;
     _swipeHandledByDrag = true;
     _flickDx = 0.0;
   }
 
   void _onFlickUpdate(DragUpdateDetails details) {
-    if (_isHwpEditMode || _docSel.active || _docPressSelecting || WordSelectionLayer.locked) return;
+    if (_editBlockSwipe || _docSel.active || _docPressSelecting || WordSelectionLayer.locked) return;
     _flickDx += details.primaryDelta ?? details.delta.dx;
   }
 
   void _onFlickEnd(DragEndDetails details) {
-    if (_isHwpEditMode || _swipeMultiTouch || _hasTextSelection || _docSel.active || _docPressSelecting || WordSelectionLayer.locked) return;
+    if (_editBlockSwipe || _swipeMultiTouch || _hasTextSelection || _docSel.active || _docPressSelecting || WordSelectionLayer.locked) return;
     final double vx = details.velocity.pixelsPerSecond.dx;
     if (vx.abs() >= 300.0) {
       _turnBySwipeDirection(vx);
@@ -5158,7 +5159,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                               ? EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom + 96.0)
                               : EdgeInsets.fromLTRB(260, 260, 260, math.max(260.0, MediaQuery.viewInsetsOf(context).bottom + 96.0)))
                           : (_epubZoomScale < 0.98 ? const EdgeInsets.all(220) : EdgeInsets.zero),
-                      panEnabled: !_isSpreadsheet && !_docScrollActive && (!_isMemoMode || !_allowFingerDrawing) && (_epubZoomScale > 1.03 || _epubZoomScale < 0.98 || (_isHwpEditMode && MediaQuery.viewInsetsOf(context).bottom > 0)),
+                      panEnabled: !_isSpreadsheet && !_docScrollActive && !(_isHwpEditMode && _hwpHasSelection) && (!_isMemoMode || !_allowFingerDrawing) && (_epubZoomScale > 1.03 || _epubZoomScale < 0.98 || (_isHwpEditMode && MediaQuery.viewInsetsOf(context).bottom > 0)),
                       scaleEnabled: !_isSpreadsheet && !(_pageModeScroll && _isOfflineDocument) && (!_isMemoMode || !_allowFingerDrawing),
                       minScale: 0.6,
                       maxScale: 4.5,
@@ -5195,7 +5196,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                         // 빠르게 튕기는 스와이프는 WebView보다 먼저 Flutter가 받아 직접 페이지를 넘긴다.
                         // 손가락 한 개일 때만 (두 손가락이면 확대·축소가 가져가게), 스크롤 모드에서는 쓰지 않음
                         gestures: {
-                          if (_swipeFlutterOwned && !_pageModeScroll && !_docSel.active && !_docPressSelecting && !_isHwpEditMode && !WordSelectionLayer.locked)
+                          if (_swipeFlutterOwned && !_pageModeScroll && !_docSel.active && !_docPressSelecting && !_editBlockSwipe && !WordSelectionLayer.locked)
                             _OneFingerHorizontalDrag: GestureRecognizerFactoryWithHandlers<_OneFingerHorizontalDrag>(
                               () => _OneFingerHorizontalDrag(),
                               (r) => r

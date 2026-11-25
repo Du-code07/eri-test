@@ -1848,6 +1848,33 @@ function docxBuildRangeFromPts(p1, p2) {
 let docxActiveHandleSide = null;
 let docxHandleFixedPt = null;
 
+function docxOnHandleStart(ev) {
+  if (!docxEditMode || !docxSelRange || docxSelRange.collapsed || ev.touches.length !== 1) return;
+  const handles = [...document.querySelectorAll('.eri-sel-handle')];
+  if (handles.length === 0) return;
+  const t = ev.touches[0];
+  let best = null, bestDist = 36;
+  for (const h of handles) {
+    const r = h.getBoundingClientRect();
+    const cx = (r.left + r.right) * 0.5;
+    const cy = (r.top + r.bottom) * 0.5;
+    const d = Math.hypot(t.clientX - cx, t.clientY - cy);
+    if (d <= bestDist) {
+      bestDist = d;
+      best = h;
+    }
+  }
+  if (!best) return;
+  ev.stopPropagation();
+  ev.preventDefault();
+  if (docxSelTimer) { clearTimeout(docxSelTimer); docxSelTimer = 0; }
+  const side = best.dataset.side;
+  docxActiveHandleSide = side;
+  docxHandleFixedPt = side === 'start'
+    ? { node: docxSelRange.endContainer, offset: docxSelRange.endOffset }
+    : { node: docxSelRange.startContainer, offset: docxSelRange.startOffset };
+}
+
 function docxOnHandleMove(ev) {
   if (!docxActiveHandleSide || !docxHandleFixedPt || !ev.touches.length) return;
   ev.stopPropagation();
@@ -2138,6 +2165,7 @@ function setEditMode(enabled) {
     docxEnsureIme();
     document.addEventListener('contextmenu', docxPreventContext, true);
     document.addEventListener('dblclick', docxOnDblClick, true);
+    document.addEventListener('touchstart', docxOnHandleStart, { passive: false, capture: true });
     document.addEventListener('touchstart', docxOnTouchStart, { passive: true, capture: true });
     document.addEventListener('touchmove', docxOnHandleMove, { passive: false, capture: true });
     document.addEventListener('touchend', docxOnHandleEnd, { passive: true, capture: true });
@@ -2158,6 +2186,7 @@ function setEditMode(enabled) {
     document.removeEventListener('dblclick', docxOnDblClick, true);
     docxActiveHandleSide = null;
     docxHandleFixedPt = null;
+    document.removeEventListener('touchstart', docxOnHandleStart, true);
     document.removeEventListener('touchstart', docxOnTouchStart, true);
     document.removeEventListener('touchmove', docxOnHandleMove, true);
     document.removeEventListener('touchend', docxOnHandleEnd, true);

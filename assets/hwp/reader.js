@@ -1903,6 +1903,32 @@ function removeAllSelRects() {
 
 let selHandleDragging = false;
 
+function handleSelHandleDocStart(e) {
+  if (!editModeOn || !editSelection || e.touches.length !== 1) return;
+  const handles = [...document.querySelectorAll('.eri-sel-handle')];
+  if (handles.length === 0) return;
+  const t = e.touches[0];
+  let best = null, bestDist = 36;
+  for (const h of handles) {
+    const r = h.getBoundingClientRect();
+    const cx = (r.left + r.right) * 0.5;
+    const cy = (r.top + r.bottom) * 0.5;
+    const d = Math.hypot(t.clientX - cx, t.clientY - cy);
+    if (d <= bestDist) {
+      bestDist = d;
+      best = h;
+    }
+  }
+  if (!best) return;
+  e.stopPropagation();
+  e.preventDefault();
+  if (selDragTimer) { clearTimeout(selDragTimer); selDragTimer = 0; }
+  const kind = best.dataset.kind;
+  selHandleDragging = true;
+  selDragActive = true;
+  selAnchorHit = kind === 'start' ? { ...editSelection.end } : { ...editSelection.start };
+}
+
 function handleSelHandleDocMove(e) {
   if (!selHandleDragging || !selAnchorHit || !e.touches.length) return;
   e.stopPropagation();
@@ -2576,6 +2602,7 @@ function setEditMode(enabled) {
       editImeEl.style.display = '';
     }
     document.addEventListener('click', handleDirectEditClick, true);
+    document.addEventListener('touchstart', handleSelHandleDocStart, { passive: false, capture: true });
     document.addEventListener('touchstart', handleEditTouchStart, { passive: true, capture: true });
     document.addEventListener('touchmove', handleSelHandleDocMove, { passive: false, capture: true });
     document.addEventListener('touchend', handleSelHandleDocEnd, { passive: true, capture: true });
@@ -2584,6 +2611,7 @@ function setEditMode(enabled) {
     emitEditState();
   } else {
     document.removeEventListener('click', handleDirectEditClick, true);
+    document.removeEventListener('touchstart', handleSelHandleDocStart, true);
     document.removeEventListener('touchstart', handleEditTouchStart, true);
     selHandleDragging = false;
     document.removeEventListener('touchmove', handleSelHandleDocMove, true);
