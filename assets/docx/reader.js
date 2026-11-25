@@ -1042,6 +1042,7 @@ function vSize() {
   }
   if (pad) for (let i = 0; i < vTops.length; i++) vTops[i] += pad;
   for (const m of vMounted.values()) m.source.style.transform = `scale(${W / m.entry.width})`;
+  docxLoupePage = null;
 }
 function vLayout(keep) {
   if (!vhost || !pages.length) return;
@@ -1826,9 +1827,9 @@ function docxRenderCaret() {
     const pr = pageEl.getBoundingClientRect();
     const caret = document.createElement('div');
     caret.className = 'eri-docx-caret';
-    caret.style.left = `${Math.max(0, rect.left - pr.left)}px`;
-    caret.style.top = `${Math.max(0, rect.top - pr.top)}px`;
-    caret.style.height = `${Math.max(12, rect.height)}px`;
+    caret.style.left = `${(Math.max(0, rect.left - pr.left) / Math.max(1, pr.width)) * 100}%`;
+    caret.style.top = `${(Math.max(0, rect.top - pr.top) / Math.max(1, pr.height)) * 100}%`;
+    caret.style.height = `${(Math.max(12, rect.height) / Math.max(1, pr.height)) * 100}%`;
     pageEl.appendChild(caret);
   } catch (_) {}
 }
@@ -1914,7 +1915,7 @@ function docxCaretPointAt(clientX, clientY) {
         if (br.height > 0 && br.height < 100) {
           const dy = y < br.top ? br.top - y : (y > br.bottom ? y - br.bottom : 0);
           const dx = x < br.left ? br.left - x : (x > br.right ? x - br.right : 0);
-          if (dy <= 26 && dx <= 48) {
+          if ((dy <= 14 && dx <= 260) || (dy <= 26 && dx <= 64)) {
             return { node: r.startContainer, offset: off };
           }
         }
@@ -2035,6 +2036,10 @@ function docxUpdateLoupe(clientX, clientY) {
   if (!hit) return;
   const { pageEl, pr } = hit;
   docxEnsureLoupe();
+  const baseW = pageEl.offsetWidth || pr.width;
+  const baseH = pageEl.offsetHeight || pr.height;
+  const scaleX = pr.width / Math.max(1, baseW);
+  const scaleY = pr.height / Math.max(1, baseH);
   if (docxLoupePage !== pageEl || !docxLoupeInner.firstChild) {
     docxLoupePage = pageEl;
     docxLoupeRect = pr;
@@ -2044,14 +2049,14 @@ function docxUpdateLoupe(clientX, clientY) {
     clone.style.left = '0';
     clone.style.top = '0';
     clone.style.margin = '0';
-    clone.style.width = `${pr.width}px`;
-    clone.style.height = `${pr.height}px`;
+    clone.style.width = `${baseW}px`;
+    clone.style.height = `${baseH}px`;
     docxLoupeInner.replaceChildren(clone);
   }
-  const zoom = 1.65;
+  const zoom = 1.65 * scaleX;
   const lw = 148, lh = 54;
-  const rx = clientX - pr.left;
-  const ry = clientY - pr.top;
+  const rx = (clientX - pr.left) / Math.max(0.01, scaleX);
+  const ry = (clientY - pr.top) / Math.max(0.01, scaleY);
   const tx = (lw * 0.5) - rx * zoom;
   const ty = (lh * 0.5) - ry * zoom;
   docxLoupeInner.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(${zoom})`;
@@ -2152,8 +2157,10 @@ function docxMountSelHandle(pageEl, side, relX, relY) {
     }, { passive: false });
     docxHandleEls[side] = h;
   }
-  h.style.left = `${relX - 24}px`;
-  h.style.top = `${relY - 2}px`;
+  h.style.left = `${relX}%`;
+  h.style.top = `${relY}%`;
+  h.style.marginLeft = '-24px';
+  h.style.marginTop = '-2px';
   if (h.parentNode !== pageEl) pageEl.appendChild(h);
 }
 
@@ -2225,13 +2232,15 @@ function docxRenderSelection() {
       const { p, pr } = hit;
       const box = document.createElement('div');
       box.className = 'eri-docx-sel-rect';
-      box.style.left = `${rc.left - pr.left}px`;
-      box.style.top = `${rc.top - pr.top}px`;
-      box.style.width = `${Math.max(2, rc.right - rc.left)}px`;
-      box.style.height = `${Math.max(8, rc.bottom - rc.top)}px`;
+      const pw = Math.max(1, pr.width);
+      const ph = Math.max(1, pr.height);
+      box.style.left = `${((rc.left - pr.left) / pw) * 100}%`;
+      box.style.top = `${((rc.top - pr.top) / ph) * 100}%`;
+      box.style.width = `${(Math.max(2, rc.right - rc.left) / pw) * 100}%`;
+      box.style.height = `${(Math.max(8, rc.bottom - rc.top) / ph) * 100}%`;
       p.appendChild(box);
-      if (!firstHandle) firstHandle = { p, x: rc.left - pr.left, y: rc.bottom - pr.top - 2 };
-      lastHandle = { p, x: rc.right - pr.left, y: rc.bottom - pr.top - 2 };
+      if (!firstHandle) firstHandle = { p, x: ((rc.left - pr.left) / pw) * 100, y: ((rc.bottom - pr.top) / ph) * 100 };
+      lastHandle = { p, x: ((rc.right - pr.left) / pw) * 100, y: ((rc.bottom - pr.top) / ph) * 100 };
     }
     if (firstHandle) docxMountSelHandle(firstHandle.p, 'start', firstHandle.x, firstHandle.y);
     if (lastHandle) docxMountSelHandle(lastHandle.p, 'end', lastHandle.x, lastHandle.y);

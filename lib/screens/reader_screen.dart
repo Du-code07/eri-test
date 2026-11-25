@@ -1269,7 +1269,13 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           rtl: _isMangaRtlMode,
           // 한글·워드 스크롤 보기: 쪽을 세로로 늘어놓음 (내보내는 동안은 쪽 넘김 화면으로)
           vertical: _docVertical,
-          onScrollMetrics: (top, height, client) => _docScrollMetrics.value = [top, height, client],
+          onScrollMetrics: (top, height, client) {
+            final prev = _docScrollMetrics.value;
+            if (_docSel.active && ((top - prev[0]).abs() > 3.0 || (height - prev[1]).abs() > 3.0)) {
+              _docSel.clear();
+            }
+            _docScrollMetrics.value = [top, height, client];
+          },
           onLoaded: _onDocumentLoaded,
           onLocation: _onDocumentLocation,
           onPageReady: _onDocumentPageReady,
@@ -3389,6 +3395,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       _swipeFirstMoveTime = null;
     } else {
       _swipeMultiTouch = true;
+      if (_docSel.active) _docSel.clear();
       _docPressTimer?.cancel();
       if (_book.tracking) _book.end(cancel: true); // 두 손가락: 넘기기 취소
     }
@@ -5234,6 +5241,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                       onInteractionUpdate: (_) {
                         final s = _epubZoomController.value.getMaxScaleOnAxis();
                         if ((s - _epubZoomScale).abs() > 0.02) {
+                          if (_docSel.active) _docSel.clear();
                           setState(() => _epubZoomScale = s);
                         }
                       },

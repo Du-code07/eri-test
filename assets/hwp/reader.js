@@ -1983,6 +1983,10 @@ function updateLoupe(clientX, clientY) {
   if (!hit) return;
   const { pageEl, pr } = hit;
   ensureLoupe();
+  const baseW = pageEl.offsetWidth || pr.width;
+  const baseH = pageEl.offsetHeight || pr.height;
+  const scaleX = pr.width / Math.max(1, baseW);
+  const scaleY = pr.height / Math.max(1, baseH);
   if (eriLoupePage !== pageEl || !eriLoupeInner.firstChild) {
     eriLoupePage = pageEl;
     eriLoupeRect = pr;
@@ -1992,14 +1996,14 @@ function updateLoupe(clientX, clientY) {
     clone.style.left = '0';
     clone.style.top = '0';
     clone.style.margin = '0';
-    clone.style.width = `${pr.width}px`;
-    clone.style.height = `${pr.height}px`;
+    clone.style.width = `${baseW}px`;
+    clone.style.height = `${baseH}px`;
     eriLoupeInner.replaceChildren(clone);
   }
-  const zoom = 1.65;
+  const zoom = 1.65 * scaleX;
   const lw = 148, lh = 54;
-  const rx = clientX - pr.left;
-  const ry = clientY - pr.top;
+  const rx = (clientX - pr.left) / Math.max(0.01, scaleX);
+  const ry = (clientY - pr.top) / Math.max(0.01, scaleY);
   const tx = (lw * 0.5) - rx * zoom;
   const ty = (lh * 0.5) - ry * zoom;
   eriLoupeInner.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(${zoom})`;
@@ -2107,8 +2111,10 @@ function mountSelHandle(frame, kind, leftPx, topPx) {
     }, { passive: false });
     selHandleEls[kind] = h;
   }
-  h.style.left = `${leftPx - 24}px`;
-  h.style.top = `${topPx - 2}px`;
+  h.style.left = `${leftPx}%`;
+  h.style.top = `${topPx}%`;
+  h.style.marginLeft = '-24px';
+  h.style.marginTop = '-2px';
   if (h.parentNode !== frame) frame.appendChild(h);
 }
 
@@ -2317,8 +2323,10 @@ function renderEditSelection() {
         const relY = offY + (Number(r.y || 0) / engH) * sRect.height;
         const relW = (w / engW) * sRect.width;
         const relH = (h / engH) * sRect.height;
-        if (!firstHandle) firstHandle = { frame, x: relX, y: relY + relH - 2 };
-        lastHandle = { frame, x: relX + relW, y: relY + relH - 2 };
+        const fw = Math.max(1, fRect.width);
+        const fh = Math.max(1, fRect.height);
+        if (!firstHandle) firstHandle = { frame, x: (relX / fw) * 100, y: ((relY + relH) / fh) * 100 };
+        lastHandle = { frame, x: ((relX + relW) / fw) * 100, y: ((relY + relH) / fh) * 100 };
       }
     }
     if (firstHandle) mountSelHandle(firstHandle.frame, 'start', firstHandle.x, firstHandle.y);
