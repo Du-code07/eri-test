@@ -1125,6 +1125,8 @@ let editCursor = null; // { pageIdx, sec, para, parentPara, offset, inTable, pat
 let editImeEl = null;
 let editStyleInjected = false;
 let imeComposing = false;
+let lastCompEndAt = 0;
+let lastCompEndText = '';
 let suppressingImeReset = false;
 let imeCompBase = 0;
 let imeCompLen = 0;
@@ -1515,7 +1517,7 @@ function ensureEditDom() {
       emitEditState(true);
     });
     editImeEl.addEventListener('compositionend', (e) => {
-      if (suppressingImeReset) { imeComposing = false; imeCompLen = 0; return; }
+      if (suppressingImeReset || !imeComposing) { imeComposing = false; imeCompLen = 0; return; }
       if (!editModeOn || !editCursor) { imeComposing = false; resetImeBuffer(); return; }
       const str = String(e.data ?? '').replace(/\u200B/g, '');
       applyDeltaFast(imeCompBase, imeCompLen, str, false);
@@ -1523,6 +1525,8 @@ function ensureEditDom() {
         applyPendingFormatIfAny(editCursor, imeCompBase, str.length);
         pushUndoOp({ kind: 'text', cursor: { ...editCursor }, off: imeCompBase, oldText: '', newText: str });
       }
+      lastCompEndAt = Date.now();
+      lastCompEndText = str;
       editCursor.offset = imeCompBase + str.length;
       imeComposing = false;
       imeCompLen = 0;
@@ -1531,9 +1535,20 @@ function ensureEditDom() {
       emitEditState(true);
     });
     editImeEl.addEventListener('input', (e) => {
-      if (suppressingImeReset || !editModeOn || !editCursor || imeComposing) return;
+      if (suppressingImeReset || !editModeOn || !editCursor || imeComposing || e.isComposing) return;
       const it = e.inputType || '';
+      // Android WebView + 삼성 키보드가 compositionend 직후 중복으로 흘리는 조합 완료 input 차단
+      if (it === 'insertCompositionText' || it === 'insertFromComposition') {
+        resetImeBuffer();
+        return;
+      }
       const rawVal = editImeEl.value || '';
+      const cleanPre = rawVal.replace(/\u200B/g, '');
+      if (cleanPre.length > 0 && Date.now() - lastCompEndAt < 140 && cleanPre === lastCompEndText) {
+        lastCompEndAt = 0;
+        resetImeBuffer();
+        return;
+      }
       if (it === 'deleteContentBackward' || rawVal.length === 0) {
         handleBackspace();
         resetImeBuffer();

@@ -1424,6 +1424,8 @@ let docxKbInset = 0;
 
 let docxImeEl = null;
 let docxImeComposing = false;
+let docxLastCompEndAt = 0;
+let docxLastCompEndText = '';
 let docxImeCompNode = null;
 let docxImeCompBase = 0;
 let docxImeCompLen = 0;
@@ -1526,7 +1528,7 @@ function docxEnsureIme() {
   });
 
   el.addEventListener('compositionend', (e) => {
-    if (docxSuppressImeReset) {
+    if (docxSuppressImeReset || !docxImeComposing) {
       docxImeComposing = false;
       docxImeCompLen = 0;
       docxImeCompNode = null;
@@ -1548,6 +1550,8 @@ function docxEnsureIme() {
       docxCursor = { node: docxImeCompNode, offset: docxImeCompBase + str.length };
       docxPushUndo();
     }
+    docxLastCompEndAt = Date.now();
+    docxLastCompEndText = str;
     docxImeComposing = false;
     docxImeCompLen = 0;
     docxImeCompNode = null;
@@ -1557,9 +1561,20 @@ function docxEnsureIme() {
   });
 
   el.addEventListener('input', (e) => {
-    if (docxSuppressImeReset || !docxEditMode || !docxCursor || docxImeComposing) return;
+    if (docxSuppressImeReset || !docxEditMode || !docxCursor || docxImeComposing || e.isComposing) return;
     const it = e.inputType || '';
+    // Android WebView + 삼성 키보드가 compositionend 직후 중복으로 흘리는 조합 완료 input 차단
+    if (it === 'insertCompositionText' || it === 'insertFromComposition') {
+      docxResetImeBuffer();
+      return;
+    }
     const rawVal = el.value || '';
+    const cleanPre = rawVal.replace(/\u200B/g, '');
+    if (cleanPre.length > 0 && Date.now() - docxLastCompEndAt < 140 && cleanPre === docxLastCompEndText) {
+      docxLastCompEndAt = 0;
+      docxResetImeBuffer();
+      return;
+    }
     if (it === 'deleteContentBackward' || rawVal.length === 0) {
       docxHandleBackspace();
       docxResetImeBuffer();
@@ -1610,8 +1625,13 @@ function docxEnsureIme() {
 
 function docxResetImeBuffer() {
   if (!docxImeEl) return;
-  docxImeEl.value = '\u200B';
-  try { docxImeEl.setSelectionRange(1, 1); } catch (_) {}
+  const prev = docxSuppressImeReset;
+  docxSuppressImeReset = true;
+  try {
+    docxImeEl.value = '\u200B';
+    docxImeEl.setSelectionRange(1, 1);
+  } catch (_) {}
+  docxSuppressImeReset = prev;
 }
 
 function docxFocusIme() {
@@ -1808,9 +1828,42 @@ function docxCaretPointAt(clientX, clientY) {
           r.collapse(true);
         }
       }
-      if (r && r.startContainer && r.startContainer.nodeType === 3) {
-        if (r.startContainer.parentElement?.closest?.('.page')) {
-          return { node: r.startContainer, offset: r.startOffset };
+      if (r && r.startContainer) {
+        if (r.startContainer.nodeType === 3) {
+          if (r.startContainer.parentElement?.closest?.('.page')) {
+            return { node: r.startContainer, offset: r.startOffset };
+          }
+        } else if (r.startContainer.nodeType === 1 && r.startContainer.closest?.('.page')) {
+          // user-select:none 환경에서 Element가 반환되면 가장 가까운 자식 텍스트 노드로 해석
+          const tw = document.createTreeWalker(r.startContainer, NodeFilter.SHOW_TEXT);
+          let best = null, bestDist = Infinity, tn = tw.nextNode();
+          while (tn) {
+            if ((tn.nodeValue || '').trim().length > 0) {
+              const nr = document.createRange();
+              nr.selectNodeContents(tn);
+              const rc = nr.getBoundingClientRect();
+              if (rc.width > 0 && rc.height > 0) {
+                const dx0 = x < rc.left ? rc.left - x : (x > rc.right ? x - rc.right : 0);
+                const dy0 = y < rc.top ? rc.top - y : (y > rc.bottom ? y - rc.bottom : 0);
+                const d = dx0 * dx0 + dy0 * dy0;
+                if (d < bestDist) { bestDist = d; best = tn; }
+              }
+            }
+            tn = tw.nextNode();
+          }
+          if (best) {
+            const len = (best.nodeValue || '').length;
+            let lo = 0, hi = len;
+            while (lo < hi) {
+              const mid = (lo + hi) >> 1;
+              const cr = document.createRange();
+              cr.setStart(best, mid);
+              cr.setEnd(best, Math.min(len, mid + 1));
+              const br = cr.getBoundingClientRect();
+              if (br.left + br.width * 0.5 < x) lo = mid + 1; else hi = mid;
+            }
+            return { node: best, offset: Math.max(0, Math.min(len, lo)) };
+          }
         }
       }
       return null;
@@ -1820,6 +1873,42 @@ function docxCaretPointAt(clientX, clientY) {
     for (const dx of [10, -10, 22, -22]) {
       pt = tryAt(clientX + dx, clientY);
       if (pt) return pt;
+    }
+    // 최종 폴백: 좌표가 속한 .page의 텍스트 노드 중 가장 가까운 글자 오프셋 직접 탐색
+    for (const pg of document.querySelectorAll('.page')) {
+      const pr = pg.getBoundingClientRect();
+      if (clientX >= pr.left - 24 && clientX <= pr.right + 24 && clientY >= pr.top - 24 && clientY <= pr.bottom + 24) {
+        const tw = document.createTreeWalker(pg, NodeFilter.SHOW_TEXT);
+        let best = null, bestDist = Infinity, tn = tw.nextNode();
+        while (tn) {
+          if ((tn.nodeValue || '').trim().length > 0) {
+            const nr = document.createRange();
+            nr.selectNodeContents(tn);
+            for (const rc of nr.getClientRects()) {
+              if (rc.width > 0.5 && rc.height > 0.5) {
+                const dx0 = clientX < rc.left ? rc.left - clientX : (clientX > rc.right ? clientX - rc.right : 0);
+                const dy0 = clientY < rc.top ? rc.top - clientY : (clientY > rc.bottom ? clientY - rc.bottom : 0);
+                const d = dx0 * dx0 + dy0 * dy0 * 4;
+                if (d < bestDist) { bestDist = d; best = tn; }
+              }
+            }
+          }
+          tn = tw.nextNode();
+        }
+        if (best && bestDist < 2500) {
+          const len = (best.nodeValue || '').length;
+          let lo = 0, hi = len;
+          while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            const cr = document.createRange();
+            cr.setStart(best, mid);
+            cr.setEnd(best, Math.min(len, mid + 1));
+            const br = cr.getBoundingClientRect();
+            if (br.left + br.width * 0.5 < clientX) lo = mid + 1; else hi = mid;
+          }
+          return { node: best, offset: Math.max(0, Math.min(len, lo)) };
+        }
+      }
     }
   } catch (_) {}
   finally {
@@ -2158,7 +2247,7 @@ function docxOnTouchStart(e) {
     docxSelRange = docxBuildRangeFromPts(pt, pt);
     docxRenderSelection();
     docxEmitEditState(false);
-  }, 240);
+  }, 180);
 }
 
 function docxOnTouchMove(e) {
@@ -2171,7 +2260,7 @@ function docxOnTouchMove(e) {
   }
   const t = e.touches[0];
   if (docxSelTimer && !docxSelDragging) {
-    if (Math.hypot(t.clientX - docxSelDownX, t.clientY - docxSelDownY) > 14) {
+    if (Math.hypot(t.clientX - docxSelDownX, t.clientY - docxSelDownY) > 18) {
       clearTimeout(docxSelTimer);
       docxSelTimer = 0;
     }
