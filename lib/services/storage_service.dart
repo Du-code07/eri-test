@@ -210,7 +210,7 @@ class StorageService {
   static bool guidePromptShown = false;
 
   /// 업데이트 내역 창: 마지막으로 확인한 앱 버전
-  static const String currentAppVersion = '3.18.68';
+  static const String currentAppVersion = '1.0.1';
   static String? lastSeenAppVersion;
 
   static Future<void> markAppVersionSeen([String version = currentAppVersion]) async {

@@ -23,10 +23,6 @@ Future<void> shareFile(BuildContext context, String path, {String? title}) async
   }
 }
 
-/// 모든 파일 공유 시 메모를 제외하고 원본 파일 그대로 공유
-Future<void> shareFileWithMemos(BuildContext context, String path, {String? title}) =>
-    shareFile(context, path, title: title);
-
 /// 확장자로 알아낸 파일 형식 (모르면 아무 파일)
 String shareMimeOf(String path) {
   final ext = path.split('.').last.toLowerCase();

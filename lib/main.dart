@@ -23,7 +23,6 @@ import 'widgets/sheet_pull_to_close.dart';
 import 'widgets/file_type_icon.dart';
 import 'widgets/favorite_ribbon.dart';
 import 'widgets/group_stack_icon.dart';
-import 'widgets/group_jump_menu.dart';
 import 'widgets/group_dropdown.dart';
 import 'widgets/morph_icons.dart';
 import 'widgets/viewer_dialogs.dart';
@@ -1176,22 +1175,22 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
       final cs = Theme.of(context).colorScheme;
       final Color sig = AppColors.of(context);
       final List<String> notes = [
-        _tr('한글 문서 화면 위 실시간 커서·키보드 직접 편집 추가 (본문·표 안 문구 수정)',
-            'Added live on-page cursor & keyboard editing for HWP/HWPX (keeps original font, save copy & share)',
-            '新增 HWP/HWPX 页面实时光标键盘编辑（保留原字体、保存副本与分享）',
-            'HWP/HWPXのページ上リアルタイムカーソル編集を追加（元のフォント維持・コピー保存・共有）'),
-        _tr('새 이리 아이콘과 테마 배경에 어우러지는 시작화면 적용',
-            'Updated ERI icon and theme-adaptive splash screen',
-            '更新 ERI 图标与自适应主题启动画面',
-            '新しいERIアイコンとテーマ連動の起動画面を適用'),
-        _tr('엑셀 시트 목록을 상단으로 옮기고 확대 단추를 정리했어요',
-            'Moved Excel sheet tabs to the top and simplified the toolbar',
-            '将 Excel 工作表标签移至顶部并精简工具栏',
-            'Excelシート一覧を上部に移動し表示を整理しました'),
-        _tr('도구 모음 설정 모드별 안내 문구 및 아이콘 음영 개선',
-            'Improved mode-specific toolbar hints and icon readability',
-            '优化工具栏模式提示与图标阴影可读性',
-            'ツールバー設定のモード別案内とアイコン視認性を改善'),
+        _tr('한글(HWP/HWPX)·워드(DOCX) 직접 편집 강화 (굵기·기울임·밑줄·글자 크기·색상·드래그 돋보기)',
+            'Enhanced HWP/HWPX & Word (DOCX) editing (bold, italic, underline, font size, color & drag magnifier)',
+            '增强 HWP/HWPX 与 Word (DOCX) 直接编辑（加粗、斜体、下划线、字号、颜色与拖动放大镜）',
+            'HWP/HWPX・Word (DOCX) 直接編集を強化（太字・斜体・下線・文字サイズ・色・拡大ルーペ）'),
+        _tr('PDF 확대 시 고해상도 선명 렌더링 및 파일 열기·닫기 부드러운 전환 적용',
+            'Added sharp high-res PDF zoom rendering and smoother file open/close transitions',
+            '优化 PDF 放大高分辨率清晰渲染与文件开关平滑过渡动画',
+            'PDF拡大時の高解像度レンダリングとファイル開閉の滑らかな遷移を適用'),
+        _tr('문서 스캔 모노크롬 아이콘 리뉴얼 및 촬영 화면 플래시 버튼 위치 개선',
+            'Refreshed document scanner icons and moved the flash button next to the shutter',
+            '焕新文档扫描单色图标并将闪光灯按钮移至快门右侧',
+            'スキャン画面のモノクロアイコン刷新とフラッシュボタン配置を改善'),
+        _tr('EPUB 도구 모음 챕터 이동·글자 크기 조절 추가 및 편집·설정창 사용성 개선',
+            'Added EPUB chapter & font size controls in toolbar and improved overall stability',
+            '在 EPUB 工具栏新增章节切换与字号调节，并优化整体稳定性',
+            'EPUBツールバーにチャプター移動・文字サイズ調整を追加し操作性を改善'),
       ];
       await showCenterDialog<void>(
         context: context,
@@ -3571,7 +3570,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
       _showFileInfo(file);
     } else if (action == 'share') {
       // PDF는 메모를 넣어서 (뷰어의 공유와 같음)
-      shareFileWithMemos(context, file.path, title: _formatDisplayFileName(file.path.split(Platform.pathSeparator).last));
+      shareFile(context, file.path, title: _formatDisplayFileName(file.path.split(Platform.pathSeparator).last));
     } else if (action == 'rename') {
       _renameFileDialog(file);
     } else if (action == 'move_group') {
