@@ -30,6 +30,7 @@ class _SheetPullToCloseState extends State<SheetPullToClose> {
 
   int? _pointer;
   bool _pulling = false;
+  bool _fromGrip = false; // 맨 위 회색 막대 영역에서 잡았는지
   double _pending = 0.0; // 끌기 시작 전 누적 이동 (손가락 떨림 무시용)
   double _pull = 0.0; // 창을 내린 거리
   VelocityTracker? _velocity;
@@ -52,6 +53,7 @@ class _SheetPullToCloseState extends State<SheetPullToClose> {
     if (_pointer != null) return;
     _pointer = e.pointer;
     _pulling = false;
+    _fromGrip = e.localPosition.dy <= 56.0;
     _pending = 0.0;
     _pull = 0.0;
     _velocity = VelocityTracker.withKind(e.kind)..addPosition(e.timeStamp, e.position);
@@ -62,11 +64,12 @@ class _SheetPullToCloseState extends State<SheetPullToClose> {
     _velocity?.addPosition(e.timeStamp, e.position);
     final double dy = e.delta.dy;
     if (!_pulling) {
-      if (dy > 0 && _atTop) {
+      if (dy > 0 && (_fromGrip || _atTop)) {
         _pending += dy;
-        if (_pending > kTouchSlop) {
+        final double slop = _fromGrip ? 4.0 : kTouchSlop;
+        if (_pending > slop) {
           _pulling = true;
-          _pull = _pending - kTouchSlop;
+          _pull = _pending - slop;
         }
       } else if (dy < 0) {
         _pending = 0.0;
@@ -107,6 +110,7 @@ class _SheetPullToCloseState extends State<SheetPullToClose> {
     _pointer = null;
     final bool wasPulling = _pulling;
     _pulling = false;
+    _fromGrip = false;
     _pending = 0.0;
     if (!wasPulling && _pull <= 0.0) return;
     final double vy = (e is PointerUpEvent) ? (_velocity?.getVelocity().pixelsPerSecond.dy ?? 0.0) : 0.0;
@@ -142,7 +146,7 @@ class _PullAwareScrollPhysics extends ScrollPhysics {
 
   @override
   double applyPhysicsToUserOffset(ScrollMetrics position, double offset) {
-    if (_owner._pulling) return 0.0;
+    if (_owner._pulling || _owner._fromGrip) return 0.0;
     return super.applyPhysicsToUserOffset(position, offset);
   }
 }

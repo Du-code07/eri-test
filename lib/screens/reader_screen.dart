@@ -337,6 +337,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   bool _isMemoMode = false;
   bool _isHwpEditMode = false;
   bool _hwpHasEdits = false;
+  bool _hwpHasSelection = false;
   bool _hwpSaving = false;
   bool _hwpBold = false;
   bool _hwpItalic = false;
@@ -1233,6 +1234,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           filePath: widget.filePath,
           controller: _hwpController,
           editMode: _isHwpEditMode,
+          hasSelection: _hwpHasSelection,
           onEditState: (st) {
             if (!mounted) return;
             Color parsed = _hwpTextColor;
@@ -1243,6 +1245,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
             }
             setState(() {
               _hwpHasEdits = st['dirty'] == true;
+              _hwpHasSelection = st['hasSelection'] == true;
               _hwpCanUndo = st['canUndo'] == true;
               _hwpCanRedo = st['canRedo'] == true;
               _hwpBold = st['bold'] == true;
@@ -3360,7 +3363,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       e.kind == PointerDeviceKind.stylus || e.kind == PointerDeviceKind.invertedStylus;
 
   void _swipeTrackDown(PointerDownEvent e) {
-    if (_isSpreadsheet) return;
+    if (_isSpreadsheet || _isHwpEditMode) return;
     if (_isMemoMode && _isStylusEvent(e)) return;
     _swipeActivePointers++;
     if (_swipeActivePointers == 1) {
@@ -3383,6 +3386,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   }
 
   void _swipeTrackMove(PointerMoveEvent e) {
+    if (_isHwpEditMode) return;
     if (_docSelMove(e)) return; // 글 고르는 중: 넘기지 않음
     _bookTrackMove(e);
     final start = _swipeStartPos;
@@ -3393,7 +3397,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   }
 
   void _swipeTrackUp(PointerEvent e, {bool cancelled = false}) {
-    if (_isSpreadsheet) return;
+    if (_isSpreadsheet || _isHwpEditMode) return;
     if (_isMemoMode && _isStylusEvent(e)) return;
     if (_swipeActivePointers > 0) _swipeActivePointers--;
     if (_swipeActivePointers > 0) return;
@@ -3488,18 +3492,18 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   }
 
   void _onFlickStart(DragStartDetails details) {
-    if (_docSel.active || _docPressSelecting || WordSelectionLayer.locked) return;
+    if (_isHwpEditMode || _docSel.active || _docPressSelecting || WordSelectionLayer.locked) return;
     _swipeHandledByDrag = true;
     _flickDx = 0.0;
   }
 
   void _onFlickUpdate(DragUpdateDetails details) {
-    if (_docSel.active || _docPressSelecting || WordSelectionLayer.locked) return;
+    if (_isHwpEditMode || _docSel.active || _docPressSelecting || WordSelectionLayer.locked) return;
     _flickDx += details.primaryDelta ?? details.delta.dx;
   }
 
   void _onFlickEnd(DragEndDetails details) {
-    if (_swipeMultiTouch || _hasTextSelection || _docSel.active || _docPressSelecting || WordSelectionLayer.locked) return;
+    if (_isHwpEditMode || _swipeMultiTouch || _hasTextSelection || _docSel.active || _docPressSelecting || WordSelectionLayer.locked) return;
     final double vx = details.velocity.pixelsPerSecond.dx;
     if (vx.abs() >= 300.0) {
       _turnBySwipeDirection(vx);
@@ -4524,6 +4528,8 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       setState(() {
         _isHwpEditMode = false;
         _hwpHasEdits = false;
+      _hwpHasSelection = false;
+        _hwpHasSelection = false;
         _hwpCanUndo = false;
         _hwpCanRedo = false;
         _hwpSubPanel = null;
@@ -4541,6 +4547,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     setState(() {
       _isHwpEditMode = false;
       _hwpHasEdits = false;
+      _hwpHasSelection = false;
       _hwpCanUndo = false;
       _hwpCanRedo = false;
       _hwpSubPanel = null;
@@ -4561,6 +4568,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     setState(() {
       _isHwpEditMode = true;
       _hwpHasEdits = false;
+      _hwpHasSelection = false;
       _hwpCanUndo = false;
       _hwpCanRedo = false;
       _hwpSubPanel = null;

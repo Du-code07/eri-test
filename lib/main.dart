@@ -2518,38 +2518,43 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
     final displayName = _formatDisplayFileName(rawName);
     final ext = rawName.split('.').last.toLowerCase();
 
-    // 파일 화면이 오른쪽에서 들어오며 서재를 왼쪽으로 밀어냄 (닫으면 반대로)
+    // WebView/PlatformView를 가로로 밀어낼 때 생기는 깜빡임·닫기 흰 화면 번쩍임을 막기 위해 부드러운 페이드 전환 사용
+    PageRoute<void> fileRoute(Widget page) => PageRouteBuilder<void>(
+          opaque: false,
+          transitionDuration: Anim.off.value ? Duration.zero : const Duration(milliseconds: 160),
+          reverseTransitionDuration: Anim.off.value ? Duration.zero : const Duration(milliseconds: 140),
+          pageBuilder: (_, __, ___) => page,
+          transitionsBuilder: (_, animation, __, child) {
+            if (Anim.off.value) return child;
+            return FadeTransition(
+              opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut, reverseCurve: Curves.easeIn),
+              child: child,
+            );
+          },
+        );
+
     if (_readerExts.contains(ext)) {
       await Navigator.push(
         context,
-        PushAsideRoute(
-          swipeBack: false,
-          builder: (_) => ReaderScreen(filePath: file.path, bookTitle: displayName),
-        ),
+        fileRoute(ReaderScreen(filePath: file.path, bookTitle: displayName)),
       );
     } else if (ext == 'pdf') {
       await Navigator.push(
         context,
-        PushAsideRoute(
-          swipeBack: false,
-          builder: (_) => UniversalMediaReaderScreen(
-            files: [file],
-            title: displayName,
-            isPdf: true,
-          ),
-        ),
+        fileRoute(UniversalMediaReaderScreen(
+          files: [file],
+          title: displayName,
+          isPdf: true,
+        )),
       );
     } else {
       await Navigator.push(
         context,
-        PushAsideRoute(
-          swipeBack: false,
-          builder: (_) => UniversalMediaReaderScreen(
-            files: [file],
-            title: displayName,
-            isPdf: false,
-          ),
-        ),
+        fileRoute(UniversalMediaReaderScreen(
+          files: [file],
+          title: displayName,
+          isPdf: false,
+        )),
       );
     }
 

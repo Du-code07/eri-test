@@ -287,6 +287,7 @@ class HwpViewer extends StatefulWidget {
   /// 스크롤 보기에서 지금 위치·전체 길이·보이는 높이 (오른쪽 회색 막대)
   final void Function(double top, double height, double client)? onScrollMetrics;
   final bool editMode;
+  final bool hasSelection;
   final void Function(Map<String, Object?> state)? onEditState;
 
   const HwpViewer({
@@ -310,6 +311,7 @@ class HwpViewer extends StatefulWidget {
     this.vertical = false,
     this.onScrollMetrics,
     this.editMode = false,
+    this.hasSelection = false,
     this.onEditState,
   });
 
@@ -761,7 +763,7 @@ class _HwpViewerState extends State<HwpViewer> {
           // 주의: WebView는 처음 만들 때 받은 목록을 계속 써서 (나중에 목록을 바꿔도 반영 안 됨)
           // 슬라이드→스크롤로 바꾸면 스크롤이 먹통이 됐었음. 그래서 목록은 그대로 두고, 누를 때마다 지금 보기 방식을 확인함
           gestureRecognizers: {
-            Factory<OneSequenceGestureRecognizer>(() => _ModeEagerRecognizer(() => mounted && (_isSpreadsheet || widget.vertical))),
+            Factory<OneSequenceGestureRecognizer>(() => _ModeEagerRecognizer(() => mounted && (_isSpreadsheet || widget.vertical || (widget.editMode && widget.hasSelection)))),
             // 문서 편집 모드(슬라이드 포함): 길게 눌러 드래그 선택할 때만 WebView가 터치를 받아 핀치 줌·이동과 충돌 없이 동작
             Factory<LongPressGestureRecognizer>(() => _ModeLongPressRecognizer(() => mounted && (_isSpreadsheet || widget.editMode))),
           },

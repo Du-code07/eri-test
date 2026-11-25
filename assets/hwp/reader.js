@@ -1226,6 +1226,7 @@ function emitEditState(typed = false) {
     fontSizePt,
     textColor,
     hasCursor: Boolean(editCursor),
+    hasSelection: Boolean(editSelection && compareEditPos(editSelection.start, editSelection.end) < 0),
     typed: Boolean(typed),
   });
 }
@@ -1472,9 +1473,9 @@ function ensureEditDom() {
       '@keyframes eriBlink{0%,49%{opacity:1}50%,100%{opacity:0}}',
       '.eri-caret-rect{fill:#2F7D32;pointer-events:none;animation:eriBlink 1s step-end infinite;}',
       '.eri-sel-rect{fill:rgba(47,125,50,0.28);pointer-events:none;}',
-      '.eri-sel-handle{position:absolute;width:24px;height:30px;z-index:30;touch-action:none;pointer-events:auto;display:flex;flex-direction:column;align-items:center;}',
-      '.eri-sel-handle-stem{width:2.5px;height:14px;background:#2F7D32;border-radius:1.5px;}',
-      '.eri-sel-handle-knob{width:14px;height:14px;background:#2F7D32;border:2px solid #fff;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,0.35);}',
+      '.eri-sel-handle{position:absolute;width:44px;height:44px;z-index:20;touch-action:none;pointer-events:auto;}',
+      '.eri-sel-handle-stem{position:absolute;left:21px;top:4px;width:2px;height:14px;background:#2f7d32;}',
+      '.eri-sel-handle-knob{position:absolute;left:15px;top:16px;width:14px;height:14px;border-radius:50%;background:#2f7d32;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.35);box-sizing:border-box;}',
       '#eri-ime{position:fixed;left:0;top:0;opacity:0.001;width:2px;height:20px;border:0;padding:0;margin:0;resize:none;z-index:9998;pointer-events:none;font-size:16px;background:transparent;color:transparent;caret-color:transparent;}',
     ].join(' ');
     document.head.appendChild(st);
@@ -1934,8 +1935,8 @@ function mountSelHandle(frame, kind, leftPx, topPx) {
   const h = document.createElement('div');
   h.className = 'eri-sel-handle';
   h.dataset.kind = kind;
-  h.style.left = `${leftPx - 12}px`;
-  h.style.top = `${topPx}px`;
+  h.style.left = `${leftPx - 22}px`;
+  h.style.top = `${topPx - 4}px`;
   const stem = document.createElement('div');
   stem.className = 'eri-sel-handle-stem';
   const knob = document.createElement('div');

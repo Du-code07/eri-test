@@ -1877,8 +1877,8 @@ function docxMountSelHandle(pageEl, side, relX, relY) {
   const h = document.createElement('div');
   h.className = 'eri-sel-handle';
   h.dataset.side = side;
-  h.style.left = `${relX - 14}px`;
-  h.style.top = `${relY}px`;
+  h.style.left = `${relX - 22}px`;
+  h.style.top = `${relY - 4}px`;
   h.addEventListener('touchstart', (ev) => {
     if (ev.touches.length !== 1 || !docxSelRange) return;
     docxActiveHandleSide = side;
@@ -1988,6 +1988,7 @@ function docxEmitEditState(typed = false) {
     fontSizePt: st.fontSizePt,
     textColor: st.textColor,
     hasCursor: Boolean(docxCursor || (docxSelRange && !docxSelRange.collapsed)),
+    hasSelection: Boolean(docxSelRange && !docxSelRange.collapsed),
     typed: Boolean(typed),
   });
 }

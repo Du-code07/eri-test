@@ -129,8 +129,8 @@ body.eri-docx-edit, body.eri-docx-edit * {
 }
 .eri-sel-handle {
   position: absolute;
-  width: 28px;
-  height: 32px;
+  width: 44px;
+  height: 44px;
   z-index: 40;
   touch-action: none;
   pointer-events: auto;
@@ -138,8 +138,8 @@ body.eri-docx-edit, body.eri-docx-edit * {
 .eri-sel-handle::before {
   content: '';
   position: absolute;
-  left: 13px;
-  top: 0;
+  left: 21px;
+  top: 4px;
   width: 2px;
   height: 14px;
   background: #2f7d32;
@@ -147,8 +147,8 @@ body.eri-docx-edit, body.eri-docx-edit * {
 .eri-sel-handle::after {
   content: '';
   position: absolute;
-  left: 7px;
-  top: 12px;
+  left: 15px;
+  top: 16px;
   width: 14px;
   height: 14px;
   border-radius: 50%;
