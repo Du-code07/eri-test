@@ -1480,8 +1480,6 @@ function ensureEditDom() {
       '.eri-sel-handle-knob{position:absolute;left:14px;top:6px;width:20px;height:20px;background:#2f7d32;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.32);box-sizing:border-box;border-radius:0 50% 50% 50%;transform:rotate(45deg);}',
       '.eri-sel-handle[data-kind="start"] .eri-sel-handle-knob{border-radius:50% 0 50% 50%;transform:rotate(45deg);left:8px;}',
       '.eri-sel-handle[data-kind="end"] .eri-sel-handle-knob{border-radius:0 50% 50% 50%;transform:rotate(45deg);left:20px;}',
-      '.eri-loupe{position:fixed;width:148px;height:54px;border-radius:27px;overflow:hidden;background:#fff;border:1.5px solid rgba(47,125,50,0.45);box-shadow:0 6px 20px rgba(0,0,0,0.28);pointer-events:none;z-index:9999;display:none;}',
-      '.eri-loupe-inner{position:absolute;left:0;top:0;transform-origin:0 0;pointer-events:none;}',
       '#eri-ime{position:fixed;left:0;top:0;opacity:0.001;width:2px;height:20px;border:0;padding:0;margin:0;resize:none;z-index:9998;pointer-events:none;font-size:16px;background:transparent;color:transparent;caret-color:transparent;}',
     ].join(' ');
     document.head.appendChild(st);
@@ -1939,87 +1937,12 @@ function removeAllSelRects(keepHandles = false) {
 }
 
 let selHandleDragging = false;
-let eriLoupeEl = null;
-let eriLoupeInner = null;
-let eriLoupePage = null;
-
-function ensureLoupe() {
-  if (eriLoupeEl) return eriLoupeEl;
-  eriLoupeEl = document.createElement('div');
-  eriLoupeEl.className = 'eri-loupe';
-  eriLoupeInner = document.createElement('div');
-  eriLoupeInner.className = 'eri-loupe-inner';
-  eriLoupeEl.appendChild(eriLoupeInner);
-  document.body.appendChild(eriLoupeEl);
-  return eriLoupeEl;
-}
-
-let eriLoupeRect = null;
-let eriLoupeRaf = 0;
+let eriDragRaf = 0;
 let eriDragPending = null;
 
-function findPageAtFast(clientX, clientY) {
-  if (eriLoupePage && eriLoupePage.isConnected) {
-    const r = eriLoupePage.getBoundingClientRect();
-    if (r.width > 0 && r.height > 0 && clientX >= r.left - 20 && clientX <= r.right + 20 && clientY >= r.top - 20 && clientY <= r.bottom + 20) {
-      return { pageEl: eriLoupePage, pr: r };
-    }
-  }
-  for (const p of document.querySelectorAll('#pages > .page, #vpages .page')) {
-    if (p.closest && p.closest('#pages-under, .eri-loupe')) continue;
-    const pr = p.getBoundingClientRect();
-    if (pr.width > 0 && pr.height > 0 && clientX >= pr.left - 24 && clientX <= pr.right + 24 && clientY >= pr.top - 24 && clientY <= pr.bottom + 24) {
-      return { pageEl: p, pr };
-    }
-  }
-  const p0 = document.querySelector('#pages > .page, #vpages .page');
-  if (!p0) return null;
-  const pr0 = p0.getBoundingClientRect();
-  return pr0.width > 0 && pr0.height > 0 ? { pageEl: p0, pr: pr0 } : null;
-}
-
-function updateLoupe(clientX, clientY) {
-  const hit = findPageAtFast(clientX, clientY);
-  if (!hit) return;
-  const { pageEl, pr } = hit;
-  ensureLoupe();
-  const baseW = pageEl.offsetWidth || pr.width;
-  const baseH = pageEl.offsetHeight || pr.height;
-  const scaleX = pr.width / Math.max(1, baseW);
-  const scaleY = pr.height / Math.max(1, baseH);
-  if (eriLoupePage !== pageEl || !eriLoupeInner.firstChild) {
-    eriLoupePage = pageEl;
-    eriLoupeRect = pr;
-    const clone = pageEl.cloneNode(true);
-    for (const h of clone.querySelectorAll('.eri-sel-handle, .eri-caret-rect, .eri-sel-rect')) h.remove();
-    clone.style.position = 'relative';
-    clone.style.left = '0';
-    clone.style.top = '0';
-    clone.style.margin = '0';
-    clone.style.width = `${baseW}px`;
-    clone.style.height = `${baseH}px`;
-    eriLoupeInner.replaceChildren(clone);
-  }
-  const zoom = 1.65 * scaleX;
-  const lw = 148, lh = 54;
-  const rx = (clientX - pr.left) / Math.max(0.01, scaleX);
-  const ry = (clientY - pr.top) / Math.max(0.01, scaleY);
-  const tx = (lw * 0.5) - rx * zoom;
-  const ty = (lh * 0.5) - ry * zoom;
-  eriLoupeInner.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(${zoom})`;
-  const left = Math.max(10, Math.min(window.innerWidth - lw - 10, clientX - lw * 0.5));
-  const top = Math.max(12, clientY - lh - 34);
-  eriLoupeEl.style.left = '0px';
-  eriLoupeEl.style.top = '0px';
-  eriLoupeEl.style.transform = `translate3d(${left}px, ${top}px, 0)`;
-  eriLoupeEl.style.display = 'block';
-}
-
-function hideLoupe() {
-  if (eriLoupeRaf) { cancelAnimationFrame(eriLoupeRaf); eriLoupeRaf = 0; }
+function cancelDragRaf() {
+  if (eriDragRaf) { cancelAnimationFrame(eriDragRaf); eriDragRaf = 0; }
   eriDragPending = null;
-  if (eriLoupeEl) eriLoupeEl.style.display = 'none';
-  eriLoupeRect = null;
 }
 
 function handleSelHandleDocStart(e) {
@@ -2056,13 +1979,12 @@ function handleSelHandleDocMove(e) {
   e.preventDefault();
   const t = e.touches[0];
   eriDragPending = { mode: 'handle', x: t.clientX, y: t.clientY - 18 };
-  if (eriLoupeRaf) return;
-  eriLoupeRaf = requestAnimationFrame(() => {
-    eriLoupeRaf = 0;
+  if (eriDragRaf) return;
+  eriDragRaf = requestAnimationFrame(() => {
+    eriDragRaf = 0;
     const p = eriDragPending;
     eriDragPending = null;
     if (!p || !selHandleDragging || !selAnchorHit) return;
-    updateLoupe(p.x, p.y);
     const hit = hitTestClientPoint(p.x, p.y);
     if (!hit || !sameSelContainer(selAnchorHit, hit)) return;
     const cmp = compareEditPos(selAnchorHit, hit);
@@ -2075,7 +1997,7 @@ function handleSelHandleDocMove(e) {
 
 function handleSelHandleDocEnd(e) {
   if (!selHandleDragging) return;
-  hideLoupe();
+  cancelDragRaf();
   selHandleDragging = false;
   selDragActive = false;
   selJustFinishedAt = Date.now();
@@ -2111,10 +2033,17 @@ function mountSelHandle(frame, kind, leftPx, topPx) {
     }, { passive: false });
     selHandleEls[kind] = h;
   }
-  h.style.left = `${leftPx}%`;
-  h.style.top = `${topPx}%`;
+  const cx = Math.max(2, Math.min(98, Number(leftPx) || 0));
+  const cy = Math.max(2, Math.min(96, Number(topPx) || 0));
+  h.style.left = `${cx}%`;
+  h.style.top = `${cy}%`;
   h.style.marginLeft = '-24px';
   h.style.marginTop = '-2px';
+  h.style.display = 'block';
+  h.style.visibility = 'visible';
+  h.style.opacity = '1';
+  h.style.pointerEvents = 'auto';
+  h.style.zIndex = '45';
   if (h.parentNode !== frame) frame.appendChild(h);
 }
 
@@ -2421,6 +2350,7 @@ function handleEditTouchStart(e) {
     editSelection = { start: { ...h, offset: s0 }, end: { ...h, offset: e0 } };
     removeAllCarets();
     renderEditSelection();
+    emitEditState();
   }, 260);
 }
 
@@ -2442,13 +2372,12 @@ function handleEditTouchMove(e) {
   if (!selDragActive || !selAnchorHit) return;
   e.preventDefault();
   eriDragPending = { mode: 'drag', x: t.clientX, y: t.clientY };
-  if (eriLoupeRaf) return;
-  eriLoupeRaf = requestAnimationFrame(() => {
-    eriLoupeRaf = 0;
+  if (eriDragRaf) return;
+  eriDragRaf = requestAnimationFrame(() => {
+    eriDragRaf = 0;
     const p = eriDragPending;
     eriDragPending = null;
     if (!p || !selDragActive || !selAnchorHit) return;
-    updateLoupe(p.x, p.y);
     const h = hitTestClientPoint(p.x, p.y);
     if (!h || !sameSelContainer(selAnchorHit, h)) return;
     const cmp = compareEditPos(selAnchorHit, h);
@@ -2464,7 +2393,7 @@ function handleEditTouchMove(e) {
 }
 
 function handleEditTouchEnd() {
-  hideLoupe();
+  cancelDragRaf();
   if (selDragTimer) { clearTimeout(selDragTimer); selDragTimer = 0; }
   if (!selDragActive) return;
   selDragActive = false;
@@ -2769,8 +2698,7 @@ function setEditMode(enabled) {
     document.removeEventListener('mousedown', preventEditBlurMouseDown, true);
     document.removeEventListener('touchstart', handleSelHandleDocStart, true);
     document.removeEventListener('touchstart', handleEditTouchStart, true);
-    hideLoupe();
-    eriLoupePage = null;
+    cancelDragRaf();
     selHandleDragging = false;
     document.removeEventListener('touchmove', handleSelHandleDocMove, true);
     document.removeEventListener('touchend', handleSelHandleDocEnd, true);

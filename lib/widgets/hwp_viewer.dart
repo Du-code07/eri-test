@@ -735,7 +735,7 @@ class _HwpViewerState extends State<HwpViewer> {
             "window.__eriScrollLocked=$flag;"
             "if(!window.__eriScrollLockHook){"
             "  window.__eriScrollLockHook=true;"
-            "  window.addEventListener('touchmove',function(e){if(window.__eriScrollLocked){e.preventDefault();}},{passive:false,capture:true});"
+            "  window.addEventListener('touchmove',function(e){if(window.__eriScrollLocked && (!e.touches || e.touches.length===1)){e.preventDefault();}},{passive:false,capture:true});"
             "}"
             "var vp=document.getElementById('vpages');"
             "if(vp){vp.style.overflowY='$ov';vp.style.overflowX='$ov';vp.style.touchAction='$ta';}"

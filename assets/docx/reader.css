@@ -161,23 +161,3 @@ body.eri-docx-edit, body.eri-docx-edit * {
   left: 20px;
 }
 
-.eri-loupe {
-  position: fixed;
-  width: 148px;
-  height: 54px;
-  border-radius: 27px;
-  overflow: hidden;
-  background: #fff;
-  border: 1.5px solid rgba(47, 125, 50, 0.45);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
-  pointer-events: none;
-  z-index: 9999;
-  display: none;
-}
-.eri-loupe-inner {
-  position: absolute;
-  left: 0;
-  top: 0;
-  transform-origin: 0 0;
-  pointer-events: none;
-}

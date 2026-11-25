@@ -1042,7 +1042,6 @@ function vSize() {
   }
   if (pad) for (let i = 0; i < vTops.length; i++) vTops[i] += pad;
   for (const m of vMounted.values()) m.source.style.transform = `scale(${W / m.entry.width})`;
-  docxLoupePage = null;
 }
 function vLayout(keep) {
   if (!vhost || !pages.length) return;
@@ -1883,7 +1882,7 @@ function docxValidPageTextNode(tn) {
   if (!pe) return false;
   const pg = pe.closest?.('.page');
   if (!pg || pg.closest?.('#pages-under')) return false;
-  if (pe.closest?.('#measure, .eri-loupe, .eri-sel-handle, .docx-note-area')) return false;
+  if (pe.closest?.('#measure, .eri-sel-handle, .docx-note-area')) return false;
   return true;
 }
 
@@ -1930,7 +1929,7 @@ function docxCaretPointAt(clientX, clientY) {
     }
     // 빈 간격/줄 사이 폴백: 현재 좌표에 실제로 가장 가까운 텍스트 노드(수직 32px 이내)만 정확히 선택
     for (const pg of document.querySelectorAll('#pages > .page, #vpages .page')) {
-      if (pg.closest?.('#pages-under, .eri-loupe')) continue;
+      if (pg.closest?.('#pages-under')) continue;
       const pr = pg.getBoundingClientRect();
       if (clientX >= pr.left - 24 && clientX <= pr.right + 24 && clientY >= pr.top - 16 && clientY <= pr.bottom + 16) {
         const tw = document.createTreeWalker(pg, NodeFilter.SHOW_TEXT);
@@ -1992,87 +1991,12 @@ function docxBuildRangeFromPts(p1, p2) {
 }
 
 let docxActiveHandleSide = null;
-let docxLoupeEl = null;
-let docxLoupeInner = null;
-let docxLoupePage = null;
-
-function docxEnsureLoupe() {
-  if (docxLoupeEl) return docxLoupeEl;
-  docxLoupeEl = document.createElement('div');
-  docxLoupeEl.className = 'eri-loupe';
-  docxLoupeInner = document.createElement('div');
-  docxLoupeInner.className = 'eri-loupe-inner';
-  docxLoupeEl.appendChild(docxLoupeInner);
-  document.body.appendChild(docxLoupeEl);
-  return docxLoupeEl;
-}
-
-let docxLoupeRect = null;
-let docxLoupeRaf = 0;
+let docxDragRaf = 0;
 let docxDragPending = null;
 
-function docxFindPageAtFast(clientX, clientY) {
-  if (docxLoupePage && docxLoupePage.isConnected) {
-    const r = docxLoupePage.getBoundingClientRect();
-    if (r.width > 0 && r.height > 0 && clientX >= r.left - 20 && clientX <= r.right + 20 && clientY >= r.top - 20 && clientY <= r.bottom + 20) {
-      return { pageEl: docxLoupePage, pr: r };
-    }
-  }
-  for (const p of document.querySelectorAll('#pages > .page, #vpages .page')) {
-    if (p.closest && p.closest('#pages-under, .eri-loupe')) continue;
-    const pr = p.getBoundingClientRect();
-    if (pr.width > 0 && pr.height > 0 && clientX >= pr.left - 24 && clientX <= pr.right + 24 && clientY >= pr.top - 24 && clientY <= pr.bottom + 24) {
-      return { pageEl: p, pr };
-    }
-  }
-  const p0 = document.querySelector('#pages > .page, #vpages .page');
-  if (!p0) return null;
-  const pr0 = p0.getBoundingClientRect();
-  return pr0.width > 0 && pr0.height > 0 ? { pageEl: p0, pr: pr0 } : null;
-}
-
-function docxUpdateLoupe(clientX, clientY) {
-  const hit = docxFindPageAtFast(clientX, clientY);
-  if (!hit) return;
-  const { pageEl, pr } = hit;
-  docxEnsureLoupe();
-  const baseW = pageEl.offsetWidth || pr.width;
-  const baseH = pageEl.offsetHeight || pr.height;
-  const scaleX = pr.width / Math.max(1, baseW);
-  const scaleY = pr.height / Math.max(1, baseH);
-  if (docxLoupePage !== pageEl || !docxLoupeInner.firstChild) {
-    docxLoupePage = pageEl;
-    docxLoupeRect = pr;
-    const clone = pageEl.cloneNode(true);
-    for (const h of clone.querySelectorAll('.eri-sel-handle, .eri-docx-caret, .eri-docx-sel-rect')) h.remove();
-    clone.style.position = 'relative';
-    clone.style.left = '0';
-    clone.style.top = '0';
-    clone.style.margin = '0';
-    clone.style.width = `${baseW}px`;
-    clone.style.height = `${baseH}px`;
-    docxLoupeInner.replaceChildren(clone);
-  }
-  const zoom = 1.65 * scaleX;
-  const lw = 148, lh = 54;
-  const rx = (clientX - pr.left) / Math.max(0.01, scaleX);
-  const ry = (clientY - pr.top) / Math.max(0.01, scaleY);
-  const tx = (lw * 0.5) - rx * zoom;
-  const ty = (lh * 0.5) - ry * zoom;
-  docxLoupeInner.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(${zoom})`;
-  const left = Math.max(10, Math.min(window.innerWidth - lw - 10, clientX - lw * 0.5));
-  const top = Math.max(12, clientY - lh - 34);
-  docxLoupeEl.style.left = '0px';
-  docxLoupeEl.style.top = '0px';
-  docxLoupeEl.style.transform = `translate3d(${left}px, ${top}px, 0)`;
-  docxLoupeEl.style.display = 'block';
-}
-
-function docxHideLoupe() {
-  if (docxLoupeRaf) { cancelAnimationFrame(docxLoupeRaf); docxLoupeRaf = 0; }
+function docxCancelDragRaf() {
+  if (docxDragRaf) { cancelAnimationFrame(docxDragRaf); docxDragRaf = 0; }
   docxDragPending = null;
-  if (docxLoupeEl) docxLoupeEl.style.display = 'none';
-  docxLoupeRect = null;
 }
 let docxHandleFixedPt = null;
 
@@ -2111,13 +2035,12 @@ function docxOnHandleMove(ev) {
   ev.preventDefault();
   const t = ev.touches[0];
   docxDragPending = { mode: 'handle', x: t.clientX, y: t.clientY - 18 };
-  if (docxLoupeRaf) return;
-  docxLoupeRaf = requestAnimationFrame(() => {
-    docxLoupeRaf = 0;
+  if (docxDragRaf) return;
+  docxDragRaf = requestAnimationFrame(() => {
+    docxDragRaf = 0;
     const p = docxDragPending;
     docxDragPending = null;
     if (!p || !docxActiveHandleSide || !docxHandleFixedPt) return;
-    docxUpdateLoupe(p.x, p.y);
     const pt = docxCaretPointAt(p.x, p.y);
     if (!pt) return;
     const next = docxBuildRangeFromPts(docxHandleFixedPt, pt);
@@ -2130,7 +2053,7 @@ function docxOnHandleMove(ev) {
 
 function docxOnHandleEnd(ev) {
   if (!docxActiveHandleSide) return;
-  docxHideLoupe();
+  docxCancelDragRaf();
   docxActiveHandleSide = null;
   docxHandleFixedPt = null;
   docxSelJustEndedAt = Date.now();
@@ -2157,10 +2080,17 @@ function docxMountSelHandle(pageEl, side, relX, relY) {
     }, { passive: false });
     docxHandleEls[side] = h;
   }
-  h.style.left = `${relX}%`;
-  h.style.top = `${relY}%`;
+  const cx = Math.max(2, Math.min(98, Number(relX) || 0));
+  const cy = Math.max(2, Math.min(96, Number(relY) || 0));
+  h.style.left = `${cx}%`;
+  h.style.top = `${cy}%`;
   h.style.marginLeft = '-24px';
   h.style.marginTop = '-2px';
+  h.style.display = 'block';
+  h.style.visibility = 'visible';
+  h.style.opacity = '1';
+  h.style.pointerEvents = 'auto';
+  h.style.zIndex = '45';
   if (h.parentNode !== pageEl) pageEl.appendChild(h);
 }
 
@@ -2215,7 +2145,7 @@ function docxRenderSelection() {
       }
     }
 
-    const pageEls = [...document.querySelectorAll('#pages > .page, #vpages .page')].filter(p => !p.closest('#pages-under, .eri-loupe'));
+    const pageEls = [...document.querySelectorAll('#pages > .page, #vpages .page')].filter(p => !p.closest('#pages-under'));
     const findPageForRect = (rc) => {
       const cx = (rc.left + rc.right) * 0.5;
       const cy = (rc.top + rc.bottom) * 0.5;
@@ -2354,13 +2284,12 @@ function docxOnTouchMove(e) {
   e.preventDefault();
   e.stopPropagation();
   docxDragPending = { mode: 'drag', x: t.clientX, y: t.clientY };
-  if (docxLoupeRaf) return;
-  docxLoupeRaf = requestAnimationFrame(() => {
-    docxLoupeRaf = 0;
+  if (docxDragRaf) return;
+  docxDragRaf = requestAnimationFrame(() => {
+    docxDragRaf = 0;
     const p = docxDragPending;
     docxDragPending = null;
     if (!p || !docxSelDragging || !docxSelAnchorPt) return;
-    docxUpdateLoupe(p.x, p.y);
     const pt = docxCaretPointAt(p.x, p.y);
     if (pt) {
       const r = docxBuildRangeFromPts(docxSelAnchorPt, pt);
@@ -2373,7 +2302,7 @@ function docxOnTouchMove(e) {
 }
 
 function docxOnTouchEnd() {
-  docxHideLoupe();
+  docxCancelDragRaf();
   if (docxSelTimer) { clearTimeout(docxSelTimer); docxSelTimer = 0; }
   if (!docxSelDragging) return;
   docxSelDragging = false;
@@ -2469,8 +2398,7 @@ function setEditMode(enabled) {
     docxClearSelectionOverlays();
     document.removeEventListener('contextmenu', docxPreventContext, true);
     document.removeEventListener('dblclick', docxOnDblClick, true);
-    docxHideLoupe();
-    docxLoupePage = null;
+    docxCancelDragRaf();
     docxActiveHandleSide = null;
     docxHandleFixedPt = null;
     document.removeEventListener('mousedown', docxPreventBlurMouseDown, true);

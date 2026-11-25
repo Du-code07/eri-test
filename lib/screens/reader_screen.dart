@@ -1261,6 +1261,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                 _hwpSubPanel = null;
               }
             });
+            _syncDocScrollLock();
           },
           initialPosition: _currentCfi ?? _initialCfi,
           initialProgress: _initialProgress,
@@ -2764,7 +2765,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   Offset? _docPendingExtend;
 
   void _syncDocScrollLock() {
-    final bool lock = _docPressSelecting || _docSel.active;
+    final bool lock = _docPressSelecting || _docSel.active || (_isHwpEditMode && _hwpHasSelection);
     if (lock == _docScrollLocked) return;
     _docScrollLocked = lock;
     _hwpController.setScrollLocked(lock);
@@ -5230,7 +5231,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                               ? EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom + 96.0)
                               : EdgeInsets.fromLTRB(260, 260, 260, math.max(260.0, MediaQuery.viewInsetsOf(context).bottom + 96.0)))
                           : (_epubZoomScale < 0.98 ? const EdgeInsets.all(220) : EdgeInsets.zero),
-                      panEnabled: !_isSpreadsheet && !_docScrollActive && !(_isHwpEditMode && _hwpHasSelection) && (!_isMemoMode || !_allowFingerDrawing) && (_epubZoomScale > 1.03 || _epubZoomScale < 0.98 || (_isHwpEditMode && MediaQuery.viewInsetsOf(context).bottom > 0)),
+                      panEnabled: !_isSpreadsheet && !_docScrollActive && !_docSel.active && !(_isHwpEditMode && _hwpHasSelection) && (!_isMemoMode || !_allowFingerDrawing) && (_epubZoomScale > 1.03 || _epubZoomScale < 0.98 || (_isHwpEditMode && MediaQuery.viewInsetsOf(context).bottom > 0)),
                       scaleEnabled: !_isSpreadsheet && !(_pageModeScroll && _isOfflineDocument) && (!_isMemoMode || !_allowFingerDrawing),
                       minScale: 0.6,
                       maxScale: 4.5,
