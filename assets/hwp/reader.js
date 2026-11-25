@@ -1936,17 +1936,40 @@ function ensureLoupe() {
   return eriLoupeEl;
 }
 
+let eriLoupeRect = null;
+let eriLoupeRaf = 0;
+let eriDragPending = null;
+
+function findPageAtFast(clientX, clientY) {
+  if (eriLoupePage && eriLoupePage.isConnected && eriLoupeRect) {
+    const r = eriLoupeRect;
+    if (clientX >= r.left - 20 && clientX <= r.right + 20 && clientY >= r.top - 20 && clientY <= r.bottom + 20) {
+      return { pageEl: eriLoupePage, pr: r };
+    }
+  }
+  for (const p of document.querySelectorAll('.page')) {
+    if (p.closest && p.closest('#pages-under')) continue;
+    const pr = p.getBoundingClientRect();
+    if (pr.width > 0 && pr.height > 0 && clientX >= pr.left - 24 && clientX <= pr.right + 24 && clientY >= pr.top - 24 && clientY <= pr.bottom + 24) {
+      return { pageEl: p, pr };
+    }
+  }
+  const p0 = document.querySelector('#pages > .page, #vpages .page');
+  if (!p0) return null;
+  const pr0 = p0.getBoundingClientRect();
+  return pr0.width > 0 && pr0.height > 0 ? { pageEl: p0, pr: pr0 } : null;
+}
+
 function updateLoupe(clientX, clientY) {
-  const el = document.elementFromPoint(clientX, clientY);
-  const pageEl = (el && el.closest && el.closest('.page')) || document.querySelector('.page');
-  if (!pageEl) return;
+  const hit = findPageAtFast(clientX, clientY);
+  if (!hit) return;
+  const { pageEl, pr } = hit;
   ensureLoupe();
-  const pr = pageEl.getBoundingClientRect();
-  if (!(pr.width > 0 && pr.height > 0)) return;
   if (eriLoupePage !== pageEl || !eriLoupeInner.firstChild) {
     eriLoupePage = pageEl;
+    eriLoupeRect = pr;
     const clone = pageEl.cloneNode(true);
-    for (const h of clone.querySelectorAll('.eri-sel-handle, .eri-caret-rect')) h.remove();
+    for (const h of clone.querySelectorAll('.eri-sel-handle, .eri-caret-rect, .eri-sel-rect')) h.remove();
     clone.style.position = 'relative';
     clone.style.left = '0';
     clone.style.top = '0';
@@ -1961,17 +1984,20 @@ function updateLoupe(clientX, clientY) {
   const ry = clientY - pr.top;
   const tx = (lw * 0.5) - rx * zoom;
   const ty = (lh * 0.5) - ry * zoom;
-  eriLoupeInner.style.transform = `translate(${tx}px, ${ty}px) scale(${zoom})`;
+  eriLoupeInner.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(${zoom})`;
   const left = Math.max(10, Math.min(window.innerWidth - lw - 10, clientX - lw * 0.5));
   const top = Math.max(12, clientY - lh - 34);
-  eriLoupeEl.style.left = `${left}px`;
-  eriLoupeEl.style.top = `${top}px`;
+  eriLoupeEl.style.left = '0px';
+  eriLoupeEl.style.top = '0px';
+  eriLoupeEl.style.transform = `translate3d(${left}px, ${top}px, 0)`;
   eriLoupeEl.style.display = 'block';
 }
 
 function hideLoupe() {
+  if (eriLoupeRaf) { cancelAnimationFrame(eriLoupeRaf); eriLoupeRaf = 0; }
+  eriDragPending = null;
   if (eriLoupeEl) eriLoupeEl.style.display = 'none';
-  eriLoupePage = null;
+  eriLoupeRect = null;
 }
 
 function blurImeForDrag() {
@@ -2020,15 +2046,22 @@ function handleSelHandleDocMove(e) {
   e.stopPropagation();
   e.preventDefault();
   const t = e.touches[0];
-  const hit = hitTestClientPoint(t.clientX, t.clientY - 18);
-  if (!hit || !sameSelContainer(selAnchorHit, hit)) return;
-  const cmp = compareEditPos(selAnchorHit, hit);
-  const st = cmp <= 0 ? { ...selAnchorHit } : { ...hit };
-  const en = cmp <= 0 ? { ...hit } : { ...selAnchorHit };
-  editSelection = { start: st, end: en };
-  renderEditSelection();
-  eriLoupePage = null;
-  updateLoupe(t.clientX, t.clientY - 18);
+  eriDragPending = { mode: 'handle', x: t.clientX, y: t.clientY - 18 };
+  if (eriLoupeRaf) return;
+  eriLoupeRaf = requestAnimationFrame(() => {
+    eriLoupeRaf = 0;
+    const p = eriDragPending;
+    eriDragPending = null;
+    if (!p || !selHandleDragging || !selAnchorHit) return;
+    updateLoupe(p.x, p.y);
+    const hit = hitTestClientPoint(p.x, p.y);
+    if (!hit || !sameSelContainer(selAnchorHit, hit)) return;
+    const cmp = compareEditPos(selAnchorHit, hit);
+    const st = cmp <= 0 ? { ...selAnchorHit } : { ...hit };
+    const en = cmp <= 0 ? { ...hit } : { ...selAnchorHit };
+    editSelection = { start: st, end: en };
+    renderEditSelection();
+  });
 }
 
 function handleSelHandleDocEnd(e) {
@@ -2392,19 +2425,26 @@ function handleEditTouchMove(e) {
   }
   if (!selDragActive || !selAnchorHit) return;
   e.preventDefault();
-  const h = hitTestClientPoint(t.clientX, t.clientY);
-  if (!h || !sameSelContainer(selAnchorHit, h)) return;
-  const cmp = compareEditPos(selAnchorHit, h);
-  let st = cmp <= 0 ? { ...selAnchorHit } : { ...h };
-  let en = cmp <= 0 ? { ...h } : { ...selAnchorHit };
-  if (compareEditPos(st, en) === 0) {
-    const pLen = getParagraphLenAt(st);
-    en = { ...en, offset: Math.min(pLen, st.offset + 1) };
-  }
-  editSelection = { start: st, end: en };
-  renderEditSelection();
-  eriLoupePage = null;
-  updateLoupe(t.clientX, t.clientY);
+  eriDragPending = { mode: 'drag', x: t.clientX, y: t.clientY };
+  if (eriLoupeRaf) return;
+  eriLoupeRaf = requestAnimationFrame(() => {
+    eriLoupeRaf = 0;
+    const p = eriDragPending;
+    eriDragPending = null;
+    if (!p || !selDragActive || !selAnchorHit) return;
+    updateLoupe(p.x, p.y);
+    const h = hitTestClientPoint(p.x, p.y);
+    if (!h || !sameSelContainer(selAnchorHit, h)) return;
+    const cmp = compareEditPos(selAnchorHit, h);
+    let st = cmp <= 0 ? { ...selAnchorHit } : { ...h };
+    let en = cmp <= 0 ? { ...h } : { ...selAnchorHit };
+    if (compareEditPos(st, en) === 0) {
+      const pLen = getParagraphLenAt(st);
+      en = { ...en, offset: Math.min(pLen, st.offset + 1) };
+    }
+    editSelection = { start: st, end: en };
+    renderEditSelection();
+  });
 }
 
 function handleEditTouchEnd() {
@@ -2710,6 +2750,7 @@ function setEditMode(enabled) {
     document.removeEventListener('touchstart', handleSelHandleDocStart, true);
     document.removeEventListener('touchstart', handleEditTouchStart, true);
     hideLoupe();
+    eriLoupePage = null;
     selHandleDragging = false;
     document.removeEventListener('touchmove', handleSelHandleDocMove, true);
     document.removeEventListener('touchend', handleSelHandleDocEnd, true);

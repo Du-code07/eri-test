@@ -1962,24 +1962,40 @@ function docxEnsureLoupe() {
   return docxLoupeEl;
 }
 
-function docxUpdateLoupe(clientX, clientY) {
-  const overlays = [...document.querySelectorAll('.eri-sel-handle, .eri-docx-sel-rect, .eri-docx-caret')];
-  for (const el of overlays) el.style.visibility = 'hidden';
-  let pageEl = null;
-  try {
-    const el = document.elementFromPoint(clientX, clientY);
-    pageEl = (el && el.closest && el.closest('.page')) || document.querySelector('.page');
-  } finally {
-    for (const el of overlays) el.style.visibility = '';
+let docxLoupeRect = null;
+let docxLoupeRaf = 0;
+let docxDragPending = null;
+
+function docxFindPageAtFast(clientX, clientY) {
+  if (docxLoupePage && docxLoupePage.isConnected && docxLoupeRect) {
+    const r = docxLoupeRect;
+    if (clientX >= r.left - 20 && clientX <= r.right + 20 && clientY >= r.top - 20 && clientY <= r.bottom + 20) {
+      return { pageEl: docxLoupePage, pr: r };
+    }
   }
-  if (!pageEl) return;
+  for (const p of document.querySelectorAll('.page')) {
+    if (p.closest && p.closest('#pages-under')) continue;
+    const pr = p.getBoundingClientRect();
+    if (pr.width > 0 && pr.height > 0 && clientX >= pr.left - 24 && clientX <= pr.right + 24 && clientY >= pr.top - 24 && clientY <= pr.bottom + 24) {
+      return { pageEl: p, pr };
+    }
+  }
+  const p0 = document.querySelector('#pages > .page, #vpages .page');
+  if (!p0) return null;
+  const pr0 = p0.getBoundingClientRect();
+  return pr0.width > 0 && pr0.height > 0 ? { pageEl: p0, pr: pr0 } : null;
+}
+
+function docxUpdateLoupe(clientX, clientY) {
+  const hit = docxFindPageAtFast(clientX, clientY);
+  if (!hit) return;
+  const { pageEl, pr } = hit;
   docxEnsureLoupe();
-  const pr = pageEl.getBoundingClientRect();
-  if (!(pr.width > 0 && pr.height > 0)) return;
   if (docxLoupePage !== pageEl || !docxLoupeInner.firstChild) {
     docxLoupePage = pageEl;
+    docxLoupeRect = pr;
     const clone = pageEl.cloneNode(true);
-    for (const h of clone.querySelectorAll('.eri-sel-handle, .eri-docx-caret')) h.remove();
+    for (const h of clone.querySelectorAll('.eri-sel-handle, .eri-docx-caret, .eri-docx-sel-rect')) h.remove();
     clone.style.position = 'relative';
     clone.style.left = '0';
     clone.style.top = '0';
@@ -1994,17 +2010,20 @@ function docxUpdateLoupe(clientX, clientY) {
   const ry = clientY - pr.top;
   const tx = (lw * 0.5) - rx * zoom;
   const ty = (lh * 0.5) - ry * zoom;
-  docxLoupeInner.style.transform = `translate(${tx}px, ${ty}px) scale(${zoom})`;
+  docxLoupeInner.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(${zoom})`;
   const left = Math.max(10, Math.min(window.innerWidth - lw - 10, clientX - lw * 0.5));
   const top = Math.max(12, clientY - lh - 34);
-  docxLoupeEl.style.left = `${left}px`;
-  docxLoupeEl.style.top = `${top}px`;
+  docxLoupeEl.style.left = '0px';
+  docxLoupeEl.style.top = '0px';
+  docxLoupeEl.style.transform = `translate3d(${left}px, ${top}px, 0)`;
   docxLoupeEl.style.display = 'block';
 }
 
 function docxHideLoupe() {
+  if (docxLoupeRaf) { cancelAnimationFrame(docxLoupeRaf); docxLoupeRaf = 0; }
+  docxDragPending = null;
   if (docxLoupeEl) docxLoupeEl.style.display = 'none';
-  docxLoupePage = null;
+  docxLoupeRect = null;
 }
 let docxHandleFixedPt = null;
 
@@ -2056,15 +2075,22 @@ function docxOnHandleMove(ev) {
   ev.stopPropagation();
   ev.preventDefault();
   const t = ev.touches[0];
-  const pt = docxCaretPointAt(t.clientX, t.clientY - 18);
-  if (!pt) return;
-  const next = docxBuildRangeFromPts(docxHandleFixedPt, pt);
-  if (next && !next.collapsed) {
-    docxSelRange = next;
-    docxRenderSelection();
-    docxLoupePage = null;
-    docxUpdateLoupe(t.clientX, t.clientY - 18);
-  }
+  docxDragPending = { mode: 'handle', x: t.clientX, y: t.clientY - 18 };
+  if (docxLoupeRaf) return;
+  docxLoupeRaf = requestAnimationFrame(() => {
+    docxLoupeRaf = 0;
+    const p = docxDragPending;
+    docxDragPending = null;
+    if (!p || !docxActiveHandleSide || !docxHandleFixedPt) return;
+    docxUpdateLoupe(p.x, p.y);
+    const pt = docxCaretPointAt(p.x, p.y);
+    if (!pt) return;
+    const next = docxBuildRangeFromPts(docxHandleFixedPt, pt);
+    if (next && !next.collapsed) {
+      docxSelRange = next;
+      docxRenderSelection();
+    }
+  });
 }
 
 function docxOnHandleEnd(ev) {
@@ -2286,16 +2312,23 @@ function docxOnTouchMove(e) {
   if (!docxSelDragging || !docxSelAnchorPt) return;
   e.preventDefault();
   e.stopPropagation();
-  const pt = docxCaretPointAt(t.clientX, t.clientY);
-  if (pt) {
-    const r = docxBuildRangeFromPts(docxSelAnchorPt, pt);
-    if (r && !r.collapsed) {
-      docxSelRange = r;
-      docxRenderSelection();
-      docxLoupePage = null;
-      docxUpdateLoupe(t.clientX, t.clientY);
+  docxDragPending = { mode: 'drag', x: t.clientX, y: t.clientY };
+  if (docxLoupeRaf) return;
+  docxLoupeRaf = requestAnimationFrame(() => {
+    docxLoupeRaf = 0;
+    const p = docxDragPending;
+    docxDragPending = null;
+    if (!p || !docxSelDragging || !docxSelAnchorPt) return;
+    docxUpdateLoupe(p.x, p.y);
+    const pt = docxCaretPointAt(p.x, p.y);
+    if (pt) {
+      const r = docxBuildRangeFromPts(docxSelAnchorPt, pt);
+      if (r && !r.collapsed) {
+        docxSelRange = r;
+        docxRenderSelection();
+      }
     }
-  }
+  });
 }
 
 function docxOnTouchEnd() {
@@ -2393,6 +2426,7 @@ function setEditMode(enabled) {
     document.removeEventListener('contextmenu', docxPreventContext, true);
     document.removeEventListener('dblclick', docxOnDblClick, true);
     docxHideLoupe();
+    docxLoupePage = null;
     docxActiveHandleSide = null;
     docxHandleFixedPt = null;
     document.removeEventListener('touchstart', docxOnHandleStart, true);
