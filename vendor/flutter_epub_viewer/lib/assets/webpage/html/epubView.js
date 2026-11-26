@@ -3378,7 +3378,7 @@ function detectSwipe(el, func) {
 }
 
 // ==============================================================================
-// ERI Custom EPUB Selection Engine (No Android Magnifier Loupe, Scroll-Safe)
+// ERI Custom EPUB Selection Engine (Parent Container Overlay, No Magnifier, Scroll-Safe)
 // ==============================================================================
 (function initEriEpubSelection() {
   if (window.__eriEpubSelInstalled) return;
@@ -3392,7 +3392,7 @@ function detectSwipe(el, func) {
     endNode: null,
     endOff: 0,
     dragging: null, // 'start' | 'end' | null
-    dragClientX: 0,
+    dragClientX: 0, // parent viewport coords
     dragClientY: 0,
     autoScrollRaf: 0,
     scrollHideTimer: 0,
@@ -3422,33 +3422,50 @@ function detectSwipe(el, func) {
     } catch (e) { return false; }
   }
 
-  function ensureLayer(doc) {
-    if (!doc || !doc.documentElement) return null;
-    if (!doc.getElementById('eri-epub-sel-style')) {
-      var s = doc.createElement('style');
-      s.id = 'eri-epub-sel-style';
-      s.textContent = [
-        'html:not(.eri-epub-hit), html:not(.eri-epub-hit) body, html:not(.eri-epub-hit) * { -webkit-user-select: none !important; user-select: none !important; -webkit-touch-callout: none !important; }',
-        'html.eri-epub-hit, html.eri-epub-hit body, html.eri-epub-hit * { -webkit-user-select: text !important; user-select: text !important; }',
-        '#eri-epub-sel-layer { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; z-index: 2147483000; overflow: visible; }',
-        '.eri-epub-hl { position: absolute; background: rgba(26, 115, 232, 0.30); border-radius: 2px; pointer-events: none; }',
-        '.eri-epub-handle { position: absolute; width: 52px; height: 52px; pointer-events: auto; touch-action: none; display: flex; align-items: flex-start; justify-content: center; box-sizing: border-box; padding-top: 2px; }',
-        '.eri-epub-handle .knob { width: 22px; height: 22px; background: #1A73E8; border-radius: 50%; position: relative; box-shadow: 0 2px 6px rgba(0,0,0,0.28); }',
-        '.eri-epub-handle.start .knob { border-top-right-radius: 2px; }',
-        '.eri-epub-handle.end .knob { border-top-left-radius: 2px; }',
-        'html.eri-epub-scrolling .eri-epub-handle { opacity: 0 !important; pointer-events: none !important; }'
-      ].join('\n');
-      (doc.head || doc.documentElement).appendChild(s);
+  function ensureParentStyle() {
+    if (document.getElementById('eri-epub-parent-sel-style')) return;
+    var el = document.createElement('style');
+    el.id = 'eri-epub-parent-sel-style';
+    el.textContent = [
+      '#eri-epub-sel-layer { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; z-index: 2147483000; overflow: visible; }',
+      '.eri-epub-hl { position: absolute; background: rgba(26, 115, 232, 0.30); border-radius: 2px; pointer-events: none; }',
+      '.eri-epub-handle { position: absolute; width: 52px; height: 52px; pointer-events: auto; touch-action: none; display: flex; align-items: flex-start; justify-content: center; box-sizing: border-box; padding-top: 2px; }',
+      '.eri-epub-handle .knob { width: 22px; height: 22px; background: #1A73E8; border-radius: 50%; position: relative; box-shadow: 0 2px 6px rgba(0,0,0,0.28); }',
+      '.eri-epub-handle.start .knob { border-top-right-radius: 2px; }',
+      '.eri-epub-handle.end .knob { border-top-left-radius: 2px; }',
+      '#eri-epub-sel-layer.eri-epub-scrolling .eri-epub-handle { opacity: 0 !important; pointer-events: none !important; }'
+    ].join('\n');
+    (document.head || document.documentElement).appendChild(el);
+  }
+
+  function ensureIframeStyle(doc) {
+    if (!doc || !doc.documentElement) return;
+    if (doc.getElementById('eri-epub-sel-style')) return;
+    var el = doc.createElement('style');
+    el.id = 'eri-epub-sel-style';
+    el.textContent = [
+      'html:not(.eri-epub-hit), html:not(.eri-epub-hit) body, html:not(.eri-epub-hit) * { -webkit-user-select: none !important; user-select: none !important; -webkit-touch-callout: none !important; }',
+      'html.eri-epub-hit, html.eri-epub-hit body, html.eri-epub-hit * { -webkit-user-select: text !important; user-select: text !important; }'
+    ].join('\n');
+    (doc.head || doc.documentElement).appendChild(el);
+  }
+
+  function ensureParentLayer() {
+    ensureParentStyle();
+    var container = getScrollBox() || document.getElementById('viewer') || document.body;
+    if (!container) return null;
+    if (window.getComputedStyle(container).position === 'static') {
+      container.style.position = 'relative';
     }
-    var root = doc.documentElement;
-    var layer = doc.getElementById('eri-epub-sel-layer');
+    var layer = document.getElementById('eri-epub-sel-layer');
+    if (layer && layer.parentNode !== container) {
+      layer.parentNode.removeChild(layer);
+      layer = null;
+    }
     if (!layer) {
-      if (doc.defaultView.getComputedStyle(root).position === 'static') {
-        root.style.position = 'relative';
-      }
-      layer = doc.createElement('div');
+      layer = document.createElement('div');
       layer.id = 'eri-epub-sel-layer';
-      root.appendChild(layer);
+      container.appendChild(layer);
     }
     return layer;
   }
@@ -3456,10 +3473,10 @@ function detectSwipe(el, func) {
   function clearEriSelection(notify) {
     if (st.autoScrollRaf) { cancelAnimationFrame(st.autoScrollRaf); st.autoScrollRaf = 0; }
     st.dragging = null;
-    if (st.doc) {
-      var layer = st.doc.getElementById('eri-epub-sel-layer');
-      if (layer) layer.innerHTML = '';
-      if (st.doc.documentElement) st.doc.documentElement.classList.remove('eri-epub-scrolling');
+    var layer = document.getElementById('eri-epub-sel-layer');
+    if (layer) {
+      layer.innerHTML = '';
+      layer.classList.remove('eri-epub-scrolling');
     }
     var wasActive = st.active;
     st.active = false;
@@ -3485,7 +3502,6 @@ function detectSwipe(el, func) {
     return 0;
   }
 
-  // Pure DOM geometric fallback when caretRangeFromPoint returns null/non-text
   function findTextPosGeometric(doc, x, y) {
     if (!doc || !doc.body) return null;
     var walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, null);
@@ -3528,7 +3544,6 @@ function detectSwipe(el, func) {
   function caretAtPoint(doc, x, y) {
     if (!doc || !doc.documentElement) return null;
     var r = null;
-    // Temporarily allow text hit-testing during synchronous caretRangeFromPoint
     doc.documentElement.classList.add('eri-epub-hit');
     try {
       if (doc.caretRangeFromPoint) {
@@ -3572,9 +3587,10 @@ function detectSwipe(el, func) {
     try {
       var rectPayload = null;
       var range = makeRange();
-      if (range && st.doc && st.doc.defaultView && st.doc.defaultView.frameElement) {
+      var frame = st.doc && st.doc.defaultView && st.doc.defaultView.frameElement;
+      if (range && frame) {
         var r = range.getBoundingClientRect();
-        var fr = st.doc.defaultView.frameElement.getBoundingClientRect();
+        var fr = frame.getBoundingClientRect();
         var vw = window.innerWidth || 1, vh = window.innerHeight || 1;
         rectPayload = {
           left: (fr.left + r.left) / vw,
@@ -3589,11 +3605,18 @@ function detectSwipe(el, func) {
 
   function renderEriSelection(notify) {
     if (!st.doc || !st.active) return;
-    var layer = ensureLayer(st.doc);
-    if (!layer) return;
+    var layer = ensureParentLayer();
+    var container = layer && layer.parentNode;
+    var frame = st.doc.defaultView && st.doc.defaultView.frameElement;
+    if (!layer || !container || !frame) return;
     var range = makeRange();
     if (!range) return;
-    var rootRect = st.doc.documentElement.getBoundingClientRect();
+
+    var cRect = container.getBoundingClientRect();
+    var fr = frame.getBoundingClientRect();
+    var ox = fr.left - cRect.left + (container.scrollLeft || 0);
+    var oy = fr.top - cRect.top + (container.scrollTop || 0);
+
     var rects = Array.prototype.slice.call(range.getClientRects()).filter(function (r) {
       return r.width > 0.5 && r.height > 1 && r.height < 140;
     });
@@ -3601,10 +3624,10 @@ function detectSwipe(el, func) {
 
     layer.innerHTML = '';
     rects.forEach(function (r) {
-      var div = st.doc.createElement('div');
+      var div = document.createElement('div');
       div.className = 'eri-epub-hl';
-      div.style.left = (r.left - rootRect.left) + 'px';
-      div.style.top = (r.top - rootRect.top) + 'px';
+      div.style.left = (ox + r.left) + 'px';
+      div.style.top = (oy + r.top) + 'px';
       div.style.width = r.width + 'px';
       div.style.height = r.height + 'px';
       layer.appendChild(div);
@@ -3612,11 +3635,11 @@ function detectSwipe(el, func) {
 
     var first = rects[0], last = rects[rects.length - 1];
     function addHandle(kind, x, y) {
-      var h = st.doc.createElement('div');
+      var h = document.createElement('div');
       h.className = 'eri-epub-handle ' + kind;
-      h.style.left = (x - rootRect.left - (kind === 'start' ? 37 : 15)) + 'px';
-      h.style.top = (y - rootRect.top - 2) + 'px';
-      var k = st.doc.createElement('div');
+      h.style.left = (ox + x - (kind === 'start' ? 37 : 15)) + 'px';
+      h.style.top = (oy + y - 2) + 'px';
+      var k = document.createElement('div');
       k.className = 'knob';
       h.appendChild(k);
       h.addEventListener('touchstart', function (ev) {
@@ -3635,7 +3658,7 @@ function detectSwipe(el, func) {
         if (!ev.touches || !ev.touches.length) return;
         st.dragClientX = ev.touches[0].clientX;
         st.dragClientY = ev.touches[0].clientY;
-        updateDragFromPoint(st.dragClientX, st.dragClientY);
+        updateDragFromParentPoint(st.dragClientX, st.dragClientY);
         kickAutoScroll();
       }, { passive: false });
       var endDrag = function (ev) {
@@ -3659,9 +3682,12 @@ function detectSwipe(el, func) {
     if (notify) emitFlutterSelection();
   }
 
-  function updateDragFromPoint(cx, cy) {
+  function updateDragFromParentPoint(parentX, parentY) {
     if (!st.doc || !st.dragging) return;
-    var pos = caretAtPoint(st.doc, cx, cy - 26);
+    var frame = st.doc.defaultView && st.doc.defaultView.frameElement;
+    if (!frame) return;
+    var fr = frame.getBoundingClientRect();
+    var pos = caretAtPoint(st.doc, parentX - fr.left, parentY - fr.top - 26);
     if (!pos) return;
     var cmp = comparePos(st.startNode, st.startOff, st.endNode, st.endOff);
     var loN = cmp <= 0 ? st.startNode : st.endNode;
@@ -3684,10 +3710,8 @@ function detectSwipe(el, func) {
       st.autoScrollRaf = 0;
       if (!st.dragging || !st.doc) return;
       var box = getScrollBox();
-      var frame = st.doc.defaultView && st.doc.defaultView.frameElement;
-      if (!box || !frame) return;
-      var fr = frame.getBoundingClientRect();
-      var outerY = fr.top + st.dragClientY;
+      if (!box) return;
+      var outerY = st.dragClientY;
       var vh = window.innerHeight || 800;
       var edge = 76;
       var dy = 0;
@@ -3695,7 +3719,7 @@ function detectSwipe(el, func) {
       else if (outerY < edge) dy = -Math.min(1, Math.max(0.2, (edge - outerY) / edge)) * 12;
       if (dy !== 0) {
         box.scrollTop = Math.max(0, Math.min(box.scrollHeight - box.clientHeight, box.scrollTop + dy));
-        updateDragFromPoint(st.dragClientX, st.dragClientY);
+        updateDragFromParentPoint(st.dragClientX, st.dragClientY);
         st.autoScrollRaf = requestAnimationFrame(step);
       }
     }
@@ -3708,12 +3732,14 @@ function detectSwipe(el, func) {
     box.__eriScrollHideAttached = true;
     box.addEventListener('scroll', function () {
       if (!st.active || st.dragging) return;
-      if (st.doc && st.doc.documentElement) st.doc.documentElement.classList.add('eri-epub-scrolling');
+      var layer = document.getElementById('eri-epub-sel-layer');
+      if (layer) layer.classList.add('eri-epub-scrolling');
       notifyFlutter('selectionChanging');
       if (st.scrollHideTimer) clearTimeout(st.scrollHideTimer);
       st.scrollHideTimer = setTimeout(function () {
         st.scrollHideTimer = 0;
-        if (st.doc && st.doc.documentElement) st.doc.documentElement.classList.remove('eri-epub-scrolling');
+        var l = document.getElementById('eri-epub-sel-layer');
+        if (l) l.classList.remove('eri-epub-scrolling');
         if (st.active && !st.dragging) emitFlutterSelection();
       }, 180);
     }, { passive: true });
@@ -3723,12 +3749,12 @@ function detectSwipe(el, func) {
     if (!contents || !contents.document || contents.document.__eriSelHooked) return;
     var doc = contents.document;
     doc.__eriSelHooked = true;
-    ensureLayer(doc);
+    ensureIframeStyle(doc);
+    ensureParentLayer();
     attachScrollHide();
 
-    var lpTimer = 0, downX = 0, downY = 0, moved = false;
+    var lpTimer = 0, downX = 0, downY = 0, moved = false, justSelected = false;
     doc.addEventListener('touchstart', function (ev) {
-      if (ev.target && ev.target.closest && ev.target.closest('.eri-epub-handle')) return;
       if (!ev.touches || ev.touches.length !== 1) {
         if (lpTimer) { clearTimeout(lpTimer); lpTimer = 0; }
         return;
@@ -3736,6 +3762,7 @@ function detectSwipe(el, func) {
       downX = ev.touches[0].clientX;
       downY = ev.touches[0].clientY;
       moved = false;
+      justSelected = false;
       if (lpTimer) clearTimeout(lpTimer);
       lpTimer = setTimeout(function () {
         lpTimer = 0;
@@ -3757,6 +3784,7 @@ function detectSwipe(el, func) {
         st.startNode = pos.node; st.startOff = s;
         st.endNode = pos.node; st.endOff = e;
         st.active = true;
+        justSelected = true;
         renderEriSelection(true);
       }, 360);
     }, { capture: true, passive: true });
@@ -3769,16 +3797,20 @@ function detectSwipe(el, func) {
       }
     }, { capture: true, passive: true });
 
-    doc.addEventListener('touchend', function (ev) {
+    doc.addEventListener('touchend', function () {
       if (lpTimer) { clearTimeout(lpTimer); lpTimer = 0; }
-      if (ev.target && ev.target.closest && ev.target.closest('.eri-epub-handle')) return;
-      if (!moved && st.active) {
+      if (justSelected) {
+        justSelected = false;
+        return;
+      }
+      if (!moved && st.active && !st.dragging) {
         clearEriSelection(true);
       }
     }, { capture: true, passive: true });
 
     doc.addEventListener('touchcancel', function () {
       if (lpTimer) { clearTimeout(lpTimer); lpTimer = 0; }
+      justSelected = false;
     }, { capture: true, passive: true });
   }
   window.__eriHookEpubContents = hookContents;

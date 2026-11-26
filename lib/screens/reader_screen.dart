@@ -3793,8 +3793,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     }
     if (distance < 24.0 && duration < 380 && !multiTouch) {
       if (_hasTextSelection && !_isOfflineDocument) {
-        // 글이 선택된 상태에서 화면을 누르면 선택 표시만 지움
-        _clearEpubSelection();
+        // EPUB 선택 상태에서는 epubView.js가 손잡이·빈 곳 탭을 구분해 해제하므로 Flutter가 성급히 지우지 않음
       } else {
         _tapOrDoubleTap(event.position);
       }
