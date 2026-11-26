@@ -822,6 +822,8 @@ function vPinchFrame() {
   const r = p.z / p.z0;
   const tx = p.x + vhost.scrollLeft - p.cx * r, ty = p.y + vhost.scrollTop - p.cy * r;
   vinner.style.transform = `translate(${tx}px, ${ty}px) scale(${r})`;
+  // 줄이고 늘리는 동안에도 쪽 자리를 앱에 알림 (고른 글 바탕이 글과 함께 움직이게)
+  vReportMetrics();
 }
 function vPinchEnd(e) {
   if (!vPinch || !vhost) return;
@@ -1100,8 +1102,25 @@ function vSchedule() {
   markDocxScrolling();
   if (!vRaf) vRaf = requestAnimationFrame(() => { vRaf = 0; vUpdate(); vReportMetrics(); });
 }
+/** 화면 가까이 있는 쪽들의 화면 자리 [쪽, 왼쪽, 위, 너비, 높이] (화면 크기 대비 0~1) —
+ * 앱이 길게 눌러 고른 글 바탕을 쪽에 붙여 그리는 데 씀 (스크롤·확대·축소·두 손가락으로 줄이는 중에도 글과 딱 맞게) */
+function vSlotGeom() {
+  if (!vertical || !vhost || !vTops.length || !vSlots.length) return [];
+  const W = innerWidth || 1, H = innerHeight || 1, out = [];
+  const at = vIndexAt(vhost.scrollTop + (vhost.clientHeight || H) / 2);
+  const push = (i) => {
+    const q = vSlots[i].getBoundingClientRect();
+    out.push([i, q.left / W, q.top / H, q.width / W, q.height / H]);
+    return q;
+  };
+  push(at);
+  // 화면 밖으로 한 쪽 더 나갈 때까지 위·아래로 (줄이는 중이면 여러 쪽이 보임)
+  for (let i = at - 1, n = 0; i >= 0 && n < 40; i--, n++) { if (push(i).bottom < -H * 0.5) break; }
+  for (let i = at + 1, n = 0; i < vSlots.length && n < 40; i++, n++) { if (push(i).top > H * 1.5) break; }
+  return out;
+}
 function vReportMetrics() {
-  if (vhost) emit('scrollMetrics', { top: vhost.scrollTop, height: vhost.scrollHeight, client: vhost.clientHeight, zoom: vZoom });
+  if (vhost) emit('scrollMetrics', { top: vhost.scrollTop, height: vhost.scrollHeight, client: vhost.clientHeight, zoom: vZoom, slots: vSlotGeom() });
 }
 function vMount(index) {
   if (vMounted.has(index) || !pages[index]) return;
@@ -1321,18 +1340,57 @@ function outlineBlocks() {
   return blocks;
 }
 /** 지금 화면에 보이는 글(낱말)과 그 위치 (화면 크기 대비 0~1) — 내보낸 PDF에 보이지 않는 글자 층을 넣는 데 씀 */
+/** 쪽 하나에서 보이는 칸(본문 상자)에 놓인 글 조각들만 읽는 순서대로.
+ * 쪽마다 구역 전체의 글이 옆으로 칸칸이 늘어서 있고 그중 한 칸만 보여서, 모든 글을 재면 큰 문서에서 수 초가 걸렸음.
+ * 칸은 읽는 순서대로 왼쪽에서 오른쪽으로 놓이므로 양 끝을 반씩 좁혀 찾음 */
+function docxPageTextNodes(pg, accept) {
+  const nodes = [];
+  const tw = document.createTreeWalker(pg, NodeFilter.SHOW_TEXT);
+  for (let n = tw.nextNode(); n; n = tw.nextNode()) if (n.data.trim() && (!accept || accept(n))) nodes.push(n);
+  const clipEl = pg.querySelector('.freader-content');
+  if (!clipEl || nodes.length < 64) return nodes;
+  const cq = clipEl.getBoundingClientRect();
+  if (!(cq.width > 0)) return nodes;
+  const r = document.createRange();
+  const box = (n) => { r.selectNodeContents(n); return r.getBoundingClientRect(); };
+  let lo = 0, hi = nodes.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (box(nodes[m]).right <= cq.left + 0.5) lo = m + 1; else hi = m; }
+  const first = lo;
+  hi = nodes.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (box(nodes[m]).left < cq.right - 0.5) lo = m + 1; else hi = m; }
+  return nodes.slice(Math.max(0, first - 24), Math.min(nodes.length, lo + 24));
+}
 function visibleTextBoxes() {
   const W = innerWidth || 1, H = innerHeight || 1, out = [];
-  const walker = document.createTreeWalker(vertical && vhost ? vhost : host, NodeFilter.SHOW_TEXT), range = document.createRange();
-  for (let node = walker.nextNode(); node && out.length < 20000; node = walker.nextNode()) {
-    const data = node.data;
-    if (!data.trim() || !node.parentElement) continue;
-    const word = /\S+/g;
-    for (let m = word.exec(data); m; m = word.exec(data)) {
-      try { range.setStart(node, m.index); range.setEnd(node, m.index + m[0].length); } catch (_) { continue; }
-      const r = [...range.getClientRects()].find(rect => rect.width >= 0.5 && rect.height >= 0.5);
-      if (!r || r.right <= 0 || r.bottom <= 0 || r.left >= W || r.top >= H) continue;
-      out.push({ t: m[0], x: r.left / W, y: r.top / H, w: r.width / W, h: r.height / H });
+  const inV = vertical && vhost;
+  const range = document.createRange();
+  for (const pg of (inV ? vhost : host).querySelectorAll('.page')) {
+    const pr = pg.getBoundingClientRect();
+    if (pr.bottom <= 0 || pr.top >= H || pr.right <= 0 || pr.left >= W) continue;
+    // 스크롤 보기: 낱말이 몇째 쪽 어디에 있는지도 알려 줌 (앱이 고른 글 바탕을 쪽에 붙여 그림)
+    const slot = inV ? pg.closest('.vslot') : null;
+    if (inV && !slot) continue;
+    const sq = slot ? slot.getBoundingClientRect() : null;
+    // 본문 상자 밖(다른 쪽 몫으로 옆에 밀려나 가려진 글)은 고를 수 없게
+    const clipEl = pg.querySelector('.freader-content');
+    const cq = clipEl ? clipEl.getBoundingClientRect() : null;
+    for (const node of docxPageTextNodes(pg)) {
+      const data = node.data;
+      const word = /\S+/g;
+      for (let m = word.exec(data); m; m = word.exec(data)) {
+        try { range.setStart(node, m.index); range.setEnd(node, m.index + m[0].length); } catch (_) { continue; }
+        const r = [...range.getClientRects()].find(rect => rect.width >= 0.5 && rect.height >= 0.5);
+        if (!r || r.right <= 0 || r.bottom <= 0 || r.left >= W || r.top >= H) continue;
+        if (cq && Math.min(cq.right, r.right) - Math.max(cq.left, r.left) < r.width * 0.6) continue;
+        const o = { t: m[0], x: r.left / W, y: r.top / H, w: r.width / W, h: r.height / H };
+        if (sq && sq.width > 0 && sq.height > 0) {
+          o.p = Number(slot.dataset.page);
+          o.px = (r.left - sq.left) / sq.width; o.py = (r.top - sq.top) / sq.height;
+          o.pw = r.width / sq.width; o.ph = r.height / sq.height;
+        }
+        out.push(o);
+        if (out.length >= 20000) return out;
+      }
     }
   }
   return out;
@@ -1854,6 +1912,7 @@ const docxHandleEls = { start: null, end: null };
 
 function docxClearSelectionOverlays(keepHandles = false) {
   for (const el of document.querySelectorAll('.eri-docx-sel-rect')) el.remove();
+  docxSelPages.clear();
   if (!keepHandles) {
     for (const el of document.querySelectorAll('.eri-sel-handle')) el.remove();
     docxHandleEls.start = null;
@@ -1991,23 +2050,25 @@ function docxCaretPointAt(clientX, clientY) {
       if (pg.closest?.('#pages-under')) continue;
       const pr = pg.getBoundingClientRect();
       if (clientX >= pr.left - 24 && clientX <= pr.right + 24 && clientY >= pr.top - 16 && clientY <= pr.bottom + 16) {
-        const tw = document.createTreeWalker(pg, NodeFilter.SHOW_TEXT);
-        let best = null, bestDist = Infinity, tn = tw.nextNode();
-        while (tn) {
-          if (docxValidPageTextNode(tn)) {
-            const nr = document.createRange();
-            nr.selectNodeContents(tn);
-            for (const rc of nr.getClientRects()) {
-              if (rc.width > 0.5 && rc.height > 0.5 && rc.height < 100) {
-                const dy0 = clientY < rc.top ? rc.top - clientY : (clientY > rc.bottom ? clientY - rc.bottom : 0);
-                if (dy0 > 90) continue;
-                const dx0 = clientX < rc.left ? rc.left - clientX : (clientX > rc.right ? clientX - rc.right : 0);
-                const d = dy0 * dy0 * 9 + dx0 * dx0;
-                if (d < bestDist) { bestDist = d; best = tn; }
-              }
+        const clips = new Map();
+        let best = null, bestDist = Infinity;
+        for (const tn of docxPageTextNodes(pg, docxValidPageTextNode)) {
+          // 본문 상자 밖(다른 쪽 몫으로 옆에 밀려나 가려진 글)은 후보에서 뺌 — 쪽 왼쪽 끝 가까이 끌면 엉뚱한 곳으로 튀었음
+          const clipEl = tn.parentElement.closest('.freader-content');
+          let cq = clips.get(clipEl);
+          if (cq === undefined) { cq = clipEl ? clipEl.getBoundingClientRect() : null; clips.set(clipEl, cq); }
+          const nr = document.createRange();
+          nr.selectNodeContents(tn);
+          for (const rc of nr.getClientRects()) {
+            if (cq && Math.min(cq.right, rc.right) - Math.max(cq.left, rc.left) < rc.width * 0.6) continue;
+            if (rc.width > 0.5 && rc.height > 0.5 && rc.height < 100) {
+              const dy0 = clientY < rc.top ? rc.top - clientY : (clientY > rc.bottom ? clientY - rc.bottom : 0);
+              if (dy0 > 90) continue;
+              const dx0 = clientX < rc.left ? rc.left - clientX : (clientX > rc.right ? clientX - rc.right : 0);
+              const d = dy0 * dy0 * 9 + dx0 * dx0;
+              if (d < bestDist) { bestDist = d; best = tn; }
             }
           }
-          tn = tw.nextNode();
         }
         if (best && bestDist < 12000) {
           return { node: best, offset: docxFindOffsetInTextNode(best, clientX, clientY) };
@@ -2265,82 +2326,150 @@ function docxMountSelHandle(pageEl, side, relX, relY) {
   h.style.zIndex = '45';
 }
 
+// 고른 글 바탕: 쪽마다 따로 그려 두고(쪽 크기 대비 %), 고른 범위가 그 쪽 안에서 바뀐 쪽만 다시 그림
+// (손잡이를 끌며 여러 쪽을 넘어갈 때 매번 모든 쪽을 지우고 다시 재면 한 장면에 수백 ms가 걸려 심하게 버벅였음)
+const docxSelPages = new Map(); // 쪽(.page) → { key, els, first, last }
+const docxNodeIds = new WeakMap();
+let docxNodeSeq = 0;
+function docxNodeId(n) {
+  let id = docxNodeIds.get(n);
+  if (!id) { id = ++docxNodeSeq; docxNodeIds.set(n, id); }
+  return id;
+}
+/** 이 쪽에서 고른 범위가 어떻게 걸쳐 있는지 (같으면 다시 그릴 필요 없음) */
+function docxSelPageKey(p, range) {
+  const s = p.contains(range.startContainer) ? `${docxNodeId(range.startContainer)}:${range.startOffset}` : '<';
+  const e = p.contains(range.endContainer) ? `${docxNodeId(range.endContainer)}:${range.endOffset}` : '>';
+  return `${s}|${e}`;
+}
+/** 글 자리 하나의 화면 네모 (손잡이 자리) */
+function docxPointRect(node, offset) {
+  try {
+    const len = (node.nodeValue || '').length;
+    const r = document.createRange();
+    const o = Math.max(0, Math.min(len, offset));
+    // 글자 하나를 감싸 재면 줄 높이가 정확함 (빈 자리면 앞 글자)
+    if (o < len) { r.setStart(node, o); r.setEnd(node, o + 1); const q = [...r.getClientRects()].find(x => x.height > 0); if (q) return { left: q.left, right: q.left, top: q.top, bottom: q.bottom }; }
+    if (o > 0) { r.setStart(node, o - 1); r.setEnd(node, o); const q = [...r.getClientRects()].find(x => x.height > 0); if (q) return { left: q.right, right: q.right, top: q.top, bottom: q.bottom }; }
+  } catch (_) {}
+  return null;
+}
+/** 쪽 하나의 고른 바탕 네모들 (쪽 크기 대비 %) */
+function docxSelPageRects(p, range) {
+  const pr = p.getBoundingClientRect();
+  if (!(pr.width > 0 && pr.height > 0)) return [];
+  const pw = pr.width, ph = pr.height;
+  const rawRects = [];
+  const sub = document.createRange();
+  const clipCache = new Map();
+  for (const tn of docxPageTextNodes(p, docxValidPageTextNode)) {
+    if (!range.intersectsNode(tn)) continue;
+    const text = tn.nodeValue;
+    let sOff = tn === range.startContainer ? range.startOffset : 0;
+    let eOff = tn === range.endContainer ? range.endOffset : text.length;
+    // 앞뒤 빈칸·탭은 칠하지 않음 (번호 매기기 탭이 쪽 왼쪽 끝까지 칠해져 보였음)
+    while (sOff < eOff && /\s/.test(text[sOff])) sOff++;
+    while (eOff > sOff && /\s/.test(text[eOff - 1])) eOff--;
+    if (eOff <= sOff) continue;
+    sub.setStart(tn, sOff);
+    sub.setEnd(tn, eOff);
+    // 보이는 영역(본문 상자)으로 자름: 다른 쪽 몫으로 옆에 밀려나 가려진 글은 칠하지 않음
+    const clipEl = tn.parentElement.closest('.freader-content');
+    let cq = clipCache.get(clipEl);
+    if (cq === undefined) { cq = clipEl && p.contains(clipEl) ? clipEl.getBoundingClientRect() : null; clipCache.set(clipEl, cq); }
+    const clipL = Math.max(pr.left, cq ? cq.left : pr.left), clipR = Math.min(pr.right, cq ? cq.right : pr.right);
+    for (const r of sub.getClientRects()) {
+      if (!(r.width > 0.5 && r.width < pw * 0.96 && r.height > 0.5 && r.height < 64)) continue;
+      const cl = Math.max(clipL, r.left), cr = Math.min(clipR, r.right);
+      // 쪽 밖(다른 쪽 몫으로 옆에 밀려나 있는 글)에 걸친 네모는 뺌 — 쪽 왼쪽 끝에 엉뚱한 바탕이 칠해졌음
+      if (cr - cl > 0.5 && cr - cl >= r.width * 0.6) rawRects.push({ left: cl, right: cr, top: r.top, bottom: r.bottom, midY: (r.top + r.bottom) * 0.5 });
+    }
+  }
+  rawRects.sort((a, b) => a.midY - b.midY || a.left - b.left);
+  const merged = [];
+  for (const r of rawRects) {
+    const prev = merged.length > 0 ? merged[merged.length - 1] : null;
+    const minH = prev ? Math.min(prev.bottom - prev.top, r.bottom - r.top) : 0;
+    if (prev && Math.abs(r.midY - prev.midY) <= Math.max(3, minH * 0.45) && r.left <= prev.right + 28) {
+      prev.left = Math.min(prev.left, r.left);
+      prev.right = Math.max(prev.right, r.right);
+      prev.top = Math.min(prev.top, r.top);
+      prev.bottom = Math.max(prev.bottom, r.bottom);
+      prev.midY = (prev.top + prev.bottom) * 0.5;
+    } else {
+      merged.push({ ...r });
+    }
+  }
+  return merged.map(rc => ({
+    l: ((rc.left - pr.left) / pw) * 100,
+    t: ((rc.top - pr.top) / ph) * 100,
+    w: (Math.max(2, rc.right - rc.left) / pw) * 100,
+    h: (Math.max(8, rc.bottom - rc.top) / ph) * 100,
+  }));
+}
+/** 고른 범위 끝 자리의 손잡이 위치 (그 쪽 크기 대비 %) */
+function docxSelHandlePct(p, node, offset, side) {
+  const q = docxPointRect(node, offset);
+  if (!q) return null;
+  const pr = p.getBoundingClientRect();
+  if (!(pr.width > 0 && pr.height > 0)) return null;
+  return { x: (((side === 'start' ? q.left : q.right) - pr.left) / pr.width) * 100, y: ((q.bottom - pr.top) / pr.height) * 100 };
+}
+
 function docxRenderSelection() {
   if (!docxEditMode || !docxSelRange || docxSelRange.collapsed) { docxClearSelectionOverlays(false); return; }
-  docxClearSelectionOverlays(true);
   docxRemoveCaret();
+  const range = docxSelRange;
   try {
     const pageEls = [...document.querySelectorAll('#pages > .page, #vpages .page')].filter(p => !p.closest('#pages-under'));
-    let firstHandle = null, lastHandle = null;
+    // 1) 재기: 바뀐 쪽만 (이때는 화면을 고치지 않아 한 번만 배치 계산)
+    const plans = [];
+    const seen = new Set();
     for (const p of pageEls) {
-      if (!docxSelRange.intersectsNode(p)) continue;
-      const pr = p.getBoundingClientRect();
-      if (!(pr.width > 0 && pr.height > 0)) continue;
-      const pw = pr.width, ph = pr.height;
-
-      const rawRects = [];
-      const tw = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
-      let tn = tw.nextNode();
-      while (tn) {
-        if (docxValidPageTextNode(tn) && docxSelRange.intersectsNode(tn)) {
-          const sOff = tn === docxSelRange.startContainer ? docxSelRange.startOffset : 0;
-          const eOff = tn === docxSelRange.endContainer ? docxSelRange.endOffset : tn.nodeValue.length;
-          if (eOff > sOff) {
-            const sub = document.createRange();
-            sub.setStart(tn, sOff);
-            sub.setEnd(tn, eOff);
-            for (const r of sub.getClientRects()) {
-              if (r.width > 0.5 && r.width < pw * 0.96 && r.height > 0.5 && r.height < 64) {
-                const cl = Math.max(pr.left, r.left);
-                const cr = Math.min(pr.right, r.right);
-                if (cr - cl > 0.5) {
-                  rawRects.push({ left: cl, right: cr, top: r.top, bottom: r.bottom, midY: (r.top + r.bottom) * 0.5 });
-                }
-              }
-            }
-          }
-        }
-        tn = tw.nextNode();
-      }
-      if (rawRects.length === 0) continue;
-      rawRects.sort((a, b) => a.midY - b.midY || a.left - b.left);
-
-      const merged = [];
-      for (const r of rawRects) {
-        const prev = merged.length > 0 ? merged[merged.length - 1] : null;
-        const minH = prev ? Math.min(prev.bottom - prev.top, r.bottom - r.top) : 0;
-        if (prev && Math.abs(r.midY - prev.midY) <= Math.max(3, minH * 0.45) && r.left <= prev.right + 28) {
-          prev.left = Math.min(prev.left, r.left);
-          prev.right = Math.max(prev.right, r.right);
-          prev.top = Math.min(prev.top, r.top);
-          prev.bottom = Math.max(prev.bottom, r.bottom);
-          prev.midY = (prev.top + prev.bottom) * 0.5;
-        } else {
-          merged.push({ ...r });
-        }
-      }
-
-      const frag = document.createDocumentFragment();
-      for (const rc of merged) {
-        const box = document.createElement('div');
-        box.className = 'eri-docx-sel-rect';
-        const lPct = ((rc.left - pr.left) / pw) * 100;
-        const tPct = ((rc.top - pr.top) / ph) * 100;
-        const wPct = (Math.max(2, rc.right - rc.left) / pw) * 100;
-        const hPct = (Math.max(8, rc.bottom - rc.top) / ph) * 100;
-        box.style.left = `${lPct}%`;
-        box.style.top = `${tPct}%`;
-        box.style.width = `${wPct}%`;
-        box.style.height = `${hPct}%`;
-        frag.appendChild(box);
-        if (!firstHandle) firstHandle = { p, x: lPct, y: ((rc.bottom - pr.top) / ph) * 100 };
-        lastHandle = { p, x: ((rc.right - pr.left) / pw) * 100, y: ((rc.bottom - pr.top) / ph) * 100 };
-      }
-      p.appendChild(frag);
+      if (!range.intersectsNode(p)) continue;
+      seen.add(p);
+      const key = docxSelPageKey(p, range);
+      const old = docxSelPages.get(p);
+      if (old && old.key === key) continue;
+      const rects = docxSelPageRects(p, range);
+      const first = p.contains(range.startContainer) ? docxSelHandlePct(p, range.startContainer, range.startOffset, 'start') : null;
+      const last = p.contains(range.endContainer) ? docxSelHandlePct(p, range.endContainer, range.endOffset, 'end') : null;
+      plans.push({ p, key, rects, first, last });
     }
-    if (firstHandle) docxMountSelHandle(firstHandle.p, 'start', firstHandle.x, firstHandle.y);
-    if (lastHandle) docxMountSelHandle(lastHandle.p, 'end', lastHandle.x, lastHandle.y);
+    // 2) 그리기: 범위에서 빠진 쪽은 지우고, 바뀐 쪽만 새로
+    for (const [p, c] of docxSelPages) {
+      if (seen.has(p)) continue;
+      for (const el of c.els) el.remove();
+      docxSelPages.delete(p);
+    }
+    for (const plan of plans) {
+      const old = docxSelPages.get(plan.p);
+      const els = old ? old.els : [];
+      while (els.length > plan.rects.length) els.pop().remove();
+      plan.rects.forEach((rc, i) => {
+        let box = els[i];
+        if (!box) { box = document.createElement('div'); box.className = 'eri-docx-sel-rect'; plan.p.appendChild(box); els.push(box); }
+        box.style.left = `${rc.l}%`;
+        box.style.top = `${rc.t}%`;
+        box.style.width = `${rc.w}%`;
+        box.style.height = `${rc.h}%`;
+      });
+      docxSelPages.set(plan.p, { key: plan.key, els, first: plan.first, last: plan.last });
+    }
+    // 손잡이: 고른 범위의 맨 앞·맨 뒤 글자 자리 (그 쪽이 화면에 붙어 있을 때만)
+    let start = null, end = null;
+    for (const [p, c] of docxSelPages) {
+      if (c.first) start = { p, ...c.first };
+      if (c.last) end = { p, ...c.last };
+    }
+    if (start) docxMountSelHandle(start.p, 'start', start.x, start.y); else docxHideSelHandle('start');
+    if (end) docxMountSelHandle(end.p, 'end', end.x, end.y); else docxHideSelHandle('end');
   } catch (_) {}
+}
+/** 고른 범위 끝이 붙어 있지 않은 쪽에 있으면 그 손잡이는 숨김 (끌고 있는 손잡이는 그대로) */
+function docxHideSelHandle(side) {
+  const h = docxHandleEls[side];
+  if (h && docxActiveHandleSide !== side) h.style.display = 'none';
 }
 
 function docxReadStyleAt(node) {
@@ -2685,6 +2814,7 @@ function editApplyFormat(opts) {
   if (docxSelRange && !docxSelRange.collapsed) {
     if (docxApplyStyleToRange(docxSelRange, opts)) {
       docxPushUndo();
+      docxClearSelectionOverlays(true);
       docxRenderSelection();
     }
   } else {

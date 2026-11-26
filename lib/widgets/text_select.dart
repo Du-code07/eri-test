@@ -111,9 +111,16 @@ class FloatingSelectionBar {
 
 /// 쪽 위 한 줄의 글과 자리 (층 기준 좌표)
 class SelLine {
-  const SelLine(this.text, this.rect);
+  const SelLine(this.text, this.rect, {this.page = -1, this.norm});
   final String text;
   final Rect rect;
+
+  /// 스크롤 보기: 이 글이 놓인 쪽 번호와 그 쪽 안 자리 (쪽 크기 대비 0~1).
+  /// 스크롤·확대·축소로 쪽이 움직여도 이 자리로 화면 자리를 다시 셈
+  final int page;
+  final Rect? norm;
+
+  SelLine moved(Rect r) => SelLine(text, r, page: page, norm: norm);
 }
 
 /// 글자 위치를 아는 쪽(PDF)에서 길게 눌러 글 고르기
@@ -158,30 +165,84 @@ class PageTextSelection extends ChangeNotifier {
 
   void endBodyDrag() => _bodyStart = null;
 
-  /// 낱말 상자들(읽는 순서)을 줄로 묶음: 같은 높이에서 오른쪽으로 이어지는 낱말은 한 줄
+  /// 낱말 상자들(읽는 순서)을 줄로 묶음: 같은 높이에서 오른쪽으로 이어지는 낱말은 한 줄 (쪽이 바뀌면 새 줄)
   static List<SelLine> linesFromWords(List<SelLine> words) {
     final out = <SelLine>[];
     String text = '';
     Rect? cur;
+    int page = -1;
+    Rect? norm;
+    void flush() {
+      final c = cur;
+      if (c != null) out.add(SelLine(text, c, page: page, norm: norm));
+    }
     for (final w in words) {
       if (w.text.trim().isEmpty || w.rect.isEmpty) continue;
       final c = cur;
-      if (c != null) {
+      if (c != null && w.page == page) {
         final double h = math.max(1.0, c.height);
         final bool sameRow = (w.rect.center.dy - c.center.dy).abs() < h * 0.5;
         final double gap = w.rect.left - c.right;
         if (sameRow && gap > -h * 0.5 && gap < h * 3) {
           text += gap > h * 0.12 ? ' ${w.text}' : w.text;
           cur = c.expandToInclude(w.rect);
+          final n = norm, wn = w.norm;
+          norm = (n != null && wn != null) ? n.expandToInclude(wn) : null;
           continue;
         }
-        out.add(SelLine(text, c));
       }
+      flush();
       text = w.text;
       cur = w.rect;
+      page = w.page;
+      norm = w.norm;
     }
-    if (cur != null) out.add(SelLine(text, cur));
+    flush();
     return out;
+  }
+
+  /// 모든 줄이 쪽 자리를 알고 있는가 (스크롤 보기)
+  bool get anchored => lines.isNotEmpty && lines.every((l) => l.norm != null && l.page >= 0);
+
+  /// 쪽들의 지금 화면 자리([slots], 층 기준)로 줄 자리를 다시 셈 — 스크롤·확대·축소 중에도 글과 딱 맞게.
+  /// 화면 밖이라 자리를 모르는 쪽은 가까운 쪽 크기로 위·아래에 이어 놓음 (화면 밖에 있게만)
+  void reproject(Map<int, Rect> slots) {
+    if (lines.isEmpty || slots.isEmpty || !anchored) return;
+    final keys = slots.keys.toList()..sort();
+    double gap = 6;
+    for (int i = 0; i + 1 < keys.length; i++) {
+      if (keys[i + 1] == keys[i] + 1) {
+        gap = math.max(0, slots[keys[i + 1]]!.top - slots[keys[i]]!.bottom);
+        break;
+      }
+    }
+    Rect slotOf(int p) {
+      final known = slots[p];
+      if (known != null) return known;
+      int? below, above;
+      for (final k in keys) {
+        if (k < p) below = k;
+        if (k > p) {
+          above = k;
+          break;
+        }
+      }
+      if (below != null) {
+        final b = slots[below]!;
+        return b.shift(Offset(0, (b.height + gap) * (p - below)));
+      }
+      final a = slots[above!]!;
+      return a.shift(Offset(0, -(a.height + gap) * (above - p)));
+    }
+    lines = [
+      for (final l in lines)
+        () {
+          final n = l.norm!;
+          final s = slotOf(l.page);
+          return l.moved(Rect.fromLTWH(s.left + n.left * s.width, s.top + n.top * s.height, n.width * s.width, n.height * s.height));
+        }(),
+    ];
+    notifyListeners();
   }
   int _aLine = -1, _aChar = 0, _bLine = -1, _bChar = 0;
 
@@ -202,52 +263,30 @@ class PageTextSelection extends ChangeNotifier {
   /// 스크롤 보기에서 문서가 움직일 때 하이라이트와 손잡이도 글과 함께 이동
   void shiftBy(Offset delta) {
     if (!active || delta == Offset.zero) return;
-    lines = [for (final l in lines) SelLine(l.text, l.rect.shift(delta))];
-    notifyListeners();
-  }
-
-  /// 스크롤 보기 핀치 줌 후 실제 화면 텍스트 박스 좌표로 선택 범위를 정확히 재정렬
-  bool resnapToVisible(List<SelLine> fresh) {
-    if (!active || fresh.isEmpty) return false;
-    final (sL, sC, eL, eC) = _range;
-    final String startLineText = lines[sL].text;
-    final String endLineText = lines[eL].text;
-    int newSL = -1, newEL = -1;
-    for (int i = 0; i < fresh.length; i++) {
-      if (newSL < 0 && fresh[i].text == startLineText) newSL = i;
-      if (fresh[i].text == endLineText) newEL = i;
-    }
-    if (newSL < 0 || newEL < 0 || newEL < newSL) return false;
-    lines = fresh;
-    _aLine = newSL;
-    _aChar = sC.clamp(0, lines[newSL].text.length);
-    _bLine = newEL;
-    _bChar = eC.clamp(0, lines[newEL].text.length);
-    notifyListeners();
-    return true;
-  }
-
-  /// 스크롤 보기 핀치 줌 인·아웃 시 하이라이트 영역도 배율에 맞게 함께 확대·축소
-  void scaleAround(double factor, double anchorX, double anchorY) {
-    if (!active || (factor - 1.0).abs() < 0.001) return;
-    lines = [
-      for (final l in lines)
-        SelLine(
-          l.text,
-          Rect.fromLTRB(
-            anchorX + (l.rect.left - anchorX) * factor,
-            anchorY + (l.rect.top - anchorY) * factor,
-            anchorX + (l.rect.right - anchorX) * factor,
-            anchorY + (l.rect.bottom - anchorY) * factor,
-          ),
-        ),
-    ];
+    lines = [for (final l in lines) l.moved(l.rect.shift(delta))];
     notifyListeners();
   }
 
   /// 자동 스크롤로 새로 화면에 들어온 줄들을 기존 선택 인덱스를 유지하며 앞·뒤에 병합
   void mergeVisibleLines(List<SelLine> fresh) {
     if (!active || fresh.isEmpty) return;
+    // 쪽 자리를 아는 줄들은 (쪽, 쪽 안 높이) 순서로 비교 — 화면 자리는 아직 옛 자리일 수 있음
+    if (anchored && fresh.every((l) => l.norm != null && l.page >= 0)) {
+      double key(SelLine l) => l.page + l.norm!.center.dy;
+      final double lastKey = key(lines.last) + lines.last.norm!.height * 0.5;
+      final double firstKey = key(lines.first) - lines.first.norm!.height * 0.5;
+      final below = [for (final nl in fresh) if (key(nl) > lastKey) nl];
+      final above = [for (final nl in fresh) if (key(nl) < firstKey) nl];
+      if (below.isEmpty && above.isEmpty) return;
+      lines.addAll(below);
+      if (above.isNotEmpty) {
+        lines.insertAll(0, above);
+        _aLine += above.length;
+        _bLine += above.length;
+      }
+      notifyListeners();
+      return;
+    }
     bool changed = false;
     final double lastBottom = lines.last.rect.bottom;
     for (final nl in fresh) {

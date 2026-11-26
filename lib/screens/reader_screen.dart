@@ -1275,29 +1275,19 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
             final prev = _docScrollMetrics.value;
             if (_docSel.active) {
               final box = _docSelKey.currentContext?.findRenderObject() as RenderBox?;
-              final double cssToFlutter = (client > 0 && box != null && box.hasSize) ? (box.size.height / client) : 1.0;
-              final double curZoom = _hwpController.scrollZoom;
-              if ((curZoom - _docSelZoom).abs() > 0.01 && _docSelZoom > 0) {
-                final double ratio = curZoom / _docSelZoom;
-                _docSelZoom = curZoom;
-                final double cx = (box != null && box.hasSize) ? box.size.width * 0.5 : 0.0;
-                final double cy = (box != null && box.hasSize) ? box.size.height * 0.5 : 0.0;
-                _docSel.scaleAround(ratio, cx, cy);
-                if (!_docCopyScrolling && mounted) setState(() => _docCopyScrolling = true);
-                _docCopyScrollHideTimer?.cancel();
-                _docCopyScrollHideTimer = Timer(const Duration(milliseconds: 220), () {
-                  unawaited(_resnapDocSelToVisible());
-                  if (mounted && _docCopyScrolling) setState(() => _docCopyScrolling = false);
+              final slots = _hwpController.scrollSlots;
+              if (_docVertical && box != null && box.hasSize && slots.isNotEmpty && _docSel.anchored) {
+                // 쪽마다의 지금 화면 자리로 고른 글 바탕을 다시 놓음 (스크롤·확대·축소·두 손가락으로 줄이는 중에도 글과 딱 맞게)
+                final Size bs = box.size;
+                _docSel.reproject({
+                  for (final e in slots.entries)
+                    e.key: Rect.fromLTWH(e.value.left * bs.width, e.value.top * bs.height, e.value.width * bs.width, e.value.height * bs.height),
                 });
+                _markDocCopyScrolling();
               } else if ((top - prev[0]).abs() > 0.5) {
+                final double cssToFlutter = (client > 0 && box != null && box.hasSize) ? (box.size.height / client) : 1.0;
                 _docSel.shiftBy(Offset(0, -(top - prev[0]) * cssToFlutter));
-                if (!_docHandleDragging) {
-                  if (!_docCopyScrolling && mounted) setState(() => _docCopyScrolling = true);
-                  _docCopyScrollHideTimer?.cancel();
-                  _docCopyScrollHideTimer = Timer(const Duration(milliseconds: 180), () {
-                    if (mounted && _docCopyScrolling) setState(() => _docCopyScrolling = false);
-                  });
-                }
+                _markDocCopyScrolling();
               }
             }
             _docScrollMetrics.value = [top, height, client];
@@ -2790,7 +2780,6 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   Timer? _docCopyAutoScrollTimer;
   Timer? _docCopyScrollHideTimer;
   bool _docCopyScrolling = false;
-  double _docSelZoom = 1.0;
   bool _docCopyRefreshing = false;
   bool _docCopyDragStart = false;
   Offset? _docCopyDragGlobal;
@@ -2812,21 +2801,40 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     _docCopyDragGlobal = null;
   }
 
-  Future<void> _resnapDocSelToVisible() async {
-    if (!mounted || !_docSel.active || !_docVertical) return;
-    final box = _docSelKey.currentContext?.findRenderObject() as RenderBox?;
-    if (box == null || !box.hasSize) return;
-    try {
-      final raw = await _hwpController.visibleTextBoxes();
-      if (!mounted || !_docSel.active || raw.isEmpty) return;
-      final s = box.size;
-      double v(Object? x) => (x as num?)?.toDouble() ?? 0;
-      final fresh = PageTextSelection.linesFromWords([
-        for (final b in raw)
-          SelLine('${b['t'] ?? ''}', Rect.fromLTWH(v(b['x']) * s.width, v(b['y']) * s.height, v(b['w']) * s.width, v(b['h']) * s.height)),
-      ]);
-      _docSel.resnapToVisible(fresh);
-    } catch (_) {}
+  /// 움직이는 동안(스크롤·확대·축소)은 손잡이·막대를 잠시 숨김 (손잡이를 끄는 중이면 그대로)
+  void _markDocCopyScrolling() {
+    if (_docHandleDragging) return;
+    if (!_docCopyScrolling && mounted) setState(() => _docCopyScrolling = true);
+    _docCopyScrollHideTimer?.cancel();
+    _docCopyScrollHideTimer = Timer(const Duration(milliseconds: 180), () {
+      if (mounted && _docCopyScrolling) setState(() => _docCopyScrolling = false);
+    });
+  }
+
+  /// 문서 화면이 알려 준 낱말들 → 층 기준 낱말 상자 (스크롤 보기면 쪽 번호·쪽 안 자리도)
+  List<SelLine> _docWordsFrom(List<Map<String, Object?>> raw, Size s) {
+    double v(Object? x) => (x as num?)?.toDouble() ?? 0;
+    return [
+      for (final b in raw)
+        SelLine(
+          '${b['t'] ?? ''}',
+          Rect.fromLTWH(v(b['x']) * s.width, v(b['y']) * s.height, v(b['w']) * s.width, v(b['h']) * s.height),
+          page: b['p'] is num ? (b['p'] as num).toInt() : -1,
+          norm: b['p'] is num ? Rect.fromLTWH(v(b['px']), v(b['py']), v(b['pw']), v(b['ph'])) : null,
+        ),
+    ];
+  }
+
+  /// 낱말 상자들에서 그 쪽들의 지금 자리를 거꾸로 셈 (낱말의 화면 자리 ÷ 쪽 안 자리)
+  static Map<int, Rect> _docSlotsFromWords(List<SelLine> words) {
+    final out = <int, Rect>{};
+    for (final w in words) {
+      final n = w.norm;
+      if (n == null || w.page < 0 || out.containsKey(w.page) || n.width <= 0 || n.height <= 0) continue;
+      final double sw = w.rect.width / n.width, sh = w.rect.height / n.height;
+      out[w.page] = Rect.fromLTWH(w.rect.left - n.left * sw, w.rect.top - n.top * sh, sw, sh);
+    }
+    return out;
   }
 
   void _onDocCopyHandleUpdate(bool start, Offset globalPos) {
@@ -2864,13 +2872,11 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           try {
             final raw = await _hwpController.visibleTextBoxes();
             if (mounted && _docSel.active && raw.isNotEmpty) {
-              final s = box.size;
-              double v(Object? x) => (x as num?)?.toDouble() ?? 0;
-              final fresh = PageTextSelection.linesFromWords([
-                for (final b in raw)
-                  SelLine('${b['t'] ?? ''}', Rect.fromLTWH(v(b['x']) * s.width, v(b['y']) * s.height, v(b['w']) * s.width, v(b['h']) * s.height)),
-              ]);
-              _docSel.mergeVisibleLines(fresh);
+              final words = _docWordsFrom(raw, box.size);
+              _docSel.mergeVisibleLines(PageTextSelection.linesFromWords(words));
+              // 굴린 뒤의 쪽 자리로 모든 줄을 다시 놓음 (손잡이를 새 자리에 맞추기 전에)
+              final slots = _docSlotsFromWords(words);
+              if (slots.isNotEmpty) _docSel.reproject(slots);
             }
           } catch (_) {} finally {
             _docCopyRefreshing = false;
@@ -2921,15 +2927,9 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     final size = box.size;
     final raw = await _hwpController.visibleTextBoxes();
     if (!mounted) return;
-    double v(Object? x) => (x as num?)?.toDouble() ?? 0;
-    final words = <SelLine>[
-      for (final b in raw)
-        SelLine('${b['t'] ?? ''}', Rect.fromLTWH(v(b['x']) * size.width, v(b['y']) * size.height, v(b['w']) * size.width, v(b['h']) * size.height)),
-    ];
-    _docSel.lines = PageTextSelection.linesFromWords(words);
+    _docSel.lines = PageTextSelection.linesFromWords(_docWordsFrom(raw, size));
     final local = box.globalToLocal(global);
     if (_docSel.selectWordAt(local)) {
-      _docSelZoom = _hwpController.scrollZoom;
       HapticFeedback.selectionClick();
       final pending = _docPendingExtend;
       if (pending != null) {

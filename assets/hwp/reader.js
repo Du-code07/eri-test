@@ -568,6 +568,8 @@ function vPinchFrame() {
   const r = p.z / p.z0;
   const tx = p.x + vhost.scrollLeft - p.cx * r, ty = p.y + vhost.scrollTop - p.cy * r;
   vinner.style.transform = `translate(${tx}px, ${ty}px) scale(${r})`;
+  // 줄이고 늘리는 동안에도 쪽 자리를 앱에 알림 (고른 글 바탕이 글과 함께 움직이게)
+  vReportMetrics();
 }
 function vPinchEnd(e) {
   if (!vPinch || !vhost) return;
@@ -857,9 +859,26 @@ function vSchedule() {
   vRaf = requestAnimationFrame(() => { vRaf = 0; vUpdate(); });
   if (!vMetricsTimer) vMetricsTimer = setTimeout(() => { vMetricsTimer = 0; vReportMetrics(); }, 30);
 }
+/** 화면 가까이 있는 쪽들의 화면 자리 [쪽, 왼쪽, 위, 너비, 높이] (화면 크기 대비 0~1) —
+ * 앱이 길게 눌러 고른 글 바탕을 쪽에 붙여 그리는 데 씀 (스크롤·확대·축소·두 손가락으로 줄이는 중에도 글과 딱 맞게) */
+function vSlotGeom() {
+  if (!vertical || !vhost || !vTops.length || !vSlots.length) return [];
+  const W = innerWidth || 1, H = innerHeight || 1, out = [];
+  const at = vIndexAt(vhost.scrollTop + (vhost.clientHeight || H) / 2);
+  const push = (i) => {
+    const q = vSlots[i].getBoundingClientRect();
+    out.push([i, q.left / W, q.top / H, q.width / W, q.height / H]);
+    return q;
+  };
+  push(at);
+  // 화면 밖으로 한 쪽 더 나갈 때까지 위·아래로 (줄이는 중이면 여러 쪽이 보임)
+  for (let i = at - 1, n = 0; i >= 0 && n < 40; i--, n++) { if (push(i).bottom < -H * 0.5) break; }
+  for (let i = at + 1, n = 0; i < vSlots.length && n < 40; i++, n++) { if (push(i).top > H * 1.5) break; }
+  return out;
+}
 function vReportMetrics() {
   if (!vhost) return;
-  emit('scrollMetrics', { top: vhost.scrollTop, height: vhost.scrollHeight, client: vhost.clientHeight, zoom: vZoom });
+  emit('scrollMetrics', { top: vhost.scrollTop, height: vhost.scrollHeight, client: vhost.clientHeight, zoom: vZoom, slots: vSlotGeom() });
 }
 function vMount(index) {
   if (vMounted.has(index) || !doc) return;
@@ -987,9 +1006,19 @@ function visibleTextBoxes() {
     if (!svg || !Number.isFinite(index)) continue;
     const r = svg.getBoundingClientRect(), vw = Number(frame.dataset.width) || r.width;
     const s = vw > 0 ? r.width / vw : 1;
+    // 스크롤 보기: 낱말이 몇째 쪽 어디에 있는지도 알려 줌 (앱이 고른 글 바탕을 쪽에 붙여 그림)
+    const slot = vertical ? frame.closest('.vslot') : null;
+    const sq = slot ? slot.getBoundingClientRect() : null;
     for (const run of pageRuns(index)) {
       if (!run.text || !run.text.trim() || !(run.w > 0 && run.h > 0)) continue;
-      out.push({ t: run.text, x: (r.left + run.x * s) / W, y: (r.top + run.y * s) / H, w: run.w * s / W, h: run.h * s / H });
+      const left = r.left + run.x * s, top = r.top + run.y * s, w = run.w * s, h = run.h * s;
+      const o = { t: run.text, x: left / W, y: top / H, w: w / W, h: h / H };
+      if (sq && sq.width > 0 && sq.height > 0) {
+        o.p = Number(slot.dataset.page);
+        o.px = (left - sq.left) / sq.width; o.py = (top - sq.top) / sq.height;
+        o.pw = w / sq.width; o.ph = h / sq.height;
+      }
+      out.push(o);
     }
   }
   return out;
@@ -2899,7 +2928,7 @@ function setEditMode(enabled) {
       const maxTop = Math.max(0, vhost.scrollHeight - vhost.clientHeight);
       if (maxTop <= 1 || vhost.scrollTop > maxTop) vhost.scrollTop = Math.min(vhost.scrollTop, maxTop);
       vUpdate();
-      emit('scrollMetrics', { top: vhost.scrollTop, height: vhost.scrollHeight, client: vhost.clientHeight, zoom: vZoom });
+      emit('scrollMetrics', { top: vhost.scrollTop, height: vhost.scrollHeight, client: vhost.clientHeight, zoom: vZoom, slots: vSlotGeom() });
     }
   }
   return editModeOn;

@@ -36,6 +36,10 @@ class HwpReaderController {
   /// 한글·워드 스크롤 보기: 손가락으로 확대·축소해 둔 배율 (1이면 원래 크기)
   double scrollZoom = 1;
 
+  /// 한글·워드 스크롤 보기: 가장 최근에 알려 온 화면 가까이 있는 쪽들의 자리 (쪽 번호 → 화면 크기 대비 0~1 네모).
+  /// 스크롤·확대·축소(두 손가락으로 줄이는 중 포함)마다 바뀜
+  Map<int, Rect> scrollSlots = const {};
+
   /// 한글·워드 스크롤 보기: 북마크한 쪽들에 책갈피를 붙임
   Future<void> setScrollMarks(List<int> pages) async => _invoke?.call('setScrollMarks', [pages]);
 
@@ -540,6 +544,13 @@ class _HwpViewerState extends State<HwpViewer> {
       case 'scrollMetrics':
         double n(Object? v) => v is num ? v.toDouble() : 0;
         if (event['zoom'] is num) widget.controller.scrollZoom = (event['zoom'] as num).toDouble();
+        final slots = event['slots'];
+        if (slots is List) {
+          widget.controller.scrollSlots = {
+            for (final q in slots)
+              if (q is List && q.length >= 5) (q[0] as num).toInt(): Rect.fromLTWH(n(q[1]), n(q[2]), n(q[3]), n(q[4])),
+          };
+        }
         widget.onScrollMetrics?.call(n(event['top']), n(event['height']), n(event['client']));
         break;
       // 엑셀: 칸을 길게 눌러 고른 뒤 손을 떼면 [복사 | 모두 선택 | 공유] 막대
