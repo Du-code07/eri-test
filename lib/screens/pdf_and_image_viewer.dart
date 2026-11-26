@@ -2223,7 +2223,6 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
                                 controller: _pdfEditCtrl,
                                 focusNode: _pdfEditFocus,
                                 maxLines: null,
-                                isDense: true,
                                 style: TextStyle(
                                   fontSize: (ed.fontSize * ptScale).clamp(8.0, 48.0),
                                   color: ed.color,
