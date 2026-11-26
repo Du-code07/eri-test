@@ -458,24 +458,27 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
         ],
       );
 
-      final header = Padding(
-        padding: EdgeInsets.fromLTRB(20, centered ? 20 : 0, 12, 8),
-        child: Row(
-          children: [
-            Icon(Icons.battery_saver_outlined, size: 22, color: cs.onSurface),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                _t('성능 및 배터리', 'Performance & Battery', '性能与电池', 'パフォーマンスとバッテリー'),
-                style: (Theme.of(ctx).textTheme.titleMedium ?? const TextStyle()).copyWith(fontWeight: FontWeight.w800),
+      final header = SizedBox(
+        height: centered ? 64 : 48,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(24, centered ? 12 : 0, 12, 0),
+          child: Row(
+            children: [
+              Icon(Icons.battery_saver_outlined, size: 23, color: cs.onSurface),
+              const SizedBox(width: 17),
+              Expanded(
+                child: Text(
+                  _t('성능 및 배터리', 'Performance & Battery', '性能与电池', 'パフォーマンスとバッテリー'),
+                  style: (Theme.of(ctx).textTheme.titleLarge ?? const TextStyle()).copyWith(fontWeight: FontWeight.w800),
+                ),
               ),
-            ),
-            if (centered)
-              IconButton(
-                onPressed: () => Navigator.of(ctx).pop(),
-                icon: const Icon(Icons.close_rounded, size: 20),
-              ),
-          ],
+              if (centered)
+                IconButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  icon: const Icon(Icons.close_rounded, size: 20),
+                ),
+            ],
+          ),
         ),
       );
 
@@ -492,7 +495,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const SheetGrip(below: 12),
+              const SheetGrip(below: 22),
               header,
               Flexible(child: list),
             ],

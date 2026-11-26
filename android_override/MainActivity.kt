@@ -882,6 +882,127 @@ class MainActivity : FlutterActivity() {
                     val res = made
                     runOnUiThread { result.success(res) }
                 }
+            } else if (call.method == "savePdfEdits") {
+                val pdfPath = call.argument<String>("pdfPath")
+                val outDirPath = call.argument<String>("outDirPath")
+                @Suppress("UNCHECKED_CAST")
+                val edits = call.argument<List<Map<String, Any?>>>("edits") ?: emptyList()
+                if (pdfPath == null || edits.isEmpty()) {
+                    result.success(false)
+                    return@setMethodCallHandler
+                }
+                Thread {
+                    val outPdf = PdfDocument()
+                    try {
+                        val srcFile = File(pdfPath)
+                        val byPage = HashMap<Int, ArrayList<Map<String, Any?>>>()
+                        for (e in edits) {
+                            val pg = (e["page"] as? Number)?.toInt() ?: continue
+                            byPage.getOrPut(pg) { ArrayList() }.add(e)
+                        }
+                        val pfd = ParcelFileDescriptor.open(srcFile, ParcelFileDescriptor.MODE_READ_ONLY)
+                        val renderer = PdfRenderer(pfd)
+                        val outDir = if (outDirPath != null) File(outDirPath).apply { if (!exists()) mkdirs() } else null
+
+                        for (i in 0 until renderer.pageCount) {
+                            val srcPage = renderer.openPage(i)
+                            val scale = (1440f / srcPage.width.toFloat().coerceAtLeast(1f)).coerceIn(1.5f, 2.2f)
+                            val w = (srcPage.width * scale).toInt().coerceAtLeast(720)
+                            val h = (srcPage.height * scale).toInt().coerceAtLeast(960)
+                            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                            bmp.eraseColor(Color.WHITE)
+                            srcPage.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                            srcPage.close()
+
+                            val pageEdits = byPage[i]
+                            if (pageEdits != null && pageEdits.isNotEmpty()) {
+                                val bmpCanvas = android.graphics.Canvas(bmp)
+                                val bgPaint = android.graphics.Paint().apply { style = android.graphics.Paint.Style.FILL }
+                                for (ed in pageEdits) {
+                                    val cx = ((ed["coverX"] as? Number)?.toFloat() ?: 0f) * w
+                                    val cy = ((ed["coverY"] as? Number)?.toFloat() ?: 0f) * h
+                                    val cw = ((ed["coverW"] as? Number)?.toFloat() ?: 0f) * w
+                                    val ch = ((ed["coverH"] as? Number)?.toFloat() ?: 0f) * h
+                                    if (cw > 1f && ch > 1f) {
+                                        val sx = (cx - 3f).toInt().coerceIn(0, w - 1)
+                                        val sy = (cy - 3f).toInt().coerceIn(0, h - 1)
+                                        val sampleColor = try { bmp.getPixel(sx, sy) } catch (_: Throwable) { Color.WHITE }
+                                        bgPaint.color = sampleColor
+                                        bmpCanvas.drawRect(cx - 2f, cy - 2f, cx + cw + 4f, cy + ch + 3f, bgPaint)
+                                    }
+                                    val txt = (ed["text"] as? String) ?: ""
+                                    if (txt.isNotEmpty()) {
+                                        val tx = ((ed["x"] as? Number)?.toFloat() ?: 0.05f) * w
+                                        val ty = ((ed["y"] as? Number)?.toFloat() ?: 0.05f) * h
+                                        val tw = (((ed["w"] as? Number)?.toFloat() ?: 0.85f) * w).toInt().coerceAtLeast(40).coerceAtMost((w - tx).toInt().coerceAtLeast(40))
+                                        val fsPt = (ed["fontSize"] as? Number)?.toFloat() ?: 14f
+                                        val col = (ed["color"] as? Number)?.toInt() ?: Color.BLACK
+                                        val isBold = (ed["bold"] as? Boolean) ?: false
+                                        val isItalic = (ed["italic"] as? Boolean) ?: false
+                                        val isUnderline = (ed["underline"] as? Boolean) ?: false
+                                        val style = when {
+                                            isBold && isItalic -> android.graphics.Typeface.BOLD_ITALIC
+                                            isBold -> android.graphics.Typeface.BOLD
+                                            isItalic -> android.graphics.Typeface.ITALIC
+                                            else -> android.graphics.Typeface.NORMAL
+                                        }
+                                        val tp = android.text.TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                                            color = col
+                                            textSize = fsPt * (w / 595f)
+                                            typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, style)
+                                            isUnderlineText = isUnderline
+                                        }
+                                        val layout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                            android.text.StaticLayout.Builder.obtain(txt, 0, txt.length, tp, tw)
+                                                .setAlignment(android.text.Layout.Alignment.ALIGN_NORMAL)
+                                                .setLineSpacing(0f, 1.15f)
+                                                .setIncludePad(false)
+                                                .build()
+                                        } else {
+                                            @Suppress("DEPRECATION")
+                                            android.text.StaticLayout(txt, tp, tw, android.text.Layout.Alignment.ALIGN_NORMAL, 1.15f, 0f, false)
+                                        }
+                                        bmpCanvas.save()
+                                        bmpCanvas.translate(tx, ty)
+                                        layout.draw(bmpCanvas)
+                                        bmpCanvas.restore()
+                                    }
+                                }
+                                // 캐시된 쪽 이미지도 바로 갱신해 저장 직후 새 내용이 즉시 보이도록 함
+                                if (outDir != null) {
+                                    val pageFile = File(outDir, "page_${String.format("%04d", i)}.jpg")
+                                    try {
+                                        FileOutputStream(pageFile).use { out ->
+                                            bmp.compress(Bitmap.CompressFormat.JPEG, 90, out)
+                                        }
+                                    } catch (_: Throwable) {}
+                                }
+                            }
+
+                            val pageInfo = PdfDocument.PageInfo.Builder(w, h, i + 1).create()
+                            val dstPage = outPdf.startPage(pageInfo)
+                            dstPage.canvas.drawBitmap(bmp, 0f, 0f, null)
+                            outPdf.finishPage(dstPage)
+                            bmp.recycle()
+                        }
+                        renderer.close()
+                        pfd.close()
+
+                        val tmpFile = File("${pdfPath}.eri_tmp")
+                        FileOutputStream(tmpFile).use { outStream -> outPdf.writeTo(outStream) }
+                        outPdf.close()
+                        if (tmpFile.exists() && tmpFile.length() > 0L) {
+                            if (!tmpFile.renameTo(srcFile)) {
+                                tmpFile.copyTo(srcFile, overwrite = true)
+                                tmpFile.delete()
+                            }
+                        }
+                        runOnUiThread { result.success(true) }
+                    } catch (e: Throwable) {
+                        try { outPdf.close() } catch (_: Throwable) {}
+                        runOnUiThread { result.error("PDF_EDIT_ERR", e.message, null) }
+                    }
+                }.start()
             } else if (call.method == "renderPdfToImages") {
                 val pdfPath = call.argument<String>("pdfPath")
                 val outDirPath = call.argument<String>("outDirPath")

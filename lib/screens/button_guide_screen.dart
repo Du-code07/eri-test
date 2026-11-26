@@ -300,7 +300,7 @@ class _GuideRunnerState extends State<_GuideRunner> with TickerProviderStateMixi
               tr('EPUB 전자책의 글자 크기를 스크롤로 조절해요', 'Adjust EPUB text size with the scroll wheel', '通过滚动调节 EPUB 电子书的字号', 'EPUB電子書籍の文字サイズをスクロールで調整します')),
           _Step('memo', tr('메모 (엑셀 미지원)', 'Memo (Not for Excel)', '笔记（不支持 Excel）', 'メモ（Excel非対応）'),
               tr('지원하는 펜이나 손으로 메모해요', 'Take notes with a supported pen or your finger', '用支持的触控笔或手指做笔记', '対応ペンや指でメモします')),
-          _Step('edit', tr('문서 편집 (PDF·EPUB·TXT·CBZ·PPT·엑셀 미지원)', 'Edit Document (Not for PDF/EPUB/TXT/CBZ/PPT/Excel)', '编辑文档（不支持 PDF·EPUB·TXT·CBZ·PPT·Excel）', '文書を編集（PDF・EPUB・TXT・CBZ・PPT・Excel非対応）'),
+          _Step('edit', tr('문서 편집 (EPUB·TXT·CBZ·PPT·엑셀 미지원)', 'Edit Document (Not for EPUB/TXT/CBZ/PPT/Excel)', '编辑文档（不支持 EPUB·TXT·CBZ·PPT·Excel）', '文書を編集（EPUB・TXT・CBZ・PPT・Excel非対応）'),
               tr('문서의 글자를 편집할 수 있어요',
                   'Edit text in the document',
                   '可以编辑文档中的文字',

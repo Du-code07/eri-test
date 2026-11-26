@@ -633,6 +633,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
       if (widget.isPdf || lower.endsWith('.pdf')) {
         final String rq = StorageService.renderQuality.value;
         final outDir = Directory('${tempDir.path}/pdf_${safeHashKey}_$rq');
+        _pdfOutDirPath = outDir.path;
         final List<dynamic>? renderedPaths = await _pdfChannel.invokeMethod('renderPdfToImages', {
           'pdfPath': first.path,
           'outDirPath': outDir.path,
@@ -1176,8 +1177,9 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
                   ),
                 if (all.isNotEmpty || current.isNotEmpty) IgnorePointer(child: CustomPaint(painter: _FindMarkPainter(all, current))),
                 if (memo) LayoutBuilder(builder: (ctx, c) => _pageMemoLayer(i, c.maxWidth, c.maxHeight, strokes)),
+                if (_isPdfEditMode) LayoutBuilder(builder: (ctx, c) => _pagePdfEditLayer(i, c.maxWidth, c.maxHeight)),
               ]);
-        if (_isPdfFile && !_isMemoMode) {
+        if (_isPdfFile && !_isMemoMode && !_isPdfEditMode) {
           content = WordSelectionLayer(
             pageIndex: i,
             tr: _tr,
@@ -1887,6 +1889,575 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
   bool _pdfHandleDragging = false;
   bool _pdfZooming = false;
   Timer? _pdfZoomIdleTimer;
+
+  // ── PDF 문서 편집 (기존 글자 줄 터치 수정 + 빈 곳 새 글자 추가 + 서식·실행취소·저장) ──
+  bool _isPdfEditMode = false;
+  bool _pdfSaving = false;
+  String? _pdfOutDirPath;
+  int _pdfEditNextId = 1;
+  int _pdfImageRev = 0;
+  List<_PdfTextEdit> _pdfEdits = [];
+  int? _activePdfEditId;
+  final TextEditingController _pdfEditCtrl = TextEditingController();
+  final FocusNode _pdfEditFocus = FocusNode();
+  final List<List<_PdfTextEdit>> _pdfUndoStack = [];
+  final List<List<_PdfTextEdit>> _pdfRedoStack = [];
+  bool _pdfEditBold = false;
+  bool _pdfEditItalic = false;
+  bool _pdfEditUnderline = false;
+  double _pdfEditFontSize = 14.0;
+  Color _pdfEditColor = const Color(0xFF000000);
+  bool _pdfSizePickerOpen = false;
+  bool _pdfColorPickerOpen = false;
+  static const List<Color> _pdfColorPalette = [
+    Color(0xFF000000),
+    Color(0xFF555555),
+    Color(0xFFD32F2F),
+    Color(0xFFEF6C00),
+    Color(0xFFF9A825),
+    Color(0xFF2E7D32),
+    Color(0xFF1565C0),
+    Color(0xFF283593),
+    Color(0xFF6A1B9A),
+  ];
+
+  void _pushPdfUndo() {
+    _pdfUndoStack.add([for (final e in _pdfEdits) e]);
+    if (_pdfUndoStack.length > 40) _pdfUndoStack.removeAt(0);
+    _pdfRedoStack.clear();
+  }
+
+  void _togglePdfEditMode() {
+    if (!_isPdfFile) return;
+    if (_isPdfEditMode) {
+      _cancelPdfEditMode();
+      return;
+    }
+    if (_isMemoMode) unawaited(_cancelMemoSession());
+    _textSel.clear();
+    WordSelectionLayer.clearAll();
+    setState(() {
+      _isPdfEditMode = true;
+      _showControls = false;
+      _pdfEdits = [];
+      _activePdfEditId = null;
+      _pdfUndoStack.clear();
+      _pdfRedoStack.clear();
+      _pdfSizePickerOpen = false;
+      _pdfColorPickerOpen = false;
+    });
+    showAppToast(
+      context,
+      _tr('글자나 빈 곳을 눌러 바로 편집할 수 있어요', 'Tap text or empty space to edit', '点击文字或空白处即可编辑', '文字や余白をタップして編集できます'),
+      fromTop: true,
+    );
+  }
+
+  void _cancelPdfEditMode() {
+    _pdfEditFocus.unfocus();
+    setState(() {
+      _isPdfEditMode = false;
+      _pdfEdits = [];
+      _activePdfEditId = null;
+      _pdfUndoStack.clear();
+      _pdfRedoStack.clear();
+      _pdfSizePickerOpen = false;
+      _pdfColorPickerOpen = false;
+    });
+  }
+
+  _PdfTextEdit? get _activePdfEdit {
+    final id = _activePdfEditId;
+    if (id == null) return null;
+    for (final e in _pdfEdits) {
+      if (e.id == id) return e;
+    }
+    return null;
+  }
+
+  void _selectPdfEdit(_PdfTextEdit ed) {
+    setState(() {
+      _activePdfEditId = ed.id;
+      _pdfEditBold = ed.bold;
+      _pdfEditItalic = ed.italic;
+      _pdfEditUnderline = ed.underline;
+      _pdfEditFontSize = ed.fontSize;
+      _pdfEditColor = ed.color;
+      _pdfSizePickerOpen = false;
+      _pdfColorPickerOpen = false;
+    });
+    _pdfEditCtrl.value = TextEditingValue(
+      text: ed.text,
+      selection: TextSelection.collapsed(offset: ed.text.length),
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _pdfEditFocus.requestFocus();
+    });
+  }
+
+  void _updateActivePdfEdit(_PdfTextEdit Function(_PdfTextEdit cur) fn, {bool recordUndo = true}) {
+    final id = _activePdfEditId;
+    if (id == null) return;
+    final idx = _pdfEdits.indexWhere((e) => e.id == id);
+    if (idx < 0) return;
+    if (recordUndo) _pushPdfUndo();
+    setState(() {
+      _pdfEdits[idx] = fn(_pdfEdits[idx]);
+    });
+  }
+
+  void _undoPdfEdit() {
+    if (_pdfUndoStack.isEmpty) return;
+    _pdfRedoStack.add([for (final e in _pdfEdits) e]);
+    final prev = _pdfUndoStack.removeLast();
+    setState(() {
+      _pdfEdits = prev;
+      final active = _activePdfEdit;
+      if (active != null) {
+        _pdfEditCtrl.text = active.text;
+        _pdfEditBold = active.bold;
+        _pdfEditItalic = active.italic;
+        _pdfEditUnderline = active.underline;
+        _pdfEditFontSize = active.fontSize;
+        _pdfEditColor = active.color;
+      } else {
+        _activePdfEditId = null;
+      }
+    });
+  }
+
+  void _redoPdfEdit() {
+    if (_pdfRedoStack.isEmpty) return;
+    _pdfUndoStack.add([for (final e in _pdfEdits) e]);
+    final next = _pdfRedoStack.removeLast();
+    setState(() {
+      _pdfEdits = next;
+      final active = _activePdfEdit;
+      if (active != null) {
+        _pdfEditCtrl.text = active.text;
+        _pdfEditBold = active.bold;
+        _pdfEditItalic = active.italic;
+        _pdfEditUnderline = active.underline;
+        _pdfEditFontSize = active.fontSize;
+        _pdfEditColor = active.color;
+      } else {
+        _activePdfEditId = null;
+      }
+    });
+  }
+
+  Future<void> _handlePdfEditTap(int pageIndex, Offset localPos, double drawW, double drawH) async {
+    if (!_isPdfEditMode || drawW <= 1 || drawH <= 1) return;
+    final double nx = (localPos.dx / drawW).clamp(0.0, 0.96);
+    final double ny = (localPos.dy / drawH).clamp(0.0, 0.96);
+
+    // 1. 이미 만들어 둔 편집 상자를 눌렀으면 바로 선택
+    for (final e in _pdfEdits.reversed) {
+      if (e.page != pageIndex) continue;
+      final Rect r = Rect.fromLTWH(e.x, e.y, e.w, math.max(0.045, e.h));
+      if (r.inflate(0.015).contains(Offset(nx, ny))) {
+        _selectPdfEdit(e);
+        return;
+      }
+    }
+
+    // 2. 기존 PDF 텍스트 줄을 눌렀으면 그 줄 위에 배경 덮개 + 수정 상자 생성
+    final lines = await _selectableLines(pageIndex);
+    if (!mounted || !_isPdfEditMode) return;
+    Map<String, Object?>? hitLine;
+    for (final l in lines) {
+      double v(String k) => (l[k] as num?)?.toDouble() ?? 0;
+      final double x0 = v('x0'), y = v('y'), x1 = v('x1'), h = v('h');
+      final Rect r = Rect.fromLTRB(x0, y, x1, y + h);
+      if (r.inflate(0.012).contains(Offset(nx, ny))) {
+        hitLine = l;
+        break;
+      }
+    }
+
+    _pushPdfUndo();
+    late final _PdfTextEdit created;
+    if (hitLine != null) {
+      double v(String k) => (hitLine![k] as num?)?.toDouble() ?? 0;
+      final double x0 = v('x0'), y = v('y'), x1 = v('x1'), h = v('h');
+      final String t = '${hitLine['t'] ?? ''}'.trim();
+      final double estPt = (h * 842.0 * 0.78).clamp(9.0, 34.0);
+      created = _PdfTextEdit(
+        id: _pdfEditNextId++,
+        page: pageIndex,
+        x: x0.clamp(0.01, 0.90),
+        y: y.clamp(0.01, 0.94),
+        w: (1.0 - x0 - 0.04).clamp(0.25, 0.94),
+        h: math.max(0.035, h),
+        coverRect: Rect.fromLTRB(x0, y, x1, y + h),
+        text: t,
+        fontSize: estPt,
+        color: _pdfEditColor,
+        bold: _pdfEditBold,
+        italic: _pdfEditItalic,
+        underline: _pdfEditUnderline,
+      );
+    } else {
+      created = _PdfTextEdit(
+        id: _pdfEditNextId++,
+        page: pageIndex,
+        x: nx.clamp(0.02, 0.78),
+        y: ny.clamp(0.02, 0.92),
+        w: (1.0 - nx - 0.04).clamp(0.24, 0.88),
+        h: 0.045,
+        text: '',
+        fontSize: _pdfEditFontSize,
+        color: _pdfEditColor,
+        bold: _pdfEditBold,
+        italic: _pdfEditItalic,
+        underline: _pdfEditUnderline,
+      );
+    }
+    setState(() {
+      _pdfEdits.add(created);
+    });
+    _selectPdfEdit(created);
+  }
+
+  Future<void> _savePdfEdits() async {
+    if (_pdfSaving || !_isPdfFile) return;
+    _pdfEditFocus.unfocus();
+    final valid = _pdfEdits.where((e) => e.text.trim().isNotEmpty || e.coverRect != null).toList();
+    if (valid.isEmpty) {
+      _cancelPdfEditMode();
+      return;
+    }
+    setState(() => _pdfSaving = true);
+    try {
+      final bool ok = await _pdfChannel.invokeMethod<bool>('savePdfEdits', {
+            'pdfPath': widget.files.first.path,
+            'outDirPath': _pdfOutDirPath,
+            'edits': [for (final e in valid) e.toMap()],
+          }) ??
+          false;
+      if (ok) {
+        // 캐시된 페이지 이미지와 텍스트 줄 캐시를 비워 저장 결과를 즉시 화면에 반영
+        _textLineCache.clear();
+        _ocrCache.clear();
+        _clearSharp(rebuild: false);
+        for (final f in _imagePages) {
+          try {
+            await FileImage(f).evict();
+          } catch (_) {}
+        }
+        PaintingBinding.instance.imageCache.clear();
+        if (mounted) {
+          setState(() {
+            _pdfImageRev++;
+            _isPdfEditMode = false;
+            _pdfEdits = [];
+            _activePdfEditId = null;
+            _pdfUndoStack.clear();
+            _pdfRedoStack.clear();
+            _pdfSizePickerOpen = false;
+            _pdfColorPickerOpen = false;
+          });
+          showAppToast(context, _tr('저장', 'Saved', '已保存', '保存'), fromTop: true);
+        }
+      } else if (mounted) {
+        showAppToast(context, _tr('저장하지 못했어요', 'Could not save', '无法保存', '保存できませんでした'), fromTop: true);
+      }
+    } catch (_) {
+      if (mounted) {
+        showAppToast(context, _tr('저장하지 못했어요', 'Could not save', '无法保存', '保存できませんでした'), fromTop: true);
+      }
+    } finally {
+      if (mounted) setState(() => _pdfSaving = false);
+    }
+  }
+
+  Widget _pagePdfEditLayer(int pageIndex, double drawW, double drawH) {
+    final pageEdits = [for (final e in _pdfEdits) if (e.page == pageIndex) e];
+    final double ptScale = drawW / 595.0;
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTapUp: (d) => unawaited(_handlePdfEditTap(pageIndex, d.localPosition, drawW, drawH)),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          for (final ed in pageEdits) ...[
+            if (ed.coverRect != null)
+              Positioned(
+                left: ed.coverRect!.left * drawW - 1,
+                top: ed.coverRect!.top * drawH - 1,
+                width: ed.coverRect!.width * drawW + 4,
+                height: ed.coverRect!.height * drawH + 3,
+                child: const ColoredBox(color: Colors.white),
+              ),
+            Positioned(
+              left: ed.x * drawW,
+              top: ed.y * drawH,
+              width: (ed.w * drawW).clamp(48.0, drawW),
+              child: GestureDetector(
+                onTap: () => _selectPdfEdit(ed),
+                onPanUpdate: (d) {
+                  final idx = _pdfEdits.indexWhere((x) => x.id == ed.id);
+                  if (idx < 0) return;
+                  setState(() {
+                    _pdfEdits[idx] = _pdfEdits[idx].copyWith(
+                      x: (_pdfEdits[idx].x + d.delta.dx / drawW).clamp(0.0, 0.92),
+                      y: (_pdfEdits[idx].y + d.delta.dy / drawH).clamp(0.0, 0.95),
+                    );
+                  });
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                  decoration: ed.id == _activePdfEditId
+                      ? BoxDecoration(
+                          border: Border.all(color: AppColors.signature, width: 1.4),
+                          borderRadius: BorderRadius.circular(4),
+                          color: Colors.white.withValues(alpha: 0.72),
+                        )
+                      : null,
+                  child: ed.id == _activePdfEditId
+                      ? Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _pdfEditCtrl,
+                                focusNode: _pdfEditFocus,
+                                maxLines: null,
+                                isDense: true,
+                                style: TextStyle(
+                                  fontSize: (ed.fontSize * ptScale).clamp(8.0, 48.0),
+                                  color: ed.color,
+                                  fontWeight: ed.bold ? FontWeight.w700 : FontWeight.w400,
+                                  fontStyle: ed.italic ? FontStyle.italic : FontStyle.normal,
+                                  decoration: ed.underline ? TextDecoration.underline : TextDecoration.none,
+                                  height: 1.15,
+                                ),
+                                decoration: InputDecoration(
+                                  isDense: true,
+                                  contentPadding: EdgeInsets.zero,
+                                  border: InputBorder.none,
+                                  hintText: _tr('글자 입력', 'Type text', '输入文字', '文字を入力'),
+                                  hintStyle: TextStyle(color: Colors.black38, fontSize: (ed.fontSize * ptScale).clamp(8.0, 24.0)),
+                                ),
+                                onChanged: (v) {
+                                  _updateActivePdfEdit((cur) => cur.copyWith(text: v), recordUndo: false);
+                                },
+                              ),
+                            ),
+                            GestureDetector(
+                              onTap: () {
+                                _pushPdfUndo();
+                                setState(() {
+                                  _pdfEdits.removeWhere((x) => x.id == ed.id);
+                                  _activePdfEditId = null;
+                                });
+                              },
+                              child: const Padding(
+                                padding: EdgeInsets.only(left: 4),
+                                child: Icon(Icons.close_rounded, size: 15, color: Colors.black54),
+                              ),
+                            ),
+                          ],
+                        )
+                      : Text(
+                          ed.text,
+                          style: TextStyle(
+                            fontSize: (ed.fontSize * ptScale).clamp(8.0, 48.0),
+                            color: ed.color,
+                            fontWeight: ed.bold ? FontWeight.w700 : FontWeight.w400,
+                            fontStyle: ed.italic ? FontStyle.italic : FontStyle.normal,
+                            decoration: ed.underline ? TextDecoration.underline : TextDecoration.none,
+                            height: 1.15,
+                          ),
+                        ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPdfEditToolbar(double bottomInset) {
+    final double kb = MediaQuery.viewInsetsOf(context).bottom;
+    final double bottomPos = math.max(kb > 0 ? kb + 8.0 : bottomInset + 20.0, 20.0);
+
+    Widget btn({required Widget child, bool active = false, bool enabled = true, VoidCallback? onTap}) {
+      return InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: enabled ? onTap : null,
+        child: Container(
+          width: 36,
+          height: 36,
+          alignment: Alignment.center,
+          decoration: active ? BoxDecoration(color: Colors.white.withValues(alpha: 0.16), borderRadius: BorderRadius.circular(12)) : null,
+          child: Opacity(opacity: enabled ? 1.0 : 0.35, child: child),
+        ),
+      );
+    }
+
+    return Positioned(
+      left: 12,
+      right: 12,
+      bottom: bottomPos,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_pdfSizePickerOpen)
+            Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(color: const Color(0xEC1E1E22), borderRadius: BorderRadius.circular(16)),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (final sz in const [10, 12, 14, 16, 18, 22, 26, 32])
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 3),
+                        child: ChoiceChip(
+                          label: Text('$sz', style: TextStyle(fontSize: 12.5, color: (_pdfEditFontSize - sz).abs() < 0.6 ? Colors.white : Colors.white70)),
+                          selected: (_pdfEditFontSize - sz).abs() < 0.6,
+                          selectedColor: AppColors.signature,
+                          backgroundColor: Colors.white10,
+                          side: BorderSide.none,
+                          visualDensity: VisualDensity.compact,
+                          onSelected: (_) {
+                            setState(() {
+                              _pdfEditFontSize = sz.toDouble();
+                              _pdfSizePickerOpen = false;
+                            });
+                            _updateActivePdfEdit((c) => c.copyWith(fontSize: sz.toDouble()));
+                          },
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          if (_pdfColorPickerOpen)
+            Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(color: const Color(0xEC1E1E22), borderRadius: BorderRadius.circular(16)),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final col in _pdfColorPalette)
+                    GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          _pdfEditColor = col;
+                          _pdfColorPickerOpen = false;
+                        });
+                        _updateActivePdfEdit((c) => c.copyWith(color: col));
+                      },
+                      child: Container(
+                        width: 24,
+                        height: 24,
+                        margin: const EdgeInsets.symmetric(horizontal: 4),
+                        decoration: BoxDecoration(
+                          color: col,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: _pdfEditColor == col ? AppColors.signature : Colors.white54, width: _pdfEditColor == col ? 2.4 : 1.0),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          Material(
+            color: const Color(0xEC1C1C1E),
+            elevation: 6,
+            borderRadius: BorderRadius.circular(24),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    btn(
+                      active: _pdfEditBold,
+                      onTap: () {
+                        setState(() => _pdfEditBold = !_pdfEditBold);
+                        _updateActivePdfEdit((c) => c.copyWith(bold: _pdfEditBold));
+                      },
+                      child: Text('B', style: TextStyle(color: _pdfEditBold ? AppColors.signature : Colors.white, fontSize: 16, fontWeight: FontWeight.w900)),
+                    ),
+                    btn(
+                      active: _pdfEditItalic,
+                      onTap: () {
+                        setState(() => _pdfEditItalic = !_pdfEditItalic);
+                        _updateActivePdfEdit((c) => c.copyWith(italic: _pdfEditItalic));
+                      },
+                      child: Text('I', style: TextStyle(color: _pdfEditItalic ? AppColors.signature : Colors.white, fontSize: 16, fontStyle: FontStyle.italic, fontWeight: FontWeight.w700)),
+                    ),
+                    btn(
+                      active: _pdfEditUnderline,
+                      onTap: () {
+                        setState(() => _pdfEditUnderline = !_pdfEditUnderline);
+                        _updateActivePdfEdit((c) => c.copyWith(underline: _pdfEditUnderline));
+                      },
+                      child: Text('U', style: TextStyle(color: _pdfEditUnderline ? AppColors.signature : Colors.white, fontSize: 15.5, decoration: TextDecoration.underline, decorationColor: _pdfEditUnderline ? AppColors.signature : Colors.white, fontWeight: FontWeight.w700)),
+                    ),
+                    btn(
+                      active: _pdfSizePickerOpen,
+                      onTap: () => setState(() {
+                        _pdfSizePickerOpen = !_pdfSizePickerOpen;
+                        _pdfColorPickerOpen = false;
+                      }),
+                      child: Text('${_pdfEditFontSize.round()}', style: TextStyle(color: _pdfSizePickerOpen ? AppColors.signature : Colors.white, fontSize: 13.5, fontWeight: FontWeight.w700)),
+                    ),
+                    btn(
+                      active: _pdfColorPickerOpen,
+                      onTap: () => setState(() {
+                        _pdfColorPickerOpen = !_pdfColorPickerOpen;
+                        _pdfSizePickerOpen = false;
+                      }),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text('A', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w800, height: 1.0)),
+                          const SizedBox(height: 2),
+                          Container(width: 14, height: 3.5, decoration: BoxDecoration(color: _pdfEditColor, borderRadius: BorderRadius.circular(2), border: Border.all(color: Colors.white54, width: 0.6))),
+                        ],
+                      ),
+                    ),
+                    btn(
+                      enabled: _pdfUndoStack.isNotEmpty,
+                      onTap: _undoPdfEdit,
+                      child: const Icon(Icons.undo, color: Colors.white, size: 18),
+                    ),
+                    btn(
+                      enabled: _pdfRedoStack.isNotEmpty,
+                      onTap: _redoPdfEdit,
+                      child: const Icon(Icons.redo, color: Colors.white, size: 18),
+                    ),
+                    const SizedBox(width: 4),
+                    TextButton(
+                      onPressed: _pdfSaving ? null : _cancelPdfEditMode,
+                      style: TextButton.styleFrom(minimumSize: const Size(44, 34), padding: const EdgeInsets.symmetric(horizontal: 8)),
+                      child: Text(_tr('취소', 'Cancel', '取消', 'キャンセル'), style: const TextStyle(color: Colors.white70, fontSize: 13.5, fontWeight: FontWeight.w600)),
+                    ),
+                    TextButton(
+                      onPressed: _pdfSaving ? null : _savePdfEdits,
+                      style: TextButton.styleFrom(minimumSize: const Size(44, 34), padding: const EdgeInsets.symmetric(horizontal: 10)),
+                      child: _pdfSaving
+                          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : Text(_tr('저장', 'Save', '保存', '保存'), style: const TextStyle(color: AppColors.signature, fontSize: 13.5, fontWeight: FontWeight.w800)),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
   final GlobalKey _textLayerKey = GlobalKey();
   final Map<int, List<Map<String, Object?>>> _textLineCache = {};
   int _textSelGen = 0;
@@ -2224,6 +2795,14 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
                 width: drawWidth,
                 height: drawHeight,
                 child: _pageMemoLayer(pageIndex, drawWidth, drawHeight, strokes),
+              ),
+            if (_isPdfEditMode)
+              Positioned(
+                left: drawLeft,
+                top: drawTop,
+                width: drawWidth,
+                height: drawHeight,
+                child: _pagePdfEditLayer(pageIndex, drawWidth, drawHeight),
               ),
 
           ],
@@ -2637,6 +3216,8 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
     SystemBars.leaveViewer();
     _book.dispose();
     _pdfZoomIdleTimer?.cancel();
+    _pdfEditCtrl.dispose();
+    _pdfEditFocus.dispose();
     _textSel.dispose();
     // 서재로 완전히 복귀할 때 방향이 초기화됨
     _zoomController.dispose();
@@ -2829,6 +3410,15 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
         },
         closeAfterTap: true,
       ),
+      if (_isPdfFile)
+        QuickToolItem(
+          id: 'edit',
+          icon: Icon(Icons.edit_note_rounded, color: _isPdfEditMode ? AppColors.signature : Colors.white, size: 20),
+          active: _isPdfEditMode,
+          tooltip: _tr('문서 편집', 'Edit Document', '编辑文档', '文書編集'),
+          onTap: _togglePdfEditMode,
+          closeAfterTap: true,
+        ),
       QuickToolItem(
         id: 'bookmark',
         icon: Icon(
@@ -2908,9 +3498,13 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
     final int viewItemCount = isSpread ? ((_totalPages + 1) ~/ 2) : _totalPages;
 
     return PopScope(
-      canPop: !_findOpen && !_isMemoMode,
+      canPop: !_findOpen && !_isMemoMode && !_isPdfEditMode,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
+        if (_isPdfEditMode) {
+          _cancelPdfEditMode();
+          return;
+        }
         if (_isMemoMode) {
           unawaited(() async {
             await _cancelMemoSession();
@@ -2980,7 +3574,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
                 },
                 child: GestureDetector(
                   behavior: HitTestBehavior.translucent,
-                  onTapUp: (d) => _onViewerTap(d.localPosition),
+                  onTapUp: _isPdfEditMode ? null : (d) => _onViewerTap(d.localPosition),
                   // PDF: 길게 누르면 그 쪽의 글을 고르고 복사하는 창 (그림으로만 된 쪽은 그림 속 글자를 읽음)
                   // PDF: 길게 누르면 그 자리의 낱말을 고르고 손잡이로 범위를 조절 → [복사 | 모두 선택 | 공유]
                   // (글자 정보가 없는 쪽은 그림 속 글자를 읽어 복사하는 창)
@@ -3145,6 +3739,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
           if (_showControls) _buildQuickToolBar(bottomInset),
           // 메모 도구 모음: 파일 도구 모음보다 위에 (아래에 둘 때는 도구 모음 바로 위)
           if (_isMemoMode) _buildMemoToolbar(bottomInset),
+          if (_isPdfEditMode) _buildPdfEditToolbar(bottomInset),
         ],
       ),
       ),
@@ -3181,4 +3776,82 @@ class _PdfPageLines {
   const _PdfPageLines(this.aspect, this.lines);
   final double aspect;
   final List<Map<String, Object?>> lines;
+}
+
+
+/// PDF 문서 편집 텍스트 항목 (쪽 기준 0~1 정규화 좌표)
+class _PdfTextEdit {
+  const _PdfTextEdit({
+    required this.id,
+    required this.page,
+    required this.x,
+    required this.y,
+    required this.w,
+    required this.h,
+    required this.text,
+    required this.fontSize,
+    required this.color,
+    required this.bold,
+    required this.italic,
+    required this.underline,
+    this.coverRect,
+  });
+
+  final int id;
+  final int page;
+  final double x, y, w, h;
+  final Rect? coverRect;
+  final String text;
+  final double fontSize;
+  final Color color;
+  final bool bold;
+  final bool italic;
+  final bool underline;
+
+  _PdfTextEdit copyWith({
+    double? x,
+    double? y,
+    double? w,
+    double? h,
+    String? text,
+    double? fontSize,
+    Color? color,
+    bool? bold,
+    bool? italic,
+    bool? underline,
+  }) {
+    return _PdfTextEdit(
+      id: id,
+      page: page,
+      x: x ?? this.x,
+      y: y ?? this.y,
+      w: w ?? this.w,
+      h: h ?? this.h,
+      coverRect: coverRect,
+      text: text ?? this.text,
+      fontSize: fontSize ?? this.fontSize,
+      color: color ?? this.color,
+      bold: bold ?? this.bold,
+      italic: italic ?? this.italic,
+      underline: underline ?? this.underline,
+    );
+  }
+
+  Map<String, Object?> toMap() => {
+        'page': page,
+        'x': x,
+        'y': y,
+        'w': w,
+        'h': h,
+        if (coverRect != null) 'coverX': coverRect!.left,
+        if (coverRect != null) 'coverY': coverRect!.top,
+        if (coverRect != null) 'coverW': coverRect!.width,
+        if (coverRect != null) 'coverH': coverRect!.height,
+        'text': text,
+        'fontSize': fontSize,
+        'color': color.toARGB32(),
+        'bold': bold,
+        'italic': italic,
+        'underline': underline,
+      };
 }
