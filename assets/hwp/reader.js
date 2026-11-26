@@ -585,7 +585,7 @@ function vPinchEnd(e) {
   const maxSt = Math.max(0, vhost.scrollHeight - vhost.clientHeight);
   const maxSl = Math.max(0, vhost.scrollWidth - vhost.clientWidth);
   vhost.scrollTop = Math.max(0, Math.min(maxSt, vTops[p.i] + p.fy * sh - p.y));
-  if (editModeOn) { if (hwpScrollHideTimer) clearTimeout(hwpScrollHideTimer); hwpScrollHideTimer = setTimeout(() => { hwpScrollHideTimer = 0; document.body.classList.remove('eri-scrolling'); }, 180); }
+  if (editModeOn) { if (editSelection) renderEditSelection(); else if (editCursor) updateCaretPos(); if (hwpScrollHideTimer) clearTimeout(hwpScrollHideTimer); hwpScrollHideTimer = setTimeout(() => { hwpScrollHideTimer = 0; document.body.classList.remove('eri-scrolling'); }, 180); }
   vhost.scrollLeft = Math.max(0, Math.min(maxSl, vLeft() + p.fx * vPageWidth() - p.x));
   vUpdate();
   lastPinchEndedAt = Date.now();
@@ -1701,10 +1701,9 @@ function mountCaretHandle(frame, leftPct, topPct) {
   const cx = Math.max(1, Math.min(99, Number(leftPct) || 0));
   const cy = Math.max(1, Math.min(99, Number(topPct) || 0));
   if (vertical && vinner) {
-    const vr = vinner.getBoundingClientRect();
-    const fr = frame.getBoundingClientRect();
-    const lx = (fr.left - vr.left) + (cx / 100) * fr.width;
-    const ly = (fr.top - vr.top) + (cy / 100) * fr.height;
+    const slot = frame.closest?.('.vslot') || frame;
+    const lx = slot.offsetLeft + (cx / 100) * slot.offsetWidth;
+    const ly = slot.offsetTop + (cy / 100) * slot.offsetHeight;
     caretHandleEl.style.left = `${lx}px`;
     caretHandleEl.style.top = `${ly}px`;
     if (caretHandleEl.parentNode !== vinner) vinner.appendChild(caretHandleEl);
@@ -2203,10 +2202,9 @@ function mountSelHandle(frame, kind, leftPx, topPx) {
   const cx = Math.max(1, Math.min(99, Number(leftPx) || 0));
   const cy = Math.max(1, Math.min(99, Number(topPx) || 0));
   if (vertical && vinner) {
-    const vr = vinner.getBoundingClientRect();
-    const fr = frame.getBoundingClientRect();
-    const lx = (fr.left - vr.left) + (cx / 100) * fr.width;
-    const ly = (fr.top - vr.top) + (cy / 100) * fr.height;
+    const slot = frame.closest?.('.vslot') || frame;
+    const lx = slot.offsetLeft + (cx / 100) * slot.offsetWidth;
+    const ly = slot.offsetTop + (cy / 100) * slot.offsetHeight;
     h.style.left = `${lx}px`;
     h.style.top = `${ly}px`;
     if (h.parentNode !== vinner) vinner.appendChild(h);

@@ -1238,7 +1238,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           controller: _hwpController,
           editMode: _isHwpEditMode,
           hasSelection: _hwpHasSelection,
-          zoomed: _epubZoomScale > 1.03,
+          zoomed: (_epubZoomScale - 1.0).abs() > 0.03,
           onEditState: (st) {
             if (!mounted) return;
             Color parsed = _hwpTextColor;
@@ -1285,7 +1285,8 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                 _docSel.scaleAround(ratio, cx, cy);
                 if (!_docCopyScrolling && mounted) setState(() => _docCopyScrolling = true);
                 _docCopyScrollHideTimer?.cancel();
-                _docCopyScrollHideTimer = Timer(const Duration(milliseconds: 180), () {
+                _docCopyScrollHideTimer = Timer(const Duration(milliseconds: 220), () {
+                  unawaited(_resnapDocSelToVisible());
                   if (mounted && _docCopyScrolling) setState(() => _docCopyScrolling = false);
                 });
               } else if ((top - prev[0]).abs() > 0.5) {
@@ -2809,6 +2810,23 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     _docCopyAutoScrollTimer?.cancel();
     _docCopyAutoScrollTimer = null;
     _docCopyDragGlobal = null;
+  }
+
+  Future<void> _resnapDocSelToVisible() async {
+    if (!mounted || !_docSel.active || !_docVertical) return;
+    final box = _docSelKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+    try {
+      final raw = await _hwpController.visibleTextBoxes();
+      if (!mounted || !_docSel.active || raw.isEmpty) return;
+      final s = box.size;
+      double v(Object? x) => (x as num?)?.toDouble() ?? 0;
+      final fresh = PageTextSelection.linesFromWords([
+        for (final b in raw)
+          SelLine('${b['t'] ?? ''}', Rect.fromLTWH(v(b['x']) * s.width, v(b['y']) * s.height, v(b['w']) * s.width, v(b['h']) * s.height)),
+      ]);
+      _docSel.resnapToVisible(fresh);
+    } catch (_) {}
   }
 
   void _onDocCopyHandleUpdate(bool start, Offset globalPos) {

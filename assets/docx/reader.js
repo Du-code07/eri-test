@@ -838,7 +838,7 @@ function vPinchEnd(e) {
   const sh = Math.max(1, vTops[p.i + 1] - vTops[p.i] - V_GAP);
   vhost.scrollTop = vTops[p.i] + p.fy * sh - p.y;
   vhost.scrollLeft = vLeft() + p.fx * vPageWidth() - p.x;
-  if (docxEditMode) { if (docxScrollHideTimer) clearTimeout(docxScrollHideTimer); docxScrollHideTimer = setTimeout(() => { docxScrollHideTimer = 0; document.body.classList.remove('eri-scrolling'); }, 180); }
+  if (docxEditMode) { if (docxSelRange && !docxSelRange.collapsed) docxRenderSelection(); else if (docxCursor) docxRenderCaret(); if (docxScrollHideTimer) clearTimeout(docxScrollHideTimer); docxScrollHideTimer = setTimeout(() => { docxScrollHideTimer = 0; document.body.classList.remove('eri-scrolling'); }, 180); }
   vUpdate();
   vReportMetrics();
 }
@@ -1098,8 +1098,7 @@ function markDocxScrolling() {
 }
 function vSchedule() {
   markDocxScrolling();
-  if (!vRaf) vRaf = requestAnimationFrame(() => { vRaf = 0; vUpdate(); });
-  if (!vMetricsTimer) vMetricsTimer = setTimeout(() => { vMetricsTimer = 0; vReportMetrics(); }, 30);
+  if (!vRaf) vRaf = requestAnimationFrame(() => { vRaf = 0; vUpdate(); vReportMetrics(); });
 }
 function vReportMetrics() {
   if (vhost) emit('scrollMetrics', { top: vhost.scrollTop, height: vhost.scrollHeight, client: vhost.clientHeight, zoom: vZoom });
@@ -1833,10 +1832,9 @@ function docxMountCaretHandle(pageEl, leftPct, topPct) {
   const cx = Math.max(1, Math.min(99, Number(leftPct) || 0));
   const cy = Math.max(1, Math.min(99, Number(topPct) || 0));
   if (vertical && vinner) {
-    const vr = vinner.getBoundingClientRect();
-    const fr = pageEl.getBoundingClientRect();
-    const lx = (fr.left - vr.left) + (cx / 100) * fr.width;
-    const ly = (fr.top - vr.top) + (cy / 100) * fr.height;
+    const slot = pageEl.closest?.('.vslot') || pageEl;
+    const lx = slot.offsetLeft + (cx / 100) * slot.offsetWidth;
+    const ly = slot.offsetTop + (cy / 100) * slot.offsetHeight;
     docxCaretHandleEl.style.left = `${lx}px`;
     docxCaretHandleEl.style.top = `${ly}px`;
     if (docxCaretHandleEl.parentNode !== vinner) vinner.appendChild(docxCaretHandleEl);
@@ -2247,10 +2245,9 @@ function docxMountSelHandle(pageEl, side, relX, relY) {
   const cx = Math.max(1, Math.min(99, Number(relX) || 0));
   const cy = Math.max(1, Math.min(99, Number(relY) || 0));
   if (vertical && vinner) {
-    const vr = vinner.getBoundingClientRect();
-    const fr = pageEl.getBoundingClientRect();
-    const lx = (fr.left - vr.left) + (cx / 100) * fr.width;
-    const ly = (fr.top - vr.top) + (cy / 100) * fr.height;
+    const slot = pageEl.closest?.('.vslot') || pageEl;
+    const lx = slot.offsetLeft + (cx / 100) * slot.offsetWidth;
+    const ly = slot.offsetTop + (cy / 100) * slot.offsetHeight;
     h.style.left = `${lx}px`;
     h.style.top = `${ly}px`;
     if (h.parentNode !== vinner) vinner.appendChild(h);
@@ -2293,8 +2290,12 @@ function docxRenderSelection() {
             sub.setStart(tn, sOff);
             sub.setEnd(tn, eOff);
             for (const r of sub.getClientRects()) {
-              if (r.width > 0.5 && r.height > 0.5 && r.height < 140) {
-                rawRects.push({ left: r.left, right: r.right, top: r.top, bottom: r.bottom, midY: (r.top + r.bottom) * 0.5 });
+              if (r.width > 0.5 && r.width < pw * 0.96 && r.height > 0.5 && r.height < 64) {
+                const cl = Math.max(pr.left, r.left);
+                const cr = Math.min(pr.right, r.right);
+                if (cr - cl > 0.5) {
+                  rawRects.push({ left: cl, right: cr, top: r.top, bottom: r.bottom, midY: (r.top + r.bottom) * 0.5 });
+                }
               }
             }
           }
@@ -2308,7 +2309,7 @@ function docxRenderSelection() {
       for (const r of rawRects) {
         const prev = merged.length > 0 ? merged[merged.length - 1] : null;
         const minH = prev ? Math.min(prev.bottom - prev.top, r.bottom - r.top) : 0;
-        if (prev && Math.abs(r.midY - prev.midY) <= Math.max(4, minH * 0.55)) {
+        if (prev && Math.abs(r.midY - prev.midY) <= Math.max(3, minH * 0.45) && r.left <= prev.right + 28) {
           prev.left = Math.min(prev.left, r.left);
           prev.right = Math.max(prev.right, r.right);
           prev.top = Math.min(prev.top, r.top);

@@ -206,6 +206,27 @@ class PageTextSelection extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 스크롤 보기 핀치 줌 후 실제 화면 텍스트 박스 좌표로 선택 범위를 정확히 재정렬
+  bool resnapToVisible(List<SelLine> fresh) {
+    if (!active || fresh.isEmpty) return false;
+    final (sL, sC, eL, eC) = _range;
+    final String startLineText = lines[sL].text;
+    final String endLineText = lines[eL].text;
+    int newSL = -1, newEL = -1;
+    for (int i = 0; i < fresh.length; i++) {
+      if (newSL < 0 && fresh[i].text == startLineText) newSL = i;
+      if (fresh[i].text == endLineText) newEL = i;
+    }
+    if (newSL < 0 || newEL < 0 || newEL < newSL) return false;
+    lines = fresh;
+    _aLine = newSL;
+    _aChar = sC.clamp(0, lines[newSL].text.length);
+    _bLine = newEL;
+    _bChar = eC.clamp(0, lines[newEL].text.length);
+    notifyListeners();
+    return true;
+  }
+
   /// 스크롤 보기 핀치 줌 인·아웃 시 하이라이트 영역도 배율에 맞게 함께 확대·축소
   void scaleAround(double factor, double anchorX, double anchorY) {
     if (!active || (factor - 1.0).abs() < 0.001) return;
