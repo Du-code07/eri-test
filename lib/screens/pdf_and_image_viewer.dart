@@ -2559,6 +2559,40 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
     );
   }
 
+  final GlobalKey _textLayerKey = GlobalKey();
+  final Map<int, List<Map<String, Object?>>> _textLineCache = {};
+  int _textSelGen = 0;
+
+  Offset? _textLocal(Offset global) {
+    final box = _textLayerKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return null;
+    return box.globalToLocal(global);
+  }
+
+  Future<void> _startTextSelect(Offset global) async {
+    if (_isMemoMode || _activeTouchPointerIds.length >= 2 || _pageModeScroll) return;
+    final box = _textLayerKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+    final int gen = ++_textSelGen;
+    final pages = _visiblePageRects(box.size);
+    final lines = <SelLine>[];
+    for (final (idx, rect) in pages) {
+      final ls = await _selectableLines(idx);
+      for (final l in ls) {
+        double v(String k) => (l[k] as num?)?.toDouble() ?? 0;
+        final String t = '${l['t'] ?? ''}';
+        if (t.trim().isEmpty) continue;
+        lines.add(SelLine(t, Rect.fromLTRB(rect.left + v('x0') * rect.width, rect.top + v('y') * rect.height, rect.left + v('x1') * rect.width, rect.top + (v('y') + v('h')) * rect.height)));
+      }
+    }
+    if (!mounted || gen != _textSelGen) return;
+    final local = _textLocal(global);
+    _textSel.lines = lines;
+    if (local != null && _textSel.selectWordAt(local)) {
+      HapticFeedback.selectionClick();
+    }
+  }
+
   BookPaper? _curlPaper(bool spread, bool fromRight, Size size) {
     Rect? fit(int index, Rect box, int side) => _pageRectIn(index, box, side);
 
