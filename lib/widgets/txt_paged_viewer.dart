@@ -283,6 +283,7 @@ class _TxtPagedViewerState extends State<TxtPagedViewer> {
         size: TxtPageDocument.paperSize,
         // EPUB처럼 글을 길게 눌러 골라 복사
         child: WordSelectionLayer(
+          pageIndex: page,
           tr: _tr,
           onEdgeAutoScroll: widget.scroll ? (dy) => widget.scrollController?.scrollByDelta(dy) : null,
           loadWords: () async => _wordsOf(text),

@@ -305,7 +305,7 @@ class _GuideRunnerState extends State<_GuideRunner> with TickerProviderStateMixi
                   'Edit text in the document',
                   '可以编辑文档中的文字',
                   '文書の文字を編集できます')),
-          _Step('bookmark', tr('북마크', 'Bookmarks', '书签', 'ブックマーク'),
+          _Step('bookmark', tr('북마크 (EPUB·TXT 미지원)', 'Bookmarks (Not for EPUB/TXT)', '书签（不支持 EPUB·TXT）', 'ブックマーク（EPUB・TXT非対応）'),
               tr('지금 보고 있는 페이지를 북마크해 두고, 목록에서 언제든지 바로 이동할 수 있어요',
                   'Bookmark the current page and jump back anytime from the list',
                   '将当前页面加入书签，随时从列表中直接跳转',
@@ -352,11 +352,16 @@ class _GuideRunnerState extends State<_GuideRunner> with TickerProviderStateMixi
               tr('방금 그리거나 지운 작업을 한 단계 되돌려요', 'Undo the last draw or erase action', '撤销上一步绘制或擦除操作', '直前に描いたり消したりした操作を1段階元に戻します')),
           _Step('redo', tr('다시 실행', 'Redo', '重做', 'やり直し'),
               tr('방금 되돌린 작업을 다시 실행해요', 'Redo the action you just undid', '重新执行刚才撤销的操作', '直前に元に戻した操作をやり直します')),
-          _Step('done', tr('완료', 'Done', '完成', '完了'),
-              tr('메모를 하고 나면 완료 버튼을 눌러야 저장돼요\n(메모 도구 막대는 길게 눌러 위치를 변경할 수 있어요)',
-                  'Tap Done after taking notes to save them\n(Long-press the memo tool bar to change its position)',
-                  '记完笔记后需点击完成按钮才会保存\n（长按笔记工具栏可更改位置）',
-                  'メモをしたあと完了ボタンを押すと保存されます\n（メモツールバーは長押しで位置を変えられます）')),
+          _Step('cancel', tr('취소', 'Cancel', '取消', 'キャンセル'),
+              tr('메모한 내용을 저장하지 않고 취소해요',
+                  'Discard your memo changes without saving',
+                  '不保存笔记内容直接取消',
+                  'メモの内容を保存せずにキャンセルします')),
+          _Step('save', tr('저장', 'Save', '保存', '保存'),
+              tr('메모한 내용을 저장하고 메모 모드를 끝내요\n(메모 도구 막대는 길게 눌러 위치를 변경할 수 있어요)',
+                  'Save your notes and exit memo mode\n(Long-press the memo tool bar to change its position)',
+                  '保存笔记内容并结束笔记模式\n（长按笔记工具栏可更改位置）',
+                  'メモを保存してメモモードを終了します\n（メモツールバーは長押しで位置を変えられます）')),
         ];
       case _GuideKind.docEdit:
         return [
@@ -524,7 +529,22 @@ class _GuideRunnerState extends State<_GuideRunner> with TickerProviderStateMixi
               ],
             ),
             const SizedBox(height: 4),
-            Text(step.title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+            Builder(builder: (_) {
+              final int pIdx = step.title.contains(' (') ? step.title.indexOf(' (') : step.title.indexOf('（');
+              if (pIdx <= 0) {
+                return Text(step.title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800));
+              }
+              final String head = step.title.substring(0, pIdx);
+              final String tail = step.title.substring(pIdx);
+              return Text.rich(
+                TextSpan(
+                  children: [
+                    TextSpan(text: head, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                    TextSpan(text: tail, style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: cs.onSurfaceVariant)),
+                  ],
+                ),
+              );
+            }),
             const SizedBox(height: 6),
             Padding(
               padding: const EdgeInsets.only(right: 6),
@@ -1068,11 +1088,19 @@ class _MemoMock extends StatelessWidget {
                   b('undo', (c) => Icon(Icons.undo, color: c, size: 16)),
                   b('redo', (c) => Icon(Icons.redo, color: Colors.white30, size: 16)),
                   SizedBox(
-                    key: k('done'),
+                    key: k('cancel'),
+                    height: kMemoToolExtent,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: Center(child: Text(tr('취소', 'Cancel', '取消', 'キャンセル'), style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600))),
+                    ),
+                  ),
+                  SizedBox(
+                    key: k('save'),
                     height: kMemoToolExtent,
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 11),
-                      child: Center(child: Text(tr('완료', 'Done', '完成', '完了'), style: const TextStyle(color: AppColors.signature, fontSize: 14, fontWeight: FontWeight.w600))),
+                      child: Center(child: Text(tr('저장', 'Save', '保存', '保存'), style: const TextStyle(color: AppColors.signature, fontSize: 14, fontWeight: FontWeight.w600))),
                     ),
                   ),
                 ]),

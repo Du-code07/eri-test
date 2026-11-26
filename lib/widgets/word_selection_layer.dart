@@ -21,7 +21,7 @@ class SelectableWord {
   }
 }
 
-/// 한글·워드 파일처럼 글을 길게 눌러 고르기:
+/// 한글·워드 파일처럼 글을 길게 눌러 고르기 (페이지 경계를 넘어 다음/이전 페이지까지 확장 지원):
 /// 길게 누르면 그 낱말이 골라지며 양쪽 물방울 손잡이와 [복사 | 모두 선택 | 공유] 막대가 바로 표시됨.
 /// 하이라이트가 있는 상태에서도 스크롤·줌이 자유롭게 되며, 화면이 움직이는 동안은 손잡이가 잠깐 숨겨졌다가 멈추면 다시 나타남.
 class WordSelectionLayer extends StatefulWidget {
@@ -30,9 +30,13 @@ class WordSelectionLayer extends StatefulWidget {
     required this.loadWords,
     required this.tr,
     required this.child,
+    this.pageIndex = 0,
     this.highlight = '',
     this.onEdgeAutoScroll,
   });
+
+  /// 이 층이 속한 쪽 번호 (스크롤·두 쪽 보기에서 페이지 간 드래그 확장용)
+  final int pageIndex;
 
   /// 파일 내 단어 찾기에서 찾은 낱말을 형광펜으로 (빈 글이면 없음)
   final String highlight;
@@ -64,22 +68,198 @@ class WordSelectionLayer extends StatefulWidget {
   }
 
   static bool get locked => active.value || dragging.value;
-  static final List<VoidCallback> _clearers = [];
-  static BuildContext? _activeContext;
 
-  /// 이 화면 자리가 글을 골라 둔 쪽 안인가 (밖을 누르면 고른 글을 지움)
+  // ── 다중 페이지 선택 상태 공유 (PDF·TXT 스크롤/두 쪽 보기에서 페이지 넘어 드래그 지원) ──
+  static final Map<int, _WordSelectionLayerState> _pages = {};
+  static final Map<int, List<SelectableWord>> _wordCache = {};
+  static int? _selAPage, _selAWord, _selBPage, _selBWord;
+  static bool _selMenu = false;
+  static int? _dragPointer;
+  static bool _dragStart = false;
+  static Offset? _dragGlobal;
+  static Timer? _autoScrollTimer;
+  static void Function(double dy)? _activeAutoScroll;
+
+  static bool get _hasSelection => _selAPage != null && _selAWord != null && _selBPage != null && _selBWord != null;
+
+  static (int, int, int, int) get _orderedRange {
+    final ap = _selAPage!, aw = _selAWord!, bp = _selBPage!, bw = _selBWord!;
+    final bool forward = ap < bp || (ap == bp && aw <= bw);
+    return forward ? (ap, aw, bp, bw) : (bp, bw, ap, aw);
+  }
+
+  static void _notifyAllPages() {
+    for (final st in List<_WordSelectionLayerState>.of(_pages.values)) {
+      if (st.mounted) st._refresh();
+    }
+  }
+
+  /// 이 화면 자리가 글을 골라 둔 쪽들 안인가 (밖을 누르면 고른 글을 지움)
   static bool containsGlobal(Offset global) {
-    final box = _activeContext?.findRenderObject() as RenderBox?;
-    if (box == null || !box.attached) return false;
-    final local = box.globalToLocal(global);
-    return (Offset.zero & box.size).inflate(44).contains(local);
+    if (!_hasSelection) return false;
+    final (loP, _, hiP, _) = _orderedRange;
+    for (final entry in _pages.entries) {
+      if (entry.key < loP || entry.key > hiP) continue;
+      final box = entry.value.context.findRenderObject() as RenderBox?;
+      if (box == null || !box.attached) continue;
+      final local = box.globalToLocal(global);
+      if ((Offset.zero & box.size).inflate(44).contains(local)) return true;
+    }
+    return false;
   }
 
   /// 골라 둔 글을 모두 지움
   static void clearAll() {
-    for (final c in List<VoidCallback>.of(_clearers)) {
-      c();
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
+    _dragPointer = null;
+    _dragGlobal = null;
+    _activeAutoScroll = null;
+    final had = _hasSelection;
+    _selAPage = _selAWord = _selBPage = _selBWord = null;
+    _selMenu = false;
+    active.value = false;
+    dragging.value = false;
+    scrolling.value = false;
+    if (had) _notifyAllPages();
+  }
+
+  static String _selectedTextAll() {
+    if (!_hasSelection) return '';
+    final (loP, loW, hiP, hiW) = _orderedRange;
+    final buf = StringBuffer();
+    for (int p = loP; p <= hiP; p++) {
+      final words = _wordCache[p];
+      if (words == null || words.isEmpty) continue;
+      final int s = (p == loP ? loW : 0).clamp(0, words.length - 1);
+      final int e = (p == hiP ? hiW : words.length - 1).clamp(0, words.length - 1);
+      if (p > loP && buf.isNotEmpty) buf.write('\n');
+      for (int i = s; i <= e; i++) {
+        final w = words[i];
+        if (i > s) {
+          final prev = words[i - 1].rect;
+          final newLine = w.rect.top > prev.bottom - prev.height * 0.3 || w.rect.left < prev.left - prev.height;
+          if (newLine) {
+            buf.write('\n');
+          } else if (w.rect.left - prev.right > prev.height * 0.15) {
+            buf.write(' ');
+          }
+        }
+        buf.write(w.text);
+      }
     }
+    return buf.toString();
+  }
+
+  /// 화면 좌표 [global]이 가리키는 페이지와 낱말을 찾아 선택 끝점을 이동 (다른 페이지로 자연스럽게 넘어감)
+  static void _updateDragAcrossPages(Offset global) {
+    if (!_hasSelection || _pages.isEmpty) return;
+    _WordSelectionLayerState? target;
+    double bestPageDist = double.infinity;
+    final sortedKeys = _pages.keys.toList()..sort();
+    for (final k in sortedKeys) {
+      final st = _pages[k]!;
+      if (!st.mounted) continue;
+      final box = st.context.findRenderObject() as RenderBox?;
+      if (box == null || !box.attached || !box.hasSize) continue;
+      final tl = box.localToGlobal(Offset.zero);
+      final br = box.localToGlobal(Offset(box.size.width, box.size.height));
+      final top = math.min(tl.dy, br.dy);
+      final bottom = math.max(tl.dy, br.dy);
+      final left = math.min(tl.dx, br.dx);
+      final right = math.max(tl.dx, br.dx);
+      // 손가락이 손잡이를 가리지 않게 24px 위 기준
+      final double py = global.dy - 24.0;
+      final double dy = py < top ? top - py : (py > bottom ? py - bottom : 0.0);
+      final double dx = global.dx < left ? left - global.dx : (global.dx > right ? global.dx - right : 0.0);
+      final double dist = dy * 4.0 + dx;
+      if (dist < bestPageDist) {
+        bestPageDist = dist;
+        target = st;
+      }
+    }
+    if (target == null) return;
+    final int targetPage = target.widget.pageIndex;
+    final words = target._words;
+    if (words == null) {
+      // 아직 단어가 로드되지 않은 다음 페이지면 비동기로 로드 후 즉시 반영
+      target._ensureWords().then((loaded) {
+        if (loaded.isNotEmpty && _dragPointer != null && _dragGlobal != null) {
+          _updateDragAcrossPages(_dragGlobal!);
+        }
+      });
+      return;
+    }
+    if (words.isEmpty) return;
+    final box = target.context.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+    final double inv = 1.0 / target._visualScale();
+    final Offset local = box.globalToLocal(global) - Offset(0, 24.0 * inv);
+    final int? wi = target._wordAt(local);
+    if (wi == null) return;
+
+    final (loP, loW, hiP, hiW) = _orderedRange;
+    if (_dragStart) {
+      if (_selAPage == hiP && _selAWord == hiW && _selBPage == targetPage && _selBWord == wi) return;
+      _selAPage = hiP;
+      _selAWord = hiW;
+      _selBPage = targetPage;
+      _selBWord = wi;
+    } else {
+      if (_selAPage == loP && _selAWord == loW && _selBPage == targetPage && _selBWord == wi) return;
+      _selAPage = loP;
+      _selAWord = loW;
+      _selBPage = targetPage;
+      _selBWord = wi;
+    }
+    // 중간 페이지 단어들도 캐시해 두어 복사 시 누락 방지
+    final (nLoP, _, nHiP, _) = _orderedRange;
+    for (int p = nLoP; p <= nHiP; p++) {
+      final pst = _pages[p];
+      if (pst != null && pst._words == null) {
+        unawaited(pst._ensureWords().then((_) => _notifyAllPages()));
+      }
+    }
+    _notifyAllPages();
+  }
+
+  static void _checkEdgeAutoScroll(BuildContext ctx, Offset global) {
+    final cb = _activeAutoScroll;
+    if (cb == null) return;
+    final double screenH = MediaQuery.sizeOf(ctx).height;
+    const double edge = 76.0;
+    double step = 0;
+    if (global.dy > screenH - edge) {
+      step = ((global.dy - (screenH - edge)) / edge).clamp(0.2, 1.0) * 14.0;
+    } else if (global.dy < edge) {
+      step = -((edge - global.dy) / edge).clamp(0.2, 1.0) * 14.0;
+    }
+    if (step == 0) {
+      _autoScrollTimer?.cancel();
+      _autoScrollTimer = null;
+      return;
+    }
+    _autoScrollTimer ??= Timer.periodic(const Duration(milliseconds: 24), (_) {
+      if (_dragPointer == null || _dragGlobal == null || _activeAutoScroll == null) {
+        _autoScrollTimer?.cancel();
+        _autoScrollTimer = null;
+        return;
+      }
+      final g = _dragGlobal!;
+      double dy = 0;
+      if (g.dy > screenH - edge) {
+        dy = ((g.dy - (screenH - edge)) / edge).clamp(0.2, 1.0) * 14.0;
+      } else if (g.dy < edge) {
+        dy = -((edge - g.dy) / edge).clamp(0.2, 1.0) * 14.0;
+      }
+      if (dy == 0) {
+        _autoScrollTimer?.cancel();
+        _autoScrollTimer = null;
+        return;
+      }
+      _activeAutoScroll!(dy);
+      _updateDragAcrossPages(g);
+    });
   }
 
   @override
@@ -88,30 +268,45 @@ class WordSelectionLayer extends StatefulWidget {
 
 class _WordSelectionLayerState extends State<WordSelectionLayer> {
   List<SelectableWord>? _words;
-  int? _a, _b; // 고른 범위 (낱말 번호)
-  bool _menu = false;
   Size _size = Size.zero;
 
-  int? _dragPointer;
-  bool _dragStart = false;
-  Offset? _dragGlobal;
-  Timer? _autoScrollTimer;
+  void _refresh() {
+    if (mounted) setState(() {});
+  }
 
   @override
   void initState() {
     super.initState();
-    WordSelectionLayer._clearers.add(_clear);
+    WordSelectionLayer._pages[widget.pageIndex] = this;
     WordSelectionLayer.scrolling.addListener(_onScrollState);
+    if (WordSelectionLayer._wordCache.containsKey(widget.pageIndex)) {
+      _words = WordSelectionLayer._wordCache[widget.pageIndex];
+    }
     _loadForHighlight();
+    // 이미 다른 페이지에서 확장돼 이 페이지가 선택 범위에 포함돼 있으면 즉시 단어 로드
+    if (WordSelectionLayer._hasSelection && _words == null) {
+      final (loP, _, hiP, _) = WordSelectionLayer._orderedRange;
+      if (widget.pageIndex >= loP && widget.pageIndex <= hiP) {
+        unawaited(_ensureWords().then((_) => _refresh()));
+      }
+    }
   }
 
   void _onScrollState() {
-    if (mounted && _a != null) setState(() {});
+    if (mounted && WordSelectionLayer._hasSelection) setState(() {});
   }
 
   @override
   void didUpdateWidget(covariant WordSelectionLayer oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.pageIndex != widget.pageIndex) {
+      if (WordSelectionLayer._pages[oldWidget.pageIndex] == this) {
+        WordSelectionLayer._pages.remove(oldWidget.pageIndex);
+      }
+      WordSelectionLayer._pages[widget.pageIndex] = this;
+      _words = WordSelectionLayer._wordCache[widget.pageIndex];
+      _hlFor = null;
+    }
     if (oldWidget.highlight != widget.highlight) {
       _hlFor = null;
       _loadForHighlight();
@@ -163,33 +358,11 @@ class _WordSelectionLayerState extends State<WordSelectionLayer> {
 
   @override
   void dispose() {
-    _stopAutoScroll();
     WordSelectionLayer.scrolling.removeListener(_onScrollState);
-    WordSelectionLayer._clearers.remove(_clear);
-    if (_a != null) WordSelectionLayer.active.value = false;
-    if (_dragPointer != null) WordSelectionLayer.dragging.value = false;
-    super.dispose();
-  }
-
-  void _stopAutoScroll() {
-    _autoScrollTimer?.cancel();
-    _autoScrollTimer = null;
-  }
-
-  void _clear() {
-    _stopAutoScroll();
-    _dragPointer = null;
-    if (_a == null) return;
-    if (WordSelectionLayer._activeContext == context) WordSelectionLayer._activeContext = null;
-    if (mounted) {
-      setState(() {
-        _a = _b = null;
-        _menu = false;
-      });
+    if (WordSelectionLayer._pages[widget.pageIndex] == this) {
+      WordSelectionLayer._pages.remove(widget.pageIndex);
     }
-    WordSelectionLayer.active.value = false;
-    WordSelectionLayer.dragging.value = false;
-    WordSelectionLayer.scrolling.value = false;
+    super.dispose();
   }
 
   Future<List<SelectableWord>> _ensureWords() async {
@@ -197,6 +370,7 @@ class _WordSelectionLayerState extends State<WordSelectionLayer> {
     if (w != null) return w;
     try {
       _words = await widget.loadWords();
+      WordSelectionLayer._wordCache[widget.pageIndex] = _words!;
     } catch (_) {
       _words = const [];
     }
@@ -223,61 +397,20 @@ class _WordSelectionLayerState extends State<WordSelectionLayer> {
     return best;
   }
 
-  int get _lo => (_a! < _b! ? _a : _b)!;
-  int get _hi => (_a! < _b! ? _b : _a)!;
-
-  String _selectedText() {
-    final words = _words;
-    if (words == null || _a == null) return '';
-    final buf = StringBuffer();
-    for (int i = _lo; i <= _hi; i++) {
-      final w = words[i];
-      if (i > _lo) {
-        final prev = words[i - 1].rect;
-        final newLine = w.rect.top > prev.bottom - prev.height * 0.3 || w.rect.left < prev.left - prev.height;
-        if (newLine) {
-          buf.write('\n');
-        } else if (w.rect.left - prev.right > prev.height * 0.15) {
-          buf.write(' ');
-        }
-      }
-      buf.write(w.text);
-    }
-    return buf.toString();
-  }
-
   Future<void> _start(Offset local) async {
     WordSelectionLayer.clearAll();
     await _ensureWords();
     final i = _wordAt(local);
     if (i == null || !mounted) return;
     HapticFeedback.selectionClick();
-    setState(() {
-      _a = _b = i;
-      _menu = true;
-    });
+    WordSelectionLayer._selAPage = widget.pageIndex;
+    WordSelectionLayer._selAWord = i;
+    WordSelectionLayer._selBPage = widget.pageIndex;
+    WordSelectionLayer._selBWord = i;
+    WordSelectionLayer._selMenu = true;
     WordSelectionLayer.active.value = true;
     WordSelectionLayer.scrolling.value = false;
-    WordSelectionLayer._activeContext = context;
-  }
-
-  void _extend(Offset local, {bool start = false}) {
-    if (_a == null) return;
-    final i = _wordAt(local);
-    if (i == null) return;
-    if (start && _b == i && _a == _hi) return;
-    if (!start && _b == i && _a == _lo) return;
-    setState(() {
-      if (start) {
-        final hi = _hi;
-        _a = hi;
-        _b = i;
-      } else {
-        final lo = _lo;
-        _a = lo;
-        _b = i;
-      }
-    });
+    WordSelectionLayer._notifyAllPages();
   }
 
   /// 현재 위젯이 FittedBox 등으로 축소/확대된 실제 배율 계산 (TXT 800x1100 종이 보정용)
@@ -288,52 +421,6 @@ class _WordSelectionLayerState extends State<WordSelectionLayer> {
     final x = box.localToGlobal(const Offset(100, 0));
     final s = (x - o).distance / 100.0;
     return s.isFinite && s > 0.15 ? s : 1.0;
-  }
-
-  void _updateDragAtGlobal(Offset global) {
-    final box = context.findRenderObject() as RenderBox?;
-    if (box == null || !box.hasSize) return;
-    final double inv = 1.0 / _visualScale();
-    // 손가락이 손잡이를 가리지 않게 화면 기준 24px 위의 글자를 가리킴
-    final Offset local = box.globalToLocal(global) - Offset(0, 24.0 * inv);
-    _extend(local, start: _dragStart);
-  }
-
-  void _checkEdgeAutoScroll(Offset global) {
-    final cb = widget.onEdgeAutoScroll;
-    if (cb == null) return;
-    final double screenH = MediaQuery.sizeOf(context).height;
-    const double edge = 76.0;
-    double step = 0;
-    if (global.dy > screenH - edge) {
-      step = ((global.dy - (screenH - edge)) / edge).clamp(0.2, 1.0) * 14.0;
-    } else if (global.dy < edge) {
-      step = -((edge - global.dy) / edge).clamp(0.2, 1.0) * 14.0;
-    }
-    if (step == 0) {
-      _stopAutoScroll();
-      return;
-    }
-    _autoScrollTimer ??= Timer.periodic(const Duration(milliseconds: 24), (_) {
-      if (!mounted || _dragPointer == null || _dragGlobal == null) {
-        _stopAutoScroll();
-        return;
-      }
-      final g = _dragGlobal!;
-      final double sh = MediaQuery.sizeOf(context).height;
-      double dy = 0;
-      if (g.dy > sh - edge) {
-        dy = ((g.dy - (sh - edge)) / edge).clamp(0.2, 1.0) * 14.0;
-      } else if (g.dy < edge) {
-        dy = -((edge - g.dy) / edge).clamp(0.2, 1.0) * 14.0;
-      }
-      if (dy == 0) {
-        _stopAutoScroll();
-        return;
-      }
-      cb(dy);
-      _updateDragAtGlobal(g);
-    });
   }
 
   Rect _px(Rect r) => Rect.fromLTWH(r.left * _size.width, r.top * _size.height, r.width * _size.width, r.height * _size.height);
@@ -350,77 +437,89 @@ class _WordSelectionLayerState extends State<WordSelectionLayer> {
       if (hl.isNotEmpty) {
         children.add(Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: _SelectionPainter([for (final r in hl) _px(r)], color: const Color(0x77FFC107))))));
       }
-      if (_a != null && words != null && words.isNotEmpty) {
-        final rects = [for (int i = _lo; i <= _hi; i++) _px(words[i].rect)];
-        children.add(Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: _SelectionPainter(rects)))));
-        final bool hideUi = WordSelectionLayer.scrolling.value && _dragPointer == null;
-        if (!hideUi) {
-          final first = rects.first, last = rects.last;
-          // FittedBox 축소 시에도 화면상 일정한 크기로 잡기 쉽게 보정 (TXT·PDF 공통)
-          final double inv = (1.0 / _visualScale()).clamp(0.65, 2.8);
-          final double hr = 11.0 * inv;
-          final double pad = 18.0 * inv;
+      if (WordSelectionLayer._hasSelection && words != null && words.isNotEmpty) {
+        final (loP, loW, hiP, hiW) = WordSelectionLayer._orderedRange;
+        final int p = widget.pageIndex;
+        if (p >= loP && p <= hiP) {
+          final int sIdx = (p == loP ? loW : 0).clamp(0, words.length - 1);
+          final int eIdx = (p == hiP ? hiW : words.length - 1).clamp(0, words.length - 1);
+          final rects = [for (int i = sIdx; i <= eIdx; i++) _px(words[i].rect)];
+          children.add(Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: _SelectionPainter(rects)))));
+          final bool hideUi = WordSelectionLayer.scrolling.value && WordSelectionLayer._dragPointer == null;
+          if (!hideUi) {
+            final double inv = (1.0 / _visualScale()).clamp(0.65, 2.8);
+            final double hr = 11.0 * inv;
+            final double pad = 18.0 * inv;
 
-          Widget handle(Offset at, bool start) => Positioned(
-                left: at.dx - (start ? hr * 2 : 0) - pad,
-                top: at.dy - (10.0 * inv),
-                child: Listener(
-                  behavior: HitTestBehavior.opaque,
-                  onPointerDown: (e) {
-                    _dragPointer = e.pointer;
-                    _dragStart = start;
-                    _dragGlobal = e.position;
-                    WordSelectionLayer.dragging.value = true;
-                    WordSelectionLayer.scrolling.value = false;
-                    if (_menu) setState(() => _menu = false);
-                  },
-                  onPointerMove: (e) {
-                    if (_dragPointer != e.pointer) return;
-                    _dragGlobal = e.position;
-                    _updateDragAtGlobal(e.position);
-                    _checkEdgeAutoScroll(e.position);
-                  },
-                  onPointerUp: (e) {
-                    if (_dragPointer != e.pointer) return;
-                    _stopAutoScroll();
-                    _dragPointer = null;
-                    _dragGlobal = null;
-                    WordSelectionLayer.dragging.value = false;
-                    if (mounted) setState(() => _menu = true);
-                  },
-                  onPointerCancel: (e) {
-                    if (_dragPointer != e.pointer) return;
-                    _stopAutoScroll();
-                    _dragPointer = null;
-                    _dragGlobal = null;
-                    WordSelectionLayer.dragging.value = false;
-                    if (mounted) setState(() => _menu = true);
-                  },
-                  child: Padding(
-                    padding: EdgeInsets.all(pad),
-                    child: CustomPaint(size: Size(hr * 2, hr * 2), painter: TextSelectHandlePainter(start)),
+            Widget handle(Offset at, bool start) => Positioned(
+                  left: at.dx - (start ? hr * 2 : 0) - pad,
+                  top: at.dy - (10.0 * inv),
+                  child: Listener(
+                    behavior: HitTestBehavior.opaque,
+                    onPointerDown: (e) {
+                      WordSelectionLayer._dragPointer = e.pointer;
+                      WordSelectionLayer._dragStart = start;
+                      WordSelectionLayer._dragGlobal = e.position;
+                      WordSelectionLayer._activeAutoScroll = widget.onEdgeAutoScroll;
+                      WordSelectionLayer.dragging.value = true;
+                      WordSelectionLayer.scrolling.value = false;
+                      WordSelectionLayer._selMenu = false;
+                      WordSelectionLayer._notifyAllPages();
+                    },
+                    onPointerMove: (e) {
+                      if (WordSelectionLayer._dragPointer != e.pointer) return;
+                      WordSelectionLayer._dragGlobal = e.position;
+                      WordSelectionLayer._updateDragAcrossPages(e.position);
+                      WordSelectionLayer._checkEdgeAutoScroll(context, e.position);
+                    },
+                    onPointerUp: (e) {
+                      if (WordSelectionLayer._dragPointer != e.pointer) return;
+                      WordSelectionLayer._autoScrollTimer?.cancel();
+                      WordSelectionLayer._autoScrollTimer = null;
+                      WordSelectionLayer._dragPointer = null;
+                      WordSelectionLayer._dragGlobal = null;
+                      WordSelectionLayer._activeAutoScroll = null;
+                      WordSelectionLayer.dragging.value = false;
+                      WordSelectionLayer._selMenu = true;
+                      WordSelectionLayer._notifyAllPages();
+                    },
+                    onPointerCancel: (e) {
+                      if (WordSelectionLayer._dragPointer != e.pointer) return;
+                      WordSelectionLayer._autoScrollTimer?.cancel();
+                      WordSelectionLayer._autoScrollTimer = null;
+                      WordSelectionLayer._dragPointer = null;
+                      WordSelectionLayer._dragGlobal = null;
+                      WordSelectionLayer._activeAutoScroll = null;
+                      WordSelectionLayer.dragging.value = false;
+                      WordSelectionLayer._selMenu = true;
+                      WordSelectionLayer._notifyAllPages();
+                    },
+                    child: Padding(
+                      padding: EdgeInsets.all(pad),
+                      child: CustomPaint(size: Size(hr * 2, hr * 2), painter: TextSelectHandlePainter(start)),
+                    ),
+                  ),
+                );
+
+            if (p == loP) children.add(handle(rects.first.bottomLeft, true));
+            if (p == hiP) children.add(handle(rects.last.bottomRight, false));
+            if (p == loP && WordSelectionLayer._selMenu && WordSelectionLayer._dragPointer == null) {
+              final top = rects.map((r) => r.top).reduce(math.min);
+              final bottom = rects.map((r) => r.bottom).reduce(math.max);
+              final double barOffset = 60.0 * inv;
+              final double y = top - barOffset > 8 ? top - barOffset : bottom + 30.0 * inv;
+              children.add(Positioned(
+                left: 0,
+                right: 0,
+                top: y.clamp(0, (_size.height - 56 * inv).clamp(0, double.infinity)).toDouble(),
+                child: Center(
+                  child: Transform.scale(
+                    scale: inv,
+                    child: _menuBar(),
                   ),
                 ),
-              );
-
-          children.add(handle(first.bottomLeft, true));
-          children.add(handle(last.bottomRight, false));
-          if (_menu && _dragPointer == null) {
-            final top = rects.map((r) => r.top).reduce(math.min);
-            final bottom = rects.map((r) => r.bottom).reduce(math.max);
-            final double barOffset = 60.0 * inv;
-            final double y = top - barOffset > 8 ? top - barOffset : bottom + 30.0 * inv;
-            children.add(Positioned(
-              left: 0,
-              right: 0,
-              top: y.clamp(0, (_size.height - 56 * inv).clamp(0, double.infinity)).toDouble(),
-              child: Center(
-                child: Transform.scale(
-                  scale: inv,
-                  child: _menuBar(),
-                ),
-              ),
-            ));
+              ));
+            }
           }
         }
       }
@@ -429,7 +528,7 @@ class _WordSelectionLayerState extends State<WordSelectionLayer> {
         onLongPressStart: (d) {
           _start(d.localPosition);
         },
-        onTap: _a == null ? null : _clear,
+        onTap: WordSelectionLayer._hasSelection ? WordSelectionLayer.clearAll : null,
         child: Stack(clipBehavior: Clip.none, children: children),
       );
     });
@@ -438,21 +537,22 @@ class _WordSelectionLayerState extends State<WordSelectionLayer> {
   Widget _menuBar() => SelectionActionBar(
         tr: widget.tr,
         onCopy: () {
-          final text = _selectedText();
-          _clear();
+          final text = WordSelectionLayer._selectedTextAll();
+          WordSelectionLayer.clearAll();
           copyText(context, text, widget.tr);
         },
         onSelectAll: () {
           final words = _words;
           if (words == null || words.isEmpty) return;
-          setState(() {
-            _a = 0;
-            _b = words.length - 1;
-          });
+          WordSelectionLayer._selAPage = widget.pageIndex;
+          WordSelectionLayer._selAWord = 0;
+          WordSelectionLayer._selBPage = widget.pageIndex;
+          WordSelectionLayer._selBWord = words.length - 1;
+          WordSelectionLayer._notifyAllPages();
         },
         onShare: () {
-          final text = _selectedText();
-          _clear();
+          final text = WordSelectionLayer._selectedTextAll();
+          WordSelectionLayer.clearAll();
           shareText(text);
         },
       );

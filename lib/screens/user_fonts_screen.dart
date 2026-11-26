@@ -173,10 +173,22 @@ class _UserFontsScreenState extends State<UserFontsScreen> {
             _t('본고딕·본명조로 대신 보여 줘요 (글꼴을 넣으면 그 글꼴로)', 'Shown in Noto Sans/Serif KR (or the font you add)', '用 Noto Sans/Serif KR 代替显示（添加字体后使用该字体）', 'Noto Sans/Serif KR で代わりに表示（追加するとそのフォントで）')),
       ];
 
+  String? _notice;
+  Timer? _noticeTimer;
+
   void _snack(String text) {
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(SnackBar(content: Text(text), duration: const Duration(milliseconds: 1800)));
+    _noticeTimer?.cancel();
+    if (!mounted) return;
+    setState(() => _notice = text);
+    _noticeTimer = Timer(const Duration(milliseconds: 2200), () {
+      if (mounted) setState(() => _notice = null);
+    });
+  }
+
+  @override
+  void dispose() {
+    _noticeTimer?.cancel();
+    super.dispose();
   }
 
   String get _title => switch (widget.category) {
@@ -275,8 +287,10 @@ class _UserFontsScreenState extends State<UserFontsScreen> {
           ),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.only(bottom: 160),
+      body: Stack(
+        children: [
+          ListView(
+            padding: const EdgeInsets.only(bottom: 160),
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
@@ -345,6 +359,40 @@ class _UserFontsScreenState extends State<UserFontsScreen> {
               ),
             ),
           ],
+        ],
+      ),
+      if (_notice != null)
+        Positioned(
+          left: 16,
+          right: 152,
+          bottom: MediaQuery.paddingOf(context).bottom + 16,
+          child: IgnorePointer(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Material(
+                color: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF2B2F2D) : const Color(0xFF242725),
+                elevation: 4,
+                borderRadius: BorderRadius.circular(16),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 56),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      widthFactor: 1,
+                      child: Text(
+                        _notice!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
         ],
       ),
     );

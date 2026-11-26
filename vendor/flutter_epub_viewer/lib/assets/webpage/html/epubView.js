@@ -2530,6 +2530,7 @@ function removeUnderLine(cfiString) {
 }
 
 function clearSelection() {
+  try { if (window.eriEpubClearSelection) window.eriEpubClearSelection(); } catch (e) {}
   try {
     if (typeof rendition !== 'undefined' && rendition) {
       // Clear selection in all content frames (iframes)
@@ -3374,3 +3375,366 @@ function detectSwipe(el, func) {
     swipe_det.touchStartTime = null;
   }, { capture: true, passive: false }); // Use options object with passive: false
 }
+
+
+// ==============================================================================
+// ERI Custom EPUB Selection Engine (No Android Magnifier Loupe, Scroll-Safe)
+// ==============================================================================
+(function initEriEpubSelection() {
+  if (window.__eriEpubSelInstalled) return;
+  window.__eriEpubSelInstalled = true;
+
+  var st = {
+    contents: null,
+    doc: null,
+    startNode: null,
+    startOff: 0,
+    endNode: null,
+    endOff: 0,
+    dragging: null, // 'start' | 'end' | null
+    dragClientX: 0,
+    dragClientY: 0,
+    autoScrollRaf: 0,
+    scrollHideTimer: 0,
+    active: false,
+    text: '',
+    cfi: ''
+  };
+
+  function getScrollBox() {
+    try { return rendition && rendition.manager && rendition.manager.container; } catch (e) { return null; }
+  }
+
+  function isScrolledMode() {
+    try {
+      return !!(rendition && rendition.settings && (rendition.settings.flow === 'scrolled-doc' || rendition.settings.flow === 'scrolled'));
+    } catch (e) { return false; }
+  }
+
+  function ensureLayer(doc) {
+    if (!doc || !doc.body) return null;
+    if (!doc.getElementById('eri-epub-sel-style')) {
+      var s = doc.createElement('style');
+      s.id = 'eri-epub-sel-style';
+      s.textContent = [
+        'html, body, * { -webkit-user-select: none !important; user-select: none !important; -webkit-touch-callout: none !important; }',
+        '#eri-epub-sel-layer { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; z-index: 2147483000; }',
+        '.eri-epub-hl { position: absolute; background: rgba(26, 115, 232, 0.30); border-radius: 2px; pointer-events: none; }',
+        '.eri-epub-handle { position: absolute; width: 52px; height: 52px; pointer-events: auto; touch-action: none; display: flex; align-items: flex-start; justify-content: center; box-sizing: border-box; padding-top: 2px; }',
+        '.eri-epub-handle .knob { width: 22px; height: 22px; background: #1A73E8; border-radius: 50%; position: relative; box-shadow: 0 2px 6px rgba(0,0,0,0.28); }',
+        '.eri-epub-handle.start .knob { border-top-right-radius: 2px; }',
+        '.eri-epub-handle.end .knob { border-top-left-radius: 2px; }',
+        'body.eri-epub-scrolling .eri-epub-handle { opacity: 0 !important; pointer-events: none !important; }'
+      ].join('\n');
+      (doc.head || doc.documentElement).appendChild(s);
+    }
+    var layer = doc.getElementById('eri-epub-sel-layer');
+    if (!layer) {
+      if (doc.defaultView.getComputedStyle(doc.body).position === 'static') {
+        doc.body.style.position = 'relative';
+      }
+      layer = doc.createElement('div');
+      layer.id = 'eri-epub-sel-layer';
+      doc.body.appendChild(layer);
+    }
+    return layer;
+  }
+
+  function clearEriSelection(notifyFlutter) {
+    if (st.autoScrollRaf) { cancelAnimationFrame(st.autoScrollRaf); st.autoScrollRaf = 0; }
+    st.dragging = null;
+    if (st.doc) {
+      var layer = st.doc.getElementById('eri-epub-sel-layer');
+      if (layer) layer.innerHTML = '';
+      if (st.doc.body) st.doc.body.classList.remove('eri-epub-scrolling');
+    }
+    var wasActive = st.active;
+    st.active = false;
+    st.startNode = null;
+    st.endNode = null;
+    st.text = '';
+    st.cfi = '';
+    if (notifyFlutter && wasActive) {
+      try { callFlutterHandler('selectionCleared'); } catch (e) {}
+    }
+  }
+  window.eriEpubClearSelection = function () { clearEriSelection(false); };
+
+  function isWordChar(ch) {
+    return ch && !/[\s.,;:!?·、。，()\[\]{}<>"'“”‘’\-\u00a0]/.test(ch);
+  }
+
+  function comparePos(n1, o1, n2, o2) {
+    if (n1 === n2) return o1 - o2;
+    var rel = n1.compareDocumentPosition(n2);
+    if (rel & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+    if (rel & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+    return 0;
+  }
+
+  function caretAtPoint(doc, x, y) {
+    var r = null;
+    if (doc.caretRangeFromPoint) {
+      r = doc.caretRangeFromPoint(x, y);
+    } else if (doc.caretPositionFromPoint) {
+      var p = doc.caretPositionFromPoint(x, y);
+      if (p) {
+        r = doc.createRange();
+        r.setStart(p.offsetNode, p.offset);
+        r.collapse(true);
+      }
+    }
+    if (!r || !r.startContainer) return null;
+    var node = r.startContainer, off = r.startOffset;
+    if (node.nodeType === 3) return { node: node, offset: off };
+    // Try finding nearest text node inside element
+    var walker = doc.createTreeWalker(node, NodeFilter.SHOW_TEXT, null);
+    var t = walker.nextNode();
+    if (t) return { node: t, offset: 0 };
+    return null;
+  }
+
+  function makeRange() {
+    if (!st.doc || !st.startNode || !st.endNode) return null;
+    var cmp = comparePos(st.startNode, st.startOff, st.endNode, st.endOff);
+    var sn = cmp <= 0 ? st.startNode : st.endNode;
+    var so = cmp <= 0 ? st.startOff : st.endOff;
+    var en = cmp <= 0 ? st.endNode : st.startNode;
+    var eo = cmp <= 0 ? st.endOff : st.startOff;
+    var range = st.doc.createRange();
+    try {
+      range.setStart(sn, Math.max(0, Math.min(so, sn.nodeValue ? sn.nodeValue.length : 0)));
+      range.setEnd(en, Math.max(0, Math.min(eo, en.nodeValue ? en.nodeValue.length : 0)));
+      return range;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function emitFlutterSelection() {
+    if (!st.active || !st.text) return;
+    try {
+      var rectPayload = null;
+      var range = makeRange();
+      if (range && st.doc && st.doc.defaultView && st.doc.defaultView.frameElement) {
+        var r = range.getBoundingClientRect();
+        var fr = st.doc.defaultView.frameElement.getBoundingClientRect();
+        var vw = window.innerWidth || 1, vh = window.innerHeight || 1;
+        rectPayload = {
+          left: (fr.left + r.left) / vw,
+          top: (fr.top + r.top) / vh,
+          right: (fr.left + r.right) / vw,
+          bottom: (fr.top + r.bottom) / vh
+        };
+      }
+      callFlutterHandler('selection', [st.cfi || '', st.text, rectPayload]);
+    } catch (e) {}
+  }
+
+  function renderEriSelection(notifyFlutter) {
+    if (!st.doc || !st.active) return;
+    var layer = ensureLayer(st.doc);
+    if (!layer) return;
+    var range = makeRange();
+    if (!range) return;
+    var bodyRect = st.doc.body.getBoundingClientRect();
+    var rects = Array.prototype.slice.call(range.getClientRects()).filter(function (r) {
+      return r.width > 0.5 && r.height > 1 && r.height < 140;
+    });
+    if (!rects.length) return;
+
+    layer.innerHTML = '';
+    rects.forEach(function (r) {
+      var div = st.doc.createElement('div');
+      div.className = 'eri-epub-hl';
+      div.style.left = (r.left - bodyRect.left) + 'px';
+      div.style.top = (r.top - bodyRect.top) + 'px';
+      div.style.width = r.width + 'px';
+      div.style.height = r.height + 'px';
+      layer.appendChild(div);
+    });
+
+    var first = rects[0], last = rects[rects.length - 1];
+    function addHandle(kind, x, y) {
+      var h = st.doc.createElement('div');
+      h.className = 'eri-epub-handle ' + kind;
+      h.style.left = (x - bodyRect.left - (kind === 'start' ? 37 : 15)) + 'px';
+      h.style.top = (y - bodyRect.top - 2) + 'px';
+      var k = st.doc.createElement('div');
+      k.className = 'knob';
+      h.appendChild(k);
+      h.addEventListener('touchstart', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (!ev.touches || !ev.touches.length) return;
+        st.dragging = kind;
+        st.dragClientX = ev.touches[0].clientX;
+        st.dragClientY = ev.touches[0].clientY;
+        try { callFlutterHandler('selectionChanging'); } catch (e) {}
+      }, { passive: false });
+      h.addEventListener('touchmove', function (ev) {
+        if (st.dragging !== kind) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (!ev.touches || !ev.touches.length) return;
+        st.dragClientX = ev.touches[0].clientX;
+        st.dragClientY = ev.touches[0].clientY;
+        updateDragFromPoint(st.dragClientX, st.dragClientY);
+        kickAutoScroll();
+      }, { passive: false });
+      var endDrag = function (ev) {
+        if (st.dragging !== kind) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        st.dragging = null;
+        if (st.autoScrollRaf) { cancelAnimationFrame(st.autoScrollRaf); st.autoScrollRaf = 0; }
+        emitFlutterSelection();
+      };
+      h.addEventListener('touchend', endDrag, { passive: false });
+      h.addEventListener('touchcancel', endDrag, { passive: false });
+      layer.appendChild(h);
+    }
+
+    addHandle('start', first.left, first.bottom);
+    addHandle('end', last.right, last.bottom);
+
+    st.text = range.toString();
+    try { st.cfi = st.contents ? st.contents.cfiFromRange(range) : ''; } catch (e) { st.cfi = ''; }
+    if (notifyFlutter) emitFlutterSelection();
+  }
+
+  function updateDragFromPoint(cx, cy) {
+    if (!st.doc || !st.dragging) return;
+    var pos = caretAtPoint(st.doc, cx, cy - 26);
+    if (!pos) return;
+    var cmp = comparePos(st.startNode, st.startOff, st.endNode, st.endOff);
+    var loN = cmp <= 0 ? st.startNode : st.endNode;
+    var loO = cmp <= 0 ? st.startOff : st.endOff;
+    var hiN = cmp <= 0 ? st.endNode : st.startNode;
+    var hiO = cmp <= 0 ? st.endOff : st.startOff;
+    if (st.dragging === 'start') {
+      st.startNode = pos.node; st.startOff = pos.offset;
+      st.endNode = hiN; st.endOff = hiO;
+    } else {
+      st.startNode = loN; st.startOff = loO;
+      st.endNode = pos.node; st.endOff = pos.offset;
+    }
+    renderEriSelection(false);
+  }
+
+  function kickAutoScroll() {
+    if (st.autoScrollRaf || !st.dragging || !isScrolledMode()) return;
+    function step() {
+      st.autoScrollRaf = 0;
+      if (!st.dragging || !st.doc) return;
+      var box = getScrollBox();
+      var frame = st.doc.defaultView && st.doc.defaultView.frameElement;
+      if (!box || !frame) return;
+      var fr = frame.getBoundingClientRect();
+      var outerY = fr.top + st.dragClientY;
+      var vh = window.innerHeight || 800;
+      var edge = 76;
+      var dy = 0;
+      if (outerY > vh - edge) dy = Math.min(1, Math.max(0.2, (outerY - (vh - edge)) / edge)) * 12;
+      else if (outerY < edge) dy = -Math.min(1, Math.max(0.2, (edge - outerY) / edge)) * 12;
+      if (dy !== 0) {
+        box.scrollTop = Math.max(0, Math.min(box.scrollHeight - box.clientHeight, box.scrollTop + dy));
+        updateDragFromPoint(st.dragClientX, st.dragClientY);
+        st.autoScrollRaf = requestAnimationFrame(step);
+      }
+    }
+    st.autoScrollRaf = requestAnimationFrame(step);
+  }
+
+  function attachScrollHide() {
+    var box = getScrollBox();
+    if (!box || box.__eriScrollHideAttached) return;
+    box.__eriScrollHideAttached = true;
+    box.addEventListener('scroll', function () {
+      if (!st.active || st.dragging) return;
+      if (st.doc && st.doc.body) st.doc.body.classList.add('eri-epub-scrolling');
+      try { callFlutterHandler('selectionChanging'); } catch (e) {}
+      if (st.scrollHideTimer) clearTimeout(st.scrollHideTimer);
+      st.scrollHideTimer = setTimeout(function () {
+        st.scrollHideTimer = 0;
+        if (st.doc && st.doc.body) st.doc.body.classList.remove('eri-epub-scrolling');
+        if (st.active && !st.dragging) emitFlutterSelection();
+      }, 180);
+    }, { passive: true });
+  }
+
+  function hookContents(contents) {
+    if (!contents || !contents.document || contents.document.__eriSelHooked) return;
+    var doc = contents.document;
+    doc.__eriSelHooked = true;
+    ensureLayer(doc);
+    attachScrollHide();
+
+    var lpTimer = 0, downX = 0, downY = 0, moved = false;
+    doc.addEventListener('touchstart', function (ev) {
+      if (ev.target && ev.target.closest && ev.target.closest('.eri-epub-handle')) return;
+      if (!ev.touches || ev.touches.length !== 1) {
+        if (lpTimer) { clearTimeout(lpTimer); lpTimer = 0; }
+        return;
+      }
+      downX = ev.touches[0].clientX;
+      downY = ev.touches[0].clientY;
+      moved = false;
+      if (lpTimer) clearTimeout(lpTimer);
+      lpTimer = setTimeout(function () {
+        lpTimer = 0;
+        if (moved) return;
+        var pos = caretAtPoint(doc, downX, downY);
+        if (!pos || !pos.node || pos.node.nodeType !== 3) return;
+        var str = pos.node.nodeValue || '';
+        if (!str.trim()) return;
+        var s = Math.max(0, Math.min(pos.offset, str.length - 1));
+        var e = s;
+        if (!isWordChar(str[s]) && s > 0 && isWordChar(str[s - 1])) s = e = s - 1;
+        while (s > 0 && isWordChar(str[s - 1])) s--;
+        while (e < str.length && isWordChar(str[e])) e++;
+        if (e <= s) e = Math.min(str.length, s + 1);
+        clearEriSelection(false);
+        st.contents = contents;
+        st.doc = doc;
+        st.startNode = pos.node; st.startOff = s;
+        st.endNode = pos.node; st.endOff = e;
+        st.active = true;
+        renderEriSelection(true);
+      }, 360);
+    }, { passive: true });
+
+    doc.addEventListener('touchmove', function (ev) {
+      if (!ev.touches || !ev.touches.length) return;
+      if (Math.abs(ev.touches[0].clientX - downX) + Math.abs(ev.touches[0].clientY - downY) > 10) {
+        moved = true;
+        if (lpTimer) { clearTimeout(lpTimer); lpTimer = 0; }
+      }
+    }, { passive: true });
+
+    doc.addEventListener('touchend', function (ev) {
+      if (lpTimer) { clearTimeout(lpTimer); lpTimer = 0; }
+      if (ev.target && ev.target.closest && ev.target.closest('.eri-epub-handle')) return;
+      if (!moved && st.active) {
+        // Simple tap outside handles clears selection
+        clearEriSelection(true);
+      }
+    }, { passive: true });
+
+    doc.addEventListener('touchcancel', function () {
+      if (lpTimer) { clearTimeout(lpTimer); lpTimer = 0; }
+    }, { passive: true });
+  }
+
+  // Register on rendition once available
+  var waitRendition = setInterval(function () {
+    if (typeof rendition !== 'undefined' && rendition && rendition.hooks && rendition.hooks.content) {
+      clearInterval(waitRendition);
+      rendition.hooks.content.register(hookContents);
+      try {
+        var existing = rendition.getContents();
+        if (existing && existing.length) existing.forEach(hookContents);
+      } catch (e) {}
+    }
+  }, 120);
+})();

@@ -305,10 +305,10 @@ class MainActivity : FlutterActivity() {
             val sameRes = d.supportedModes.filter {
                 it.physicalWidth == cur.physicalWidth && it.physicalHeight == cur.physicalHeight
             }
-            val target = if (mode == "60") {
-                sameRes.minByOrNull { kotlin.math.abs(it.refreshRate - 60f) }
-            } else {
-                sameRes.maxByOrNull { it.refreshRate }
+            val target = when (mode) {
+                "60" -> sameRes.minByOrNull { kotlin.math.abs(it.refreshRate - 60f) }
+                "90" -> sameRes.minByOrNull { kotlin.math.abs(it.refreshRate - 90f) }
+                else -> sameRes.maxByOrNull { it.refreshRate }
             } ?: return
             if (lp.preferredDisplayModeId != target.modeId) {
                 lp.preferredDisplayModeId = target.modeId

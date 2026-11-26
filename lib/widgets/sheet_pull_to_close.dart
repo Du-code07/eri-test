@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'app_colors.dart';
 
 /// Flutter 기본 바텀시트 애니메이션 곡선 (showModalBottomSheet 기본값과 동일)
 const Curve _kSheetCurve = Easing.legacyDecelerate;
@@ -126,6 +127,7 @@ class _SheetPullToCloseState extends State<SheetPullToClose> {
   @override
   Widget build(BuildContext context) {
     return Listener(
+      behavior: HitTestBehavior.opaque,
       onPointerDown: _onDown,
       onPointerMove: _onMove,
       onPointerUp: _onUp,
@@ -175,6 +177,10 @@ Future<T?> showPullSheet<T>(
   AnimationStyle? sheetAnimationStyle,
 }) async {
   final AnimationController ctrl = BottomSheet.createAnimationController(Navigator.of(context));
+  if (Anim.off.value) {
+    ctrl.duration = Duration.zero;
+    ctrl.reverseDuration = Duration.zero;
+  }
   try {
     return await showModalBottomSheet<T>(
       context: context,

@@ -1179,6 +1179,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
               ]);
         if (_isPdfFile && !_isMemoMode) {
           content = WordSelectionLayer(
+            pageIndex: i,
             tr: _tr,
             onEdgeAutoScroll: (dy) => _scrollCtrl.scrollByDelta(dy),
             loadWords: () async {

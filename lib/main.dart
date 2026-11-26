@@ -4343,6 +4343,10 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
       return;
     }
     final sheetCtrl = BottomSheet.createAnimationController(this);
+    if (Anim.off.value) {
+      sheetCtrl.duration = Duration.zero;
+      sheetCtrl.reverseDuration = Duration.zero;
+    }
     await showModalBottomSheet(
       sheetAnimationStyle: Anim.off.value ? AnimationStyle.noAnimation : null,
       context: context,

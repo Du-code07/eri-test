@@ -283,6 +283,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
   String _refreshRateLabel(String mode) => switch (mode) {
         'auto' => _t('시스템 자동 (권장)', 'System Auto (Recommended)', '系统自动（推荐）', 'システム自動（推奨）'),
         '60' => _t('60Hz (절전)', '60Hz (Power Saving)', '60Hz（省电）', '60Hz（省電力）'),
+        '90' => _t('90Hz (균형)', '90Hz (Balanced)', '90Hz（均衡）', '90Hz（バランス）'),
         _ => _t('120Hz (부드럽게)', '120Hz (Smooth)', '120Hz（流畅）', '120Hz（滑らか）'),
       };
 
@@ -299,6 +300,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
       options: [
         ChoiceOption('auto', _refreshRateLabel('auto'), icon: Icons.auto_mode_outlined),
         ChoiceOption('60', _refreshRateLabel('60'), icon: Icons.battery_saver_outlined),
+        ChoiceOption('90', _refreshRateLabel('90'), icon: Icons.tune_outlined),
         ChoiceOption('120', _refreshRateLabel('120'), icon: Icons.speed_outlined),
       ],
       current: StorageService.refreshRateMode.value,
@@ -371,13 +373,13 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
       final list = ListView(
         controller: scroll,
         physics: physics,
-        shrinkWrap: centered,
+        shrinkWrap: true,
         padding: const EdgeInsets.only(bottom: 16),
         children: [
           row(
             icon: Icons.speed_outlined,
             title: _t('주사율 조절', 'Refresh Rate', '刷新率调节', 'リフレッシュレート'),
-            subtitle: '${_refreshRateLabel(rr)} · ${_t('화면 주사율을 조절해 부드러움과 배터리를 맞춰요', 'Balance smoothness and battery life', '调节刷新率以平衡流畅度与续航', '滑らかさとバッテリー消費を調整します')}',
+            subtitle: '${_refreshRateLabel(rr)} · ${_t('주사율이 낮을수록 배터리 소모량이 줄어요', 'Lower refresh rate reduces battery usage', '刷新率越低，耗电量越少', 'リフレッシュレートが低いほど電池消費が減ります')}',
             onTap: () => _pickRefreshRate(refresh),
           ),
           row(
@@ -389,7 +391,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
           row(
             icon: Icons.photo_camera_back_outlined,
             title: _t('페이지 전환 스냅샷 끄기', 'Turn Off Page Turn Snapshots', '关闭翻页快照', 'ページ切替スナップショットをオフ'),
-            subtitle: _t('쪽 넘김용 미리 찍기를 꺼서 배터리와 CPU 부하를 줄여요', 'Skips page-turn captures to save battery and CPU', '关闭翻页预截图以节省电量和 CPU', 'ページめくり用の事前キャプチャを省き省電力化します'),
+            subtitle: _t('페이지 미리 찍기를 꺼서 배터리와 CPU 부하가 줄어요', 'Skips page pre-capture to reduce battery and CPU load', '关闭页面预截图以降低耗电和 CPU 负载', 'ページの事前キャプチャをオフにして電池とCPU負荷を抑えます'),
             onTap: () async {
               await StorageService.setPageSnapshotOff(!snapOff);
               refresh();
@@ -405,7 +407,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
           row(
             icon: Icons.contrast_outlined,
             title: _t('순수 검정 다크 모드', 'Pure Black Dark Mode', '纯黑深色模式', 'ピュアブラックダークモード'),
-            subtitle: _t('다크 모드 배경을 완전한 검정색으로 바꿔 OLED 전력을 아껴요', 'Uses pure black backgrounds in dark mode to save OLED power', '深色模式使用纯黑背景以节省 OLED 电量', 'ダークモードを完全な黒にしてOLED電力を抑えます'),
+            subtitle: _t('다크 모드 배경을 완전한 검정색으로 바꿔 배터리 소모량이 줄어요', 'Uses pure black backgrounds in dark mode to reduce battery usage', '将深色模式背景改为纯黑以减少耗电量', 'ダークモードの背景を完全な黒にして電池消費を抑えます'),
             onTap: () async {
               await StorageService.setPureBlackDark(!oled);
               refresh();
@@ -421,7 +423,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
           row(
             icon: Icons.motion_photos_off_outlined,
             title: _t('애니메이션 끄기', 'Turn Off Animations', '关闭动画', 'アニメーションをオフ'),
-            subtitle: _t('버튼·창이 움직임 없이 바로 바뀌어요', 'Buttons and windows change instantly without motion', '按钮和窗口立即切换，没有动画', 'ボタン・ウィンドウが動きなしですぐ切り替わります'),
+            subtitle: _t('애니메이션을 끄면 화면 버벅임과 빠른 반응 속도에 도움이 돼요', 'Reduces stutter and improves responsiveness', '关闭动画可减少卡顿并提升响应速度', 'アニメーションをオフにするとカクつきが減り反応が速くなります'),
             onTap: () async {
               await StorageService.setAnimOff(!animOff);
               refresh();
@@ -483,13 +485,19 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
           child: Column(mainAxisSize: MainAxisSize.min, children: [header, Flexible(child: list)]),
         );
       }
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SheetGrip(below: 12),
-          header,
-          Expanded(child: list),
-        ],
+      return SafeArea(
+        top: false,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(ctx).height * 0.78),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SheetGrip(below: 12),
+              header,
+              Flexible(child: list),
+            ],
+          ),
+        ),
       );
     }
 

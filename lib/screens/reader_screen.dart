@@ -3678,6 +3678,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   void _clearEpubSelection() {
     _hasTextSelection = false;
     _selectedText = '';
+    _pageBar.hide();
     try {
       if (!_isOfflineDocument) _epubController.clearSelection();
     } catch (_) {}
@@ -5503,9 +5504,33 @@ Offstage(offstage: _tocFreeze != null, child: EpubViewer(
                       _selectedCfiRange = epubTextSelection.selectionCfi;
                       _selectedText = epubTextSelection.selectedText;
                       _hasTextSelection = true;
+                      final t = epubTextSelection.selectedText.trim();
+                      if (mounted && t.isNotEmpty) {
+                        final size = MediaQuery.sizeOf(context);
+                        _pageBar.show(
+                          context,
+                          Offset(size.width / 2, MediaQuery.paddingOf(context).top + 96),
+                          tr: _tr,
+                          onCopy: () {
+                            final s = _selectedText;
+                            _clearEpubSelection();
+                            copyText(context, s, _tr);
+                          },
+                          onSelectAll: () => _epubSelectAllPage(),
+                          onShare: () {
+                            final s = _selectedText;
+                            _clearEpubSelection();
+                            shareText(s);
+                          },
+                        );
+                      }
+                    },
+                    onSelectionChanging: () {
+                      _pageBar.hide();
                     },
                     onDeselection: () {
                       _hasTextSelection = false;
+                      _pageBar.hide();
                     },
                     onScrollMetrics: (top, height, client) => _epubScrollMetrics.value = [top, height, client],
                     onChapterEdge: (atStart, atEnd, first, last) {

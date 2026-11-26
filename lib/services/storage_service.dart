@@ -168,7 +168,7 @@ class StorageService {
     Anim.off.value = prefs.getBool('anim_off_v109') ?? false;
     pageCurl = prefs.getBool('page_curl_v109') ?? false;
     final rr = prefs.getString('refresh_rate_mode_v1');
-    refreshRateMode.value = (rr == 'auto' || rr == '60' || rr == '120') ? rr! : '120';
+    refreshRateMode.value = (rr == 'auto' || rr == '60' || rr == '90' || rr == '120') ? rr! : '120';
     final rq = prefs.getString('render_quality_v1');
     renderQuality.value = (rq == 'low' || rq == 'medium' || rq == 'high') ? rq! : 'high';
     pageSnapshotOff.value = prefs.getBool('page_snapshot_off_v1') ?? false;
@@ -216,7 +216,7 @@ class StorageService {
   }
 
   static Future<void> setRefreshRateMode(String mode) async {
-    final v = (mode == 'auto' || mode == '60' || mode == '120') ? mode : '120';
+    final v = (mode == 'auto' || mode == '60' || mode == '90' || mode == '120') ? mode : '120';
     refreshRateMode.value = v;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('refresh_rate_mode_v1', v);

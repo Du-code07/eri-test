@@ -20,6 +20,7 @@ const Curve popOpenCurve = Cubic(0.18, 0.89, 0.32, 1.12);
 
 /// 가운데 안내창 전환: 화면 정중앙에서 부드럽게 커지며 나타나고, 닫힐 때 가운데로 작아지며 사라짐 (앱 설정 창과 같은 느낌)
 Widget popTransition(BuildContext context, Animation<double> animation, Widget child, {Offset? from}) {
+  if (Anim.off.value) return child;
   final grow = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic);
   final fade = CurvedAnimation(parent: animation, curve: const Interval(0, 0.6, curve: Curves.easeOut), reverseCurve: Curves.easeIn);
   return FadeTransition(
