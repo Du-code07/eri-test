@@ -3617,8 +3617,50 @@ function detectSwipe(el, func) {
     var ox = fr.left - cRect.left + (container.scrollLeft || 0);
     var oy = fr.top - cRect.top + (container.scrollTop || 0);
 
-    var rects = Array.prototype.slice.call(range.getClientRects()).filter(function (r) {
-      return r.width > 0.5 && r.height > 1 && r.height < 140;
+    // 텍스트 노드만 순회해 문단(<p>/<div>) 전체 박스 중복 겹침을 완전히 제거하고 같은 줄 인라인 구간은 병합
+    var rawRects = [];
+    if (range.startContainer === range.endContainer && range.startContainer.nodeType === 3) {
+      rawRects = Array.prototype.slice.call(range.getClientRects());
+    } else {
+      var commonRoot = range.commonAncestorContainer;
+      if (commonRoot.nodeType === 3) commonRoot = commonRoot.parentNode;
+      var tw = st.doc.createTreeWalker(commonRoot, NodeFilter.SHOW_TEXT, null);
+      var tn, tr = st.doc.createRange();
+      while ((tn = tw.nextNode())) {
+        if (!tn.nodeValue || !tn.nodeValue.trim()) continue;
+        try { if (!range.intersectsNode(tn)) continue; } catch (e) { continue; }
+        var ts = (tn === range.startContainer) ? range.startOffset : 0;
+        var te = (tn === range.endContainer) ? range.endOffset : tn.nodeValue.length;
+        if (te <= ts) continue;
+        tr.setStart(tn, ts);
+        tr.setEnd(tn, te);
+        var tlist = tr.getClientRects();
+        for (var ti = 0; ti < tlist.length; ti++) rawRects.push(tlist[ti]);
+      }
+    }
+    var filtered = rawRects.filter(function (r) {
+      return r.width > 0.5 && r.height > 1 && r.height < 90;
+    });
+    var merged = [];
+    for (var mi = 0; mi < filtered.length; mi++) {
+      var cur = { left: filtered[mi].left, top: filtered[mi].top, right: filtered[mi].right, bottom: filtered[mi].bottom };
+      var prev = merged.length ? merged[merged.length - 1] : null;
+      if (prev) {
+        var minH = Math.min(prev.bottom - prev.top, cur.bottom - cur.top);
+        var midP = (prev.top + prev.bottom) / 2;
+        var midC = (cur.top + cur.bottom) / 2;
+        if (Math.abs(midP - midC) <= Math.max(4, minH * 0.45) && cur.left <= prev.right + 16 && cur.right >= prev.left - 16) {
+          prev.left = Math.min(prev.left, cur.left);
+          prev.top = Math.min(prev.top, cur.top);
+          prev.right = Math.max(prev.right, cur.right);
+          prev.bottom = Math.max(prev.bottom, cur.bottom);
+          continue;
+        }
+      }
+      merged.push(cur);
+    }
+    var rects = merged.map(function (m) {
+      return { left: m.left, top: m.top, right: m.right, bottom: m.bottom, width: m.right - m.left, height: m.bottom - m.top };
     });
     if (!rects.length) return;
 
