@@ -1901,7 +1901,6 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
     setState(() => _groupScanBusy = true);
     try {
       final groupLabel = _localizeGroupName(group);
-      final messenger = ScaffoldMessenger.of(context);
       // 찾는 동안은 [파일 탐색] 단추가 도는 표시로 바뀜 (따로 알림은 띄우지 않음)
       // 너무 오래 걸리면 (폴더에 파일이 아주 많을 때) 20초에서 멈춤
       List<FoundFile> found;

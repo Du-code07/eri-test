@@ -255,7 +255,7 @@ Widget viewerPanel(
   );
 }
 
-/// 파일 안 설정 창 (화면 회전·페이지 표시·페이지 이동·북마크·도구 모음 설정·글자 복사, 기본 스타일은 메모 도구 설정도)을 띄움.
+/// 파일 안 설정 창 (화면 회전·페이지 표시·페이지 이동·북마크·도구 모음 설정, 기본 스타일은 메모 도구 설정도)을 띄움.
 /// 기본 스타일: 앱 설정 창처럼 밑에서 올라옴. 심플 스타일: 화면 가운데에서 커지며 나타남. 뒤 배경은 옅게 천천히 어두워짐
 Future<T?> showViewerDialog<T>(BuildContext context, Widget Function(BuildContext) builder) async {
   // 도구 모음을 누른 프레임과 겹치지 않게, 그 프레임이 끝난 뒤 창을 띄움 (뜰 때 덜 버벅임)
@@ -1320,7 +1320,6 @@ class ContinuousPageList extends StatefulWidget {
     this.gapColor,
     this.zoomable = true,
     this.gap = 0,
-    this.onLongPressPage,
     this.markedPages = const {},
     this.onViewportChanged,
   });
@@ -1333,9 +1332,6 @@ class ContinuousPageList extends StatefulWidget {
 
   /// 쪽 사이 간격 줄 색 (없으면 바탕색 그대로). 바탕은 앱 테마 색, 간격 줄은 따로 고정된 색
   final Color? gapColor;
-
-  /// 길게 누른 쪽 번호 (글자 복사 창 등)
-  final ValueChanged<int>? onLongPressPage;
 
   final int count;
 
@@ -1697,17 +1693,6 @@ class _ContinuousPageListState extends State<ContinuousPageList> with SingleTick
             onScaleStart: _onScaleStart,
             onScaleUpdate: _onScaleUpdate,
             onScaleEnd: _onScaleEnd,
-            onLongPressStart: widget.onLongPressPage == null
-                ? null
-                : (d) {
-                    if (_tops.length < 2) return;
-                    final double y = (_oy + d.localPosition.dy - _padYFor(_scale)) / _scale;
-                    int p = 0;
-                    while (p < widget.count - 1 && _tops[p + 1] <= y) {
-                      p++;
-                    }
-                    widget.onLongPressPage!(p);
-                  },
             child: MediaQuery(data: mq, child: ClipRect(child: Stack(clipBehavior: Clip.hardEdge, children: children))),
           ),
             ),

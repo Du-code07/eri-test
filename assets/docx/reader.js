@@ -1048,6 +1048,42 @@ function vSize() {
   for (const m of vMounted.values()) m.source.style.transform = `scale(${W / m.entry.width})`;
   if (docxEditMode) { if (docxSelRange && !docxSelRange.collapsed) docxRenderSelection(); else if (docxCursor) docxRenderCaret(); }
 }
+// 길게 눌러 고른 글 바탕 (스크롤 보기): 앱이 [쪽, 왼쪽, 위, 너비, 높이](쪽 크기 대비 0~1)로 보내 주면
+// 쪽 칸 안에 붙여 그림 → 스크롤·확대·축소 중에도 글과 한 몸으로 움직임 (앱 위에 그리면 한 박자 늦게 따라와 어긋났음)
+let copyMarks = [];
+const copyMarkEls = new Map(); // 쪽 칸 → 그 안의 바탕 네모들
+function vApplyCopyMarks() {
+  const bySlot = new Map();
+  if (vertical) {
+    for (const q of copyMarks) {
+      const slot = vSlots[q[0]];
+      if (!slot) continue;
+      if (!bySlot.has(slot)) bySlot.set(slot, []);
+      bySlot.get(slot).push(q);
+    }
+  }
+  for (const [slot, els] of copyMarkEls) {
+    if (bySlot.has(slot) && slot.isConnected) continue;
+    for (const el of els) el.remove();
+    copyMarkEls.delete(slot);
+  }
+  for (const [slot, qs] of bySlot) {
+    const els = copyMarkEls.get(slot) || [];
+    while (els.length > qs.length) els.pop().remove();
+    qs.forEach((q, i) => {
+      let el = els[i];
+      if (!el) { el = document.createElement('div'); el.className = 'eri-copy-mark'; slot.appendChild(el); els.push(el); }
+      el.style.left = `${q[1] * 100}%`; el.style.top = `${q[2] * 100}%`;
+      el.style.width = `${q[3] * 100}%`; el.style.height = `${q[4] * 100}%`;
+    });
+    copyMarkEls.set(slot, els);
+  }
+}
+function setCopyMarks(list) {
+  copyMarks = Array.isArray(list) ? list.filter(q => Array.isArray(q) && q.length >= 5) : [];
+  vApplyCopyMarks();
+  return true;
+}
 function vLayout(keep) {
   if (!vhost || !pages.length) return;
   let anchor = page, frac = 0;
@@ -1066,6 +1102,7 @@ function vLayout(keep) {
     }
   }
   vApplyMarks();
+  vApplyCopyMarks();
   pages.forEach((entry, i) => vSetRatio(i, entry.width > 0 ? entry.height / entry.width : 1.414));
   vRatios.length = pages.length;
   vSize();
@@ -2923,7 +2960,7 @@ function exportEditedBytes() {
   return { ok: true, dirty: true, kind: 'docx_edits', edits };
 }
 
-window.freaderDocx = { setView, resetScrollZoom: vResetZoom, setScrollMarks, setScrollMemos, setScrollMemo, visibleSlots: vVisibleSlots, mostVisiblePage: vMostVisible, highlightBoxes: withoutZoom(highlightBoxes), beginDocument, appendChunk, openDocument, configure, display, next, previous, progress, highlightSelection: withoutZoom(highlightSelection), destroy, setVertical, scrollToRatio: vScrollToRatio, scrollByPx: (dy) => { if (!vhost) return false; vhost.scrollTop = Math.max(0, Math.min(vhost.scrollHeight - vhost.clientHeight, vhost.scrollTop + (Number(dy) || 0))); vUpdate(); vReportMetrics(); return true; }, setEditMode, editApplyFormat, editUndo, editRedo, cancelEditSession, setKeyboardInset, exportEditedBytes,
+window.freaderDocx = { setView, resetScrollZoom: vResetZoom, setScrollMarks, setCopyMarks, setScrollMemos, setScrollMemo, visibleSlots: vVisibleSlots, mostVisiblePage: vMostVisible, highlightBoxes: withoutZoom(highlightBoxes), beginDocument, appendChunk, openDocument, configure, display, next, previous, progress, highlightSelection: withoutZoom(highlightSelection), destroy, setVertical, scrollToRatio: vScrollToRatio, scrollByPx: (dy) => { if (!vhost) return false; vhost.scrollTop = Math.max(0, Math.min(vhost.scrollHeight - vhost.clientHeight, vhost.scrollTop + (Number(dy) || 0))); vUpdate(); vReportMetrics(); return true; }, setEditMode, editApplyFormat, editUndo, editRedo, cancelEditSession, setKeyboardInset, exportEditedBytes,
   search, showSearchResult, clearSearch, headingCandidates, pageText, visibleTextBoxes: withoutZoom(visibleTextBoxes), pageRect: withoutZoom(pageRect), pageSizes,
   getState: () => ({ ready, page, count: pages.length, received, spread: options.spread, awaitingPassword, unavailableImages, imageCacheBytes, cachedImages: imageCache.size, visibleImages: activeImagePaths.size, maxBytes: MAX_BYTES, format: detectedFormat }) };
 window.addEventListener('pagehide', destroy, { once: true });

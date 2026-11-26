@@ -1,6 +1,5 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 
 import 'app_colors.dart';
 
@@ -156,10 +155,6 @@ class PushAsideRoute<T> extends PageRoute<T> {
     if (_drivesShift) PushAside.shift.value = _linear ? animation!.value : _curve!.value;
   }
 
-  /// 닫을 때: 바로 움직이지 않고 한 장면 동안 제자리에서 기다림.
-  /// 그동안 가려져 있던 아래 화면(서재)을 이 화면 뒤에서 미리 배치·그려 둠 → 움직이기 시작한 뒤 첫 장면이 건너뛰지 않음
-  bool _holding = false;
-
   @override
   bool didPop(T? result) {
     // 2프레임 정지 후 재시작하면 닫힐 때 흰 화면이 번쩍일 수 있어 즉시 자연스럽게 역재생
@@ -168,7 +163,6 @@ class PushAsideRoute<T> extends PageRoute<T> {
 
   @override
   void dispose() {
-    _holding = false;
     if (_drivesShift && !_replacedByPushAside) PushAside.shift.value = 0;
     _curve?.removeListener(_sync);
     _curve?.dispose();

@@ -140,31 +140,6 @@ class PageTextSelection extends ChangeNotifier {
   /// 고른 글(파란 바탕) 위를 눌렀는지
   bool hitsSelection(Offset p) => highlightRects.any((r) => r.inflate(10).contains(p));
 
-  /// 고른 글을 잡고 끌 때 움직일 손잡이 (true: 앞, false: 뒤)
-  bool? _bodyStart;
-
-  /// 고른 글을 잡고 끌기 시작: 누른 곳에서 가까운 손잡이를 잡음
-  void beginBodyDrag(Offset p) {
-    if (!active) return;
-    _bodyStart = (p - startHandle).distance < (p - endHandle).distance;
-  }
-
-  /// 고른 글을 잡고 끄는 중: 잡은 손잡이를 손가락 자리로
-  void bodyDragTo(Offset p) {
-    final b = _bodyStart;
-    if (b == null || !active) return;
-    moveHandle(b, p);
-    // 앞 손잡이를 뒤 손잡이 너머로 끌면 순서가 바뀌므로 다시 고름
-    final (sl, sc, el, ec) = _range;
-    final h = hit(p);
-    if (h != null) {
-      if (h.$1 == sl && h.$2 == sc) _bodyStart = true;
-      if (h.$1 == el && h.$2 == ec) _bodyStart = false;
-    }
-  }
-
-  void endBodyDrag() => _bodyStart = null;
-
   /// 낱말 상자들(읽는 순서)을 줄로 묶음: 같은 높이에서 오른쪽으로 이어지는 낱말은 한 줄 (쪽이 바뀌면 새 줄)
   static List<SelLine> linesFromWords(List<SelLine> words) {
     final out = <SelLine>[];
@@ -431,6 +406,23 @@ class PageTextSelection extends ChangeNotifier {
     return out;
   }
 
+  /// 고른 부분의 네모들을 쪽 안 자리로 ([쪽, 왼쪽, 위, 너비, 높이] — 쪽 크기 대비 0~1). 쪽 자리를 모르는 줄은 뺌
+  List<List<num>> get highlightNorm {
+    if (!active) return const [];
+    final (sl, sc, el, ec) = _range;
+    final out = <List<num>>[];
+    for (int i = sl; i <= el; i++) {
+      final line = lines[i];
+      final n = line.norm;
+      if (n == null || line.page < 0) continue;
+      final int len = math.max(1, line.text.length);
+      final double a = i == sl ? sc.clamp(0, len) / len : 0;
+      final double b = i == el ? ec.clamp(0, len) / len : 1;
+      if (b > a) out.add([line.page, n.left + n.width * a, n.top, n.width * (b - a), n.height]);
+    }
+    return out;
+  }
+
   /// 앞 손잡이 자리 (글 아래 왼쪽) / 뒤 손잡이 자리 (글 아래 오른쪽)
   Offset get startHandle {
     final (sl, sc, _, _) = _range;
@@ -455,7 +447,11 @@ class PageTextSelectLayer extends StatelessWidget {
     this.onHandleDragUpdate,
     this.onHandleDragEnd,
     this.hideHandles = false,
+    this.paintRects,
   });
+
+  /// 고른 글 바탕을 이 층에서 그리는가 (없으면 그림). 스크롤 보기 문서는 문서 화면 안에 그려서 글과 함께 움직이게 함
+  final bool Function()? paintRects;
 
   /// 형광펜 칠하기: 고른 부분의 네모들(이 층 기준)을 받음. 없으면 단추를 숨김
   final void Function(List<Rect> rects)? onHighlight;
@@ -499,7 +495,7 @@ class PageTextSelectLayer extends StatelessWidget {
                 onPanCancel: () => onHandleDragEnd?.call(),
                 child: Padding(
                   padding: const EdgeInsets.all(14),
-                  child: CustomPaint(size: const Size(hr * 2, hr * 2), painter: _HandlePainter(start)),
+                  child: CustomPaint(size: const Size(hr * 2, hr * 2), painter: TextSelectHandlePainter(start)),
                 ),
               ),
             );
@@ -511,7 +507,7 @@ class PageTextSelectLayer extends StatelessWidget {
           return Stack(
             clipBehavior: Clip.none,
             children: [
-              IgnorePointer(child: CustomPaint(size: Size.infinite, painter: _HighlightPainter(rects))),
+              if (paintRects?.call() ?? true) IgnorePointer(child: CustomPaint(size: Size.infinite, painter: _HighlightPainter(rects))),
 
               if (!hideHandles) handle(true, s),
               if (!hideHandles) handle(false, e),
@@ -555,20 +551,6 @@ class PageTextSelectLayer extends StatelessWidget {
   }
 }
 
-class _BodyHit extends CustomPainter {
-  _BodyHit(this.rects);
-  final List<Rect> rects;
-
-  @override
-  void paint(Canvas canvas, Size size) {}
-
-  @override
-  bool hitTest(Offset position) => rects.any((r) => r.contains(position));
-
-  @override
-  bool shouldRepaint(covariant _BodyHit old) => false;
-}
-
 class _HighlightPainter extends CustomPainter {
   _HighlightPainter(this.rects);
   final List<Rect> rects;
@@ -586,8 +568,8 @@ class _HighlightPainter extends CustomPainter {
 }
 
 /// 물방울 모양 손잡이: 앞 손잡이는 오른쪽 위 모서리, 뒤 손잡이는 왼쪽 위 모서리가 뾰족함
-class _HandlePainter extends CustomPainter {
-  _HandlePainter(this.start);
+class TextSelectHandlePainter extends CustomPainter {
+  TextSelectHandlePainter(this.start);
   final bool start;
 
   @override
@@ -599,5 +581,5 @@ class _HandlePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _HandlePainter old) => old.start != start;
+  bool shouldRepaint(covariant TextSelectHandlePainter old) => old.start != start;
 }

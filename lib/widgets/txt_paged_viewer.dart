@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'text_copy_sheet.dart';
 import 'word_selection_layer.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -19,11 +18,6 @@ class TxtPageController {
       _invoke?.call('display', position);
   Future<void> toProgress(double progress) async =>
       _invoke?.call('progress', progress);
-
-  String Function()? _visible;
-
-  /// 지금 화면에 보이는 쪽의 글 (글자 복사용)
-  String get visibleText => _visible?.call() ?? '';
 
   // 파일 내 단어 검색: 찾은 곳 수 / n번째로 이동 / 지우기
   Future<int> Function(String)? _search;
@@ -85,7 +79,6 @@ class _TxtPagedViewerState extends State<TxtPagedViewer> {
   void initState() {
     super.initState();
     widget.controller._invoke = _navigate;
-    widget.controller._visible = () => _visibleText.join('\n\n');
     widget.controller._search = _search;
     widget.controller._showResult = _showSearchResult;
     widget.controller._clear = _clearSearch;
@@ -291,7 +284,6 @@ class _TxtPagedViewerState extends State<TxtPagedViewer> {
         // EPUB처럼 글을 길게 눌러 골라 복사
         child: WordSelectionLayer(
           tr: _tr,
-          onCopy: (t) => showTextCopySheet(context, text: t, tr: _tr),
           loadWords: () async => _wordsOf(text),
           child: CustomPaint(
             painter: _TxtPaperPainter(text, foreground,

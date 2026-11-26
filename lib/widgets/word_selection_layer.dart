@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'text_select.dart';
+
 /// 그림(쪽 그림·TXT 종이) 위의 낱말 한 개: 글자와 자리(0~1, 이 층 크기 대비)
 class SelectableWord {
   const SelectableWord(this.text, this.rect);
@@ -16,14 +18,13 @@ class SelectableWord {
   }
 }
 
-/// EPUB처럼 글을 길게 눌러 고르기: 길게 누르면 그 낱말이 골라지고, 손을 떼지 않고 끌면 범위가 늘어남.
-/// 양쪽 손잡이로 범위를 고치고, 위에 뜬 '글자 복사'를 누르면 복사 창으로.
+/// 한글 파일처럼 글을 길게 눌러 고르기: 길게 누르면 그 낱말이 골라지고, 손을 떼지 않고 끌면 범위가 늘어남.
+/// 양쪽 물방울 손잡이로 범위를 고치고, 위에 뜬 [복사 | 모두 선택 | 공유] 막대로 바로 복사·공유 (색·손잡이·막대는 한글·워드와 같음)
 /// (그림으로 보여 주는 스크롤 보기·TXT에서 씀)
 class WordSelectionLayer extends StatefulWidget {
   const WordSelectionLayer({
     super.key,
     required this.loadWords,
-    required this.onCopy,
     required this.tr,
     required this.child,
     this.highlight = '',
@@ -33,7 +34,6 @@ class WordSelectionLayer extends StatefulWidget {
   final String highlight;
 
   final Future<List<SelectableWord>> Function() loadWords;
-  final void Function(String text) onCopy;
   final String Function(String ko, String en, String zh, String ja) tr;
   final Widget child;
 
@@ -255,12 +255,10 @@ class _WordSelectionLayerState extends State<WordSelectionLayer> {
         final rects = [for (int i = _lo; i <= _hi; i++) _px(words[i].rect)];
         children.add(Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: _SelectionPainter(rects)))));
         final first = rects.first, last = rects.last;
-        const double knob = 22;
+        const double hr = 11; // 손잡이 반지름 (한글·워드와 같은 물방울 모양)
         Widget handle(Offset at, bool start) => Positioned(
-              left: at.dx - knob / 2,
-              top: at.dy,
-              width: knob,
-              height: knob + 8,
+              left: at.dx - (start ? hr * 2 : 0) - 14,
+              top: at.dy - 10,
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onPanStart: (_) {
@@ -270,14 +268,18 @@ class _WordSelectionLayerState extends State<WordSelectionLayer> {
                 onPanUpdate: (d) {
                   final box = context.findRenderObject() as RenderBox?;
                   if (box == null) return;
-                  _extend(box.globalToLocal(d.globalPosition) - Offset(0, first.height / 2 + 6), start: start);
+                  // 손가락이 손잡이를 가리지 않게 조금 위의 글자를 기준으로
+                  _extend(box.globalToLocal(d.globalPosition) - const Offset(0, 28), start: start);
                 },
                 onPanEnd: (_) {
                   WordSelectionLayer.dragging.value = false;
                   setState(() => _menu = true);
                 },
                 onPanCancel: () => WordSelectionLayer.dragging.value = false,
-                child: const Align(alignment: Alignment.topCenter, child: _Knob()),
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: CustomPaint(size: const Size(hr * 2, hr * 2), painter: TextSelectHandlePainter(start)),
+                ),
               ),
             );
         children.add(handle(first.bottomLeft, true));
@@ -285,11 +287,11 @@ class _WordSelectionLayerState extends State<WordSelectionLayer> {
         if (_menu) {
           final top = rects.map((r) => r.top).reduce((a, b) => a < b ? a : b);
           final bottom = rects.map((r) => r.bottom).reduce((a, b) => a > b ? a : b);
-          final double y = top > 56 ? top - 50 : bottom + 34;
+          final double y = top - 60 > 8 ? top - 60 : bottom + 30;
           children.add(Positioned(
             left: 0,
             right: 0,
-            top: y.clamp(0, (_size.height - 44).clamp(0, double.infinity)).toDouble(),
+            top: y.clamp(0, (_size.height - 56).clamp(0, double.infinity)).toDouble(),
             child: Center(child: _menuBar()),
           ));
         }
@@ -311,56 +313,31 @@ class _WordSelectionLayerState extends State<WordSelectionLayer> {
     });
   }
 
-  Widget _menuBar() {
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    Widget item(String label, VoidCallback onTap) => InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            child: Text(label, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: dark ? Colors.white : Colors.black87)),
-          ),
-        );
-    return Material(
-      elevation: 6,
-      color: dark ? const Color(0xFF2B2B2F) : Colors.white,
-      borderRadius: BorderRadius.circular(10),
-      clipBehavior: Clip.antiAlias,
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        item(widget.tr('글자 복사', 'Copy Text', '复制文字', '文字をコピー'), () {
+  Widget _menuBar() => SelectionActionBar(
+        tr: widget.tr,
+        onCopy: () {
           final text = _selectedText();
           _clear();
-          if (text.trim().isNotEmpty) widget.onCopy(text);
-        }),
-        Container(width: 1, height: 22, color: dark ? Colors.white24 : Colors.black12),
-        item(widget.tr('전체 선택', 'Select All', '全选', 'すべて選択'), () {
+          copyText(context, text, widget.tr);
+        },
+        onSelectAll: () {
           final words = _words;
           if (words == null || words.isEmpty) return;
           setState(() {
             _a = 0;
             _b = words.length - 1;
           });
-        }),
-      ]),
-    );
-  }
-}
-
-class _Knob extends StatelessWidget {
-  const _Knob();
-  @override
-  Widget build(BuildContext context) => Container(
-        width: 16,
-        height: 16,
-        decoration: const BoxDecoration(
-          color: Color(0xFFFFA000),
-          shape: BoxShape.circle,
-          boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 3)],
-        ),
+        },
+        onShare: () {
+          final text = _selectedText();
+          _clear();
+          shareText(text);
+        },
       );
 }
 
 class _SelectionPainter extends CustomPainter {
-  _SelectionPainter(this.rects, {this.color = const Color(0x55FFC107)});
+  _SelectionPainter(this.rects, {this.color = const Color(0x4D1A73E8)}); // 한글·워드와 같은 파란 바탕 (kTextSelectColor 30%)
   final List<Rect> rects;
   final Color color;
 
@@ -368,7 +345,7 @@ class _SelectionPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final p = Paint()..color = color;
     for (final r in rects) {
-      canvas.drawRect(r.inflate(1), p);
+      canvas.drawRect(r, p);
     }
   }
 

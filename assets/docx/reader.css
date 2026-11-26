@@ -184,3 +184,5 @@ body.eri-docx-edit, body.eri-docx-edit * {
   transform: rotate(45deg);
 }
 body.eri-scrolling .eri-sel-handle, body.eri-scrolling .eri-caret-handle { opacity: 0 !important; pointer-events: none !important; transition: opacity 80ms ease; }
+/* 길게 눌러 고른 글 바탕 (스크롤 보기, 앱의 글 고르기와 같은 색) */
+#vpages .vslot > .eri-copy-mark { position: absolute; background: rgba(26, 115, 232, 0.30); pointer-events: none; z-index: 8; }

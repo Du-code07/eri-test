@@ -116,13 +116,13 @@ class PopPanelRoute<T> extends PopupRoute<T> {
         left: left,
         top: top,
         width: w,
-        child: AnimatedBuilder(
-          animation: animation,
-          builder: (context, child) => Opacity(
-            opacity: fade.value.clamp(0.0, 1.0),
-            child: Transform.scale(scale: 0.12 + 0.88 * curved.value, alignment: Alignment.topLeft, origin: origin, child: child),
-          ),
-          child: ConstrainedBox(
+        // 창 내용은 한 번만 그려 두고 크기·투명도만 바꿈 (열고 닫는 동안 매 장면 다시 그리면 버벅였음)
+        child: FadeTransition(
+          opacity: fade,
+          child: AnimatedBuilder(
+          animation: curved,
+          builder: (context, child) => Transform.scale(scale: 0.12 + 0.88 * curved.value, alignment: Alignment.topLeft, origin: origin, child: child),
+          child: RepaintBoundary(child: ConstrainedBox(
             constraints: BoxConstraints(maxHeight: maxH),
             child: Material(
               color: Theme.of(context).colorScheme.surfaceContainerHigh,
@@ -131,7 +131,8 @@ class PopPanelRoute<T> extends PopupRoute<T> {
               clipBehavior: Clip.antiAlias,
               child: SingleChildScrollView(child: Builder(builder: builder)),
             ),
-          ),
+          )),
+        ),
         ),
       ),
     ]);
@@ -235,7 +236,8 @@ class _BottomRiseState extends State<BottomRise> with SingleTickerProviderStateM
         position: Tween<Offset>(begin: const Offset(0, 1), end: Offset.zero).animate(slide),
         child: Transform.translate(
           offset: Offset(0, _drag),
-          child: ConstrainedBox(
+          // 창 내용은 한 번만 그려 두고 자리만 옮김 (올라오고 끌어내리는 동안 매 장면 다시 그리면 버벅였음)
+          child: RepaintBoundary(child: ConstrainedBox(
             // 양옆 간격·모서리를 앱 설정 창과 같게
             constraints: BoxConstraints(maxHeight: screen.height * 0.85, maxWidth: math.min(640.0, screen.width - 16)),
             child: Material(
@@ -269,7 +271,7 @@ class _BottomRiseState extends State<BottomRise> with SingleTickerProviderStateM
                 ],
               ),
             ),
-          ),
+          )),
         ),
       ),
     );

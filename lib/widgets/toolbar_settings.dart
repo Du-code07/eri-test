@@ -16,7 +16,7 @@ import 'viewer_dialogs.dart' show PageModeIcon, ViewerSheetPull, ViewerSheetScop
 /// - [top]: 상단바 (왼쪽부터, 숨기지 않은 것 최대 [maxTop]개)
 /// - [bar]: 도구 모음 (왼쪽부터)
 /// - [hidden]: 숨긴 아이콘
-/// 뷰어마다 쓸 수 없는 아이콘(예: PDF가 아닌 파일의 글자 복사)은 목록에 있어도 그 뷰어에서는 보이지 않음
+/// 뷰어마다 쓸 수 없는 아이콘(예: 한글·워드가 아닌 파일의 문서 편집)은 목록에 있어도 그 뷰어에서는 보이지 않음
 class ToolbarLayout {
   ToolbarLayout({required this.top, required this.bar, required this.hidden});
 
@@ -28,7 +28,7 @@ class ToolbarLayout {
   static const String _key = 'toolbar_layout_v1';
 
   static const List<String> defaultTop = ['find', 'slideshow', 'theme', 'toc'];
-  static const List<String> defaultBar = ['prevChapter', 'nextChapter', 'prev', 'next', 'rotate', 'display', 'mode', 'direction', 'fontsize', 'memo', 'edit', 'copy', 'bookmark'];
+  static const List<String> defaultBar = ['prevChapter', 'nextChapter', 'prev', 'next', 'rotate', 'display', 'mode', 'direction', 'fontsize', 'memo', 'edit', 'bookmark'];
 
   /// 지금 쓰는 배치 (뷰어들이 함께 보고, 바뀌면 다시 그림)
   static final ValueNotifier<ToolbarLayout> current = ValueNotifier<ToolbarLayout>(ToolbarLayout.defaults());
@@ -46,17 +46,6 @@ class ToolbarLayout {
       final known = {...defaultTop, ...defaultBar};
       final List<String> top = [for (final e in (m['top'] as List? ?? const [])) if (known.contains(e)) e as String];
       final List<String> bar = [for (final e in (m['bar'] as List? ?? const [])) if (known.contains(e) && !top.contains(e)) e as String];
-      // 새로 추가된 EPUB 이전·다음 챕터 단추는 기존 사용자도 '이전 파일(prev)' 왼쪽에 자동 배치
-      for (final id in const ['nextChapter', 'prevChapter']) {
-        if (!top.contains(id) && !bar.contains(id)) {
-          final int prevIdx = bar.indexOf('prev');
-          if (prevIdx >= 0) {
-            bar.insert(prevIdx, id);
-          } else {
-            bar.insert(0, id);
-          }
-        }
-      }
       for (final id in [...defaultTop, ...defaultBar]) {
         if (!top.contains(id) && !bar.contains(id)) bar.add(id);
       }
@@ -98,7 +87,6 @@ Widget toolbarCatalogIcon(String id, Color color, {double size = 20}) => switch 
       'fontsize' => Icon(Icons.format_size_rounded, color: color, size: size),
       'memo' => MemoToolIcon(kind: 'memo', color: color, size: size + 2),
       'edit' => Icon(Icons.edit_note_rounded, color: color, size: size + 2),
-      'copy' => Icon(Icons.copy_all_outlined, color: color, size: size),
       _ => Icon(Icons.bookmarks_outlined, color: color, size: size),
     };
 
@@ -119,7 +107,6 @@ String toolbarCatalogLabel(String id, String Function(String ko, String en, Stri
       'fontsize' => tr('글자 크기', 'Font Size', '字体大小', '文字サイズ'),
       'memo' => tr('메모', 'Memo', '笔记', 'メモ'),
       'edit' => tr('문서 편집', 'Edit Document', '编辑文档', '文書編集'),
-      'copy' => tr('글자 복사', 'Copy Text', '复制文字', '文字をコピー'),
       _ => tr('북마크', 'Bookmarks', '书签', 'ブックマーク'),
     };
 

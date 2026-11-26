@@ -30,8 +30,6 @@ class HwpReaderController {
 
   /// Excel navigation operates on the live worksheet, not document pages.
   Future<void> selectSheet(int index) async => _invoke?.call('selectSheet', [index]);
-  Future<void> zoomSheet(double factor) async => _invoke?.call('zoomBy', [factor]);
-  Future<void> resetSheetZoom() async => _invoke?.call('resetZoom', []);
 
   /// 한글·워드 스크롤 보기: 손가락으로 확대·축소해 둔 배율 (1이면 원래 크기)
   double scrollZoom = 1;
@@ -42,6 +40,9 @@ class HwpReaderController {
 
   /// 한글·워드 스크롤 보기: 북마크한 쪽들에 책갈피를 붙임
   Future<void> setScrollMarks(List<int> pages) async => _invoke?.call('setScrollMarks', [pages]);
+
+  /// 한글·워드 스크롤 보기: 길게 눌러 고른 글 바탕을 쪽 안에 그림 ([쪽, 왼쪽, 위, 너비, 높이] — 쪽 크기 대비 0~1, 빈 목록이면 지움)
+  Future<void> setCopyMarks(List<List<num>> marks) async => _invoke?.call('setCopyMarks', [marks]);
 
   /// 한글·워드 스크롤 보기 메모: 모든 쪽 메모 ({쪽: [{x, y, c(ARGB), w(쪽 너비 대비 굵기)}]})
   Future<void> setScrollMemos(Map<int, List<Map<String, Object>>> all) async =>
@@ -132,25 +133,15 @@ class HwpReaderController {
     return result is String && result.isNotEmpty ? result : null;
   }
 
-  /// 지금 보이는 쪽이 화면에서 차지하는 자리 (0~1 비율). 모르면 null
-  /// 모든 쪽의 높이/너비 (스크롤 보기에서 쪽 자리를 먼저 잡아 둘 때). 모르면 null
-  Future<List<double>?> pageAspects() async {
-    try {
-      final r = await _query?.call('pageSizes', []);
-      if (r is! List || r.isEmpty) return null;
-      final out = <double>[];
-      for (final e in r) {
-        if (e is! List || e.length < 2) return null;
-        final double w = (e[0] as num?)?.toDouble() ?? 0, h = (e[1] as num?)?.toDouble() ?? 0;
-        if (w <= 0 || h <= 0) return null;
-        out.add(h / w);
-      }
-      return out;
-    } catch (_) {
-      return null;
-    }
+  /// PPT: 슬라이드 하나가 화면에 놓인 자리 (화면 크기 대비 0~1). 화면에 없으면 null
+  Future<Rect?> slideRect(int index) async {
+    final r = await _query?.call('slideRect', [index]);
+    if (r is! List || r.length < 4) return null;
+    double v(Object? x) => (x as num?)?.toDouble() ?? 0;
+    return Rect.fromLTWH(v(r[0]), v(r[1]), v(r[2]), v(r[3]));
   }
 
+  /// 지금 보이는 쪽이 화면에서 차지하는 자리 (0~1 비율). 모르면 null
   Future<Rect?> pageRect() async {
     final r = await _query?.call('pageRect', []);
     if (r is! Map) return null;
@@ -215,7 +206,12 @@ class HwpReaderController {
     if (result is! List) return const [];
     return [
       for (final b in result)
-        if (b is Map) {'t': b['t'], 'x': b['x'], 'y': b['y'], 'w': b['w'], 'h': b['h']},
+        if (b is Map)
+          {
+            't': b['t'], 'x': b['x'], 'y': b['y'], 'w': b['w'], 'h': b['h'],
+            // 스크롤 보기: 몇째 쪽의 어느 자리인지 (쪽 크기 대비 0~1) — 고른 글 바탕을 쪽에 붙여 그리는 데 씀
+            if (b['p'] is num) ...{'p': b['p'], 'px': b['px'], 'py': b['py'], 'pw': b['pw'], 'ph': b['ph']},
+          },
     ];
   }
 

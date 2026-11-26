@@ -18,14 +18,12 @@ import '../services/toc_page_parser.dart';
 import '../services/heading_rules.dart';
 import '../services/outline_cache.dart';
 import '../widgets/outline_progress.dart';
-import '../widgets/text_copy_sheet.dart';
 import '../widgets/text_select.dart';
 import '../services/docx_save_service.dart';
 import '../services/page_snapshot_service.dart';
 import '../services/user_fonts.dart';
 import '../services/epub_validation.dart';
 import '../widgets/hwp_viewer.dart';
-import 'package:path_provider/path_provider.dart';
 import '../widgets/spreadsheet_tab_bar.dart';
 import '../widgets/txt_paged_viewer.dart';
 import '../services/volume_key_service.dart';
@@ -488,6 +486,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     WidgetsBinding.instance.addObserver(this);
     _startOutlineCacheRead(); // 저장해 둔 목차를 문서가 열리는 동안 미리 읽어 둠
     _docSel.addListener(_syncDocScrollLock);
+    _docSel.addListener(_scheduleDocCopyMarks);
     _initReader();
   }
 
@@ -1125,7 +1124,6 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     _loadDocumentOutline(pageCount);
   }
 
-  double _sheetZoom = 1;
 
   void _onSheetNames(List<String> names) {
     if (!mounted || !_isSpreadsheet) return;
@@ -1157,10 +1155,6 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     setState(() {
       _docPage = page;
       _docPageCount = pageCount;
-      if (_isSpreadsheet) {
-        final parts = position.split(':');
-        _sheetZoom = parts.length == 5 ? double.tryParse(parts.last) ?? 1 : 1;
-      }
       _currentCfi = position;
       _memoBase = position;
       _currentPageLocationKey = memoKey;
@@ -2121,59 +2115,6 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   // EPUB: 지금 장의 처음/끝에 닿았는지, 첫/마지막 장인지
   bool _chAtStart = false, _chAtEnd = false, _chFirst = true, _chLast = false;
 
-  /// EPUB 이전·다음 챕터 단추 높이: 오른쪽 하단(도구 모음 막대와 같은 높이)
-  double _chapterButtonsBottom(double bottomPadding) {
-    double b = math.max<double>(bottomPadding + 16.0, 20.0) + 4.0;
-    if (_showControls && !_progressBarHidden && _progressBarPos == 'bottom') b += 44.0;
-    if (_isMemoMode && _memoToolbarPos == 'bottom') b += 60.0;
-    return b;
-  }
-
-  Widget _buildChapterButtons() {
-    final bool dark = _getBgColor().computeLuminance() < 0.4;
-    final bool paper = _epubBgTheme == 'sepia';
-    final Color bg = dark ? const Color(0xE61C1C1E) : paper ? const Color(0xF0E6D3AE) : const Color(0xF0F1F1F4);
-    final Color fg = dark ? Colors.white : paper ? const Color(0xFF4A3A28) : const Color(0xFF222222);
-    final Color border = dark ? Colors.white24 : paper ? const Color(0x806B4E2A) : Colors.black12;
-    Widget button(String tooltip, IconData icon, bool enabled, int dir) => Tooltip(
-          message: tooltip,
-          child: Opacity(
-            opacity: enabled ? 1 : 0.35,
-            child: Material(
-              color: bg,
-              elevation: 3,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14), side: BorderSide(color: border)),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(14),
-                onTap: enabled
-                    ? () {
-                        HapticFeedback.selectionClick();
-                        setState(() {
-                          _chAtStart = false;
-                          _chAtEnd = false;
-                        });
-                        _epubController.goChapter(dir);
-                      }
-                    : null,
-                child: SizedBox(
-                  width: 40,
-                  height: 40,
-                  child: Icon(icon, size: 22, color: fg),
-                ),
-              ),
-            ),
-          ),
-        );
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        button(_tr('이전 챕터', 'Prev chapter', '上一章', '前の章'), Icons.keyboard_arrow_up_rounded, !_chFirst, -1),
-        const SizedBox(width: 6),
-        button(_tr('다음 챕터', 'Next chapter', '下一章', '次の章'), Icons.keyboard_arrow_down_rounded, !_chLast, 1),
-      ],
-    );
-  }
-
   /// 목차 열기: 책 화면을 그림으로 잠시 바꿔 두고 열어 움직임이 끊기지 않게
   Uint8List? _tocFreeze;
   // EPUB 스크롤 보기: [지금 위치, 장 전체 길이, 보이는 높이] (오른쪽 회색 막대)
@@ -2801,6 +2742,35 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     _docCopyDragGlobal = null;
   }
 
+  /// 스크롤 보기 문서: 고른 글 바탕을 문서 화면 안(쪽 칸)에 그림 — 앱 위에 그리면 스크롤할 때 한 박자 늦게 따라와 글과 어긋났음
+  bool get _docCopyMarksInPage => _docVertical && _docSel.active && _docSel.anchored;
+  bool _docCopyMarksSent = false;
+  bool _docCopyMarksQueued = false;
+  String _docCopyMarksLast = '';
+  void _scheduleDocCopyMarks() {
+    if (_docCopyMarksQueued) return;
+    _docCopyMarksQueued = true;
+    // 손잡이를 끄는 동안 한 장면에 한 번만 보냄
+    SchedulerBinding.instance.scheduleFrameCallback((_) {
+      _docCopyMarksQueued = false;
+      if (!mounted) return;
+      if (_docCopyMarksInPage) {
+        // 스크롤만 했을 때는 쪽 안 자리가 그대로라 다시 보내지 않음
+        final marks = _docSel.highlightNorm;
+        final key = marks.map((m) => m.join(',')).join(';');
+        if (key == _docCopyMarksLast) return;
+        _docCopyMarksLast = key;
+        _docCopyMarksSent = true;
+        _hwpController.setCopyMarks(marks);
+      } else if (_docCopyMarksSent) {
+        _docCopyMarksSent = false;
+        _docCopyMarksLast = '';
+        _hwpController.setCopyMarks(const []);
+      }
+    });
+    SchedulerBinding.instance.ensureVisualUpdate();
+  }
+
   /// 움직이는 동안(스크롤·확대·축소)은 손잡이·막대를 잠시 숨김 (손잡이를 끄는 중이면 그대로)
   void _markDocCopyScrolling() {
     if (_docHandleDragging) return;
@@ -2890,7 +2860,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   }
   bool _docDownOnControls = false;
 
-  bool get _docSelectable => _isOfflineDocument && !_isTxt && !_isSpreadsheet && !_isPresentation;
+  bool get _docSelectable => _isOfflineDocument && !_isTxt && !_isSpreadsheet && !(_isPresentation && _slideShow);
 
   Offset? _docLocal(Offset global) {
     final box = _docSelKey.currentContext?.findRenderObject() as RenderBox?;
@@ -2928,6 +2898,11 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     final raw = await _hwpController.visibleTextBoxes();
     if (!mounted) return;
     _docSel.lines = PageTextSelection.linesFromWords(_docWordsFrom(raw, size));
+    // 사진으로 된 PPT 슬라이드: 글 상자가 없으면 슬라이드 그림의 글자를 읽어 그 자리에 겹쳐 고르게 함
+    if (_docSel.lines.isEmpty && _isPresentation) {
+      _docSel.lines = await _slideOcrLines(size);
+      if (!mounted) return;
+    }
     final local = box.globalToLocal(global);
     if (_docSel.selectWordAt(local)) {
       HapticFeedback.selectionClick();
@@ -2945,6 +2920,43 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     }
     if (mounted) setState(() => _docPressSelecting = false);
     _syncDocScrollLock();
+  }
+
+  /// 사진으로 된 PPT 슬라이드의 글자를 읽어 화면 자리의 줄로 (같은 슬라이드는 한 번만 읽음)
+  final Map<int, List<Map<String, Object?>>> _slideOcrCache = {};
+  Future<List<SelLine>> _slideOcrLines(Size size) async {
+    final int index = _docPage;
+    final slide = await _hwpController.slideRect(index);
+    if (slide == null) return const [];
+    List<Map<String, Object?>>? cached = _slideOcrCache[index];
+    if (cached == null) {
+      List<Map<String, Object?>> found = const [];
+      final b64 = await _hwpController.slideImage(index, width: 1400);
+      if (b64 != null) {
+        final tmpDir = Directory('${(await getTemporaryDirectory()).path}/ppt_copy_ocr');
+        await tmpDir.create(recursive: true);
+        final img = File('${tmpDir.path}/slide_$index.jpg');
+        try {
+          await img.writeAsBytes(base64Decode(b64), flush: true);
+          final raw = await _pdfChannel.invokeMethod<List<Object?>>('ocrLines', {'path': img.path}) ?? const [];
+          found = [for (final e in raw) if (e is Map && '${e['t'] ?? ''}'.trim().isNotEmpty && e['x'] is num && e['w'] is num) e.cast<String, Object?>()];
+        } catch (_) {
+        } finally {
+          try {
+            await img.delete();
+          } catch (_) {}
+        }
+      }
+      _slideOcrCache[index] = found;
+      cached = found;
+    }
+    final ls = cached;
+    final Rect r = Rect.fromLTWH(slide.left * size.width, slide.top * size.height, slide.width * size.width, slide.height * size.height);
+    double v(Map<String, Object?> e, String k) => (e[k] as num?)?.toDouble() ?? 0;
+    return [
+      for (final e in ls)
+        SelLine('${e['t']}'.trim(), Rect.fromLTWH(r.left + v(e, 'x') * r.width, r.top + v(e, 'y') * r.height, v(e, 'w') * r.width, v(e, 'h') * r.height)),
+    ];
   }
 
   /// 길게 누르면 단어 하나만 선택하고, 영역 확장은 양쪽 손잡이로만 처리 (하이라이트 중에도 스크롤 허용)
@@ -3463,6 +3475,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                 sel: _docSel,
                 tr: _tr,
                 onHighlight: _docHighlight,
+                paintRects: () => !_docCopyMarksInPage,
                 hideHandles: _docCopyScrolling && !_docHandleDragging,
                 onHandleDragStart: () {
                   _docCopyScrollHideTimer?.cancel();
@@ -3735,14 +3748,6 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       _pointerDownTime = null;
       return;
     }
-    // PPT: 길게 누르면 지금 쪽의 글을 고르고 복사하는 창 (한글·워드·EPUB·TXT는 글을 직접 길게 눌러 고름)
-    if (distance < 18.0 && duration >= 550 && _isPresentation && !_isMemoMode && !_slideShow) {
-      HapticFeedback.selectionClick();
-      _openTextCopySheet();
-      _pointerDownPosition = null;
-      _pointerDownTime = null;
-      return;
-    }
     // 두 손가락(확대·축소)을 쓴 동작은 탭으로 보지 않음
     final bool multiTouch = _swipeMultiTouch || _tapPointers > 0;
     // 엑셀: 길게 눌러 골라 둔 칸이 있으면 이번 누름은 그 표시만 지움 (메뉴는 그대로)
@@ -3766,7 +3771,6 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
 
   // 확대·축소한 화면을 빠르게 두 번 누르면 원래 크기로 (확대·축소돼 있을 때만 한 번 누름을 잠깐 기다려 봄)
   // 스크롤 보기도 모두: EPUB·TXT·한글·워드(문서가 직접 확대·축소)
-  Timer? _tapTimer;
   DateTime? _lastTapAt;
   Offset _lastTapPos = Offset.zero;
   bool? _controlsBeforeTap;
@@ -3913,8 +3917,9 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
         'img, svg, video, table': {
           'max-width': '100% !important',
         },
+        // 고른 글 바탕: 한글·워드·PDF와 같은 파란색
         '::selection': {
-          'background': 'rgba(255, 215, 0, 0.35)',
+          'background': 'rgba(26, 115, 232, 0.30)',
         },
         // 사용자가 고른 EPUB 글꼴 (앱 저장소의 글꼴 파일을 같은 주소에서 읽음)
         if (_epubFont != null) ...{
@@ -4574,13 +4579,6 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           onTap: _toggleHwpEditMode,
           closeAfterTap: true,
         ),
-      QuickToolItem(
-        id: 'copy',
-        icon: const Icon(Icons.copy_all_outlined, color: Colors.white, size: 17),
-        tooltip: _tr('글자 복사', 'Copy Text', '复制文字', '文字をコピー'),
-        onTap: _openTextCopySheet,
-        closeAfterTap: true,
-      ),
       if (_bookmarksOn)
       QuickToolItem(
         id: 'bookmark',
@@ -5058,43 +5056,6 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
         ],
       ),
     );
-  }
-
-  Future<void> _openTextCopySheet() async {
-    String text = '';
-    try {
-      if (_isTxt) {
-        text = _txtController.visibleText;
-      } else if (_isOfflineDocument) {
-        final n = _snapSpread ? 2 : 1;
-        text = (await _hwpController.pageText(_docPage, math.min(_docPageCount, _docPage + n))).join('\n\n');
-        // 사진으로 된 PPT 슬라이드: 텍스트 박스가 없으면 현재 슬라이드 이미지를 OCR로 읽어 복사 지원
-        if (_isPresentation && text.trim().isEmpty) {
-          final b64 = await _hwpController.slideImage(_docPage, width: 1400);
-          if (b64 != null) {
-            final tmpDir = Directory('${(await getTemporaryDirectory()).path}/ppt_copy_ocr');
-            await tmpDir.create(recursive: true);
-            final img = File('${tmpDir.path}/slide_$_docPage.jpg');
-            try {
-              await img.writeAsBytes(base64Decode(b64), flush: true);
-              final raw = await _pdfChannel.invokeMethod<List<Object?>>('ocrLines', {'path': img.path}) ?? const [];
-              text = [
-                for (final e in raw)
-                  if (e is Map && (e['t'] ?? '').toString().trim().isNotEmpty) (e['t'] ?? '').toString().trim(),
-              ].join('\n');
-            } finally {
-              try {
-                await img.delete();
-              } catch (_) {}
-            }
-          }
-        }
-      } else {
-        text = (await _epubController.extractCurrentPageText()).text ?? '';
-      }
-    } catch (_) {}
-    if (!mounted) return;
-    await showTextCopySheet(context, text: text, tr: _tr);
   }
 
   /// Excel has a two-dimensional viewport. Do not wrap it in the book reader's

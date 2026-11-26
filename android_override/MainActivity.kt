@@ -287,6 +287,26 @@ class MainActivity : FlutterActivity() {
         mainHandler.postDelayed({ hideSystemStatusBar() }, 450L)
     }
 
+    /// 화면이 지원하는 가장 높은 주사율(예: 120Hz)로 그리게 요청함.
+    /// 갤럭시 탭처럼 주사율이 바뀌는 기기는 따로 요청하지 않으면 앱 화면을 60Hz로 묶어 두는 경우가 있어
+    /// 창을 열고 닫거나 스크롤·슬라이드할 때 다른 앱보다 뚝뚝 끊겨 보였음
+    private fun preferHighRefreshRate() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        try {
+            val d = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display else @Suppress("DEPRECATION") windowManager.defaultDisplay
+            if (d == null) return
+            val cur = d.mode
+            val best = d.supportedModes
+                .filter { it.physicalWidth == cur.physicalWidth && it.physicalHeight == cur.physicalHeight }
+                .maxByOrNull { it.refreshRate } ?: return
+            if (window.attributes.preferredDisplayModeId != best.modeId) {
+                val lp = window.attributes
+                lp.preferredDisplayModeId = best.modeId
+                window.attributes = lp
+            }
+        } catch (_: Throwable) {}
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // 노치 영역 사용 방식은 처음에 한 번만 정함: 파일을 열 때 바꾸면 창이 다시 배치되며 화면이 한 장면 검게 깜빡임
@@ -311,6 +331,7 @@ class MainActivity : FlutterActivity() {
                 }
             } catch (_: Throwable) {}
         }
+        preferHighRefreshRate()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) window.setDecorFitsSystemWindows(false)
         hideSystemStatusBar(alsoHideNavBar = true)
         mainHandler.postDelayed({ hideSystemStatusBar(alsoHideNavBar = true) }, 250L)

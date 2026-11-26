@@ -14,7 +14,6 @@ import '../services/system_bars.dart';
 import '../services/pdf_outline_service.dart';
 import '../widgets/morph_icons.dart';
 import '../widgets/outline_progress.dart';
-import '../widgets/text_copy_sheet.dart';
 import '../services/volume_key_service.dart';
 import '../widgets/quick_tool_bar.dart';
 import '../widgets/toolbar_settings.dart';
@@ -1046,7 +1045,6 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
   bool _pinchSeen = false;
 
   // 확대·축소한 화면에서도 한 번 누르면 메뉴가 즉시 뜨고, 260ms 안에 한 번 더 누르면 배율을 원래대로 되돌림
-  Timer? _tapTimer;
   DateTime? _lastTapAt;
   Offset _lastTapPos = Offset.zero;
   bool? _controlsBeforeTap;
@@ -1180,14 +1178,8 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
         if (_isPdfFile && !_isMemoMode) {
           content = WordSelectionLayer(
             tr: _tr,
-            onCopy: (t) => showTextCopySheet(context, text: t, tr: _tr),
             loadWords: () async {
-              var ls = _textLineCache[i];
-              if (ls == null) {
-                final got = await _pdfLines(widget.files.first.path, i, i + 1, false);
-                ls = got.isEmpty ? const <Map<String, Object?>>[] : got.first.lines;
-                _textLineCache[i] = ls;
-              }
+              final ls = await _selectableLines(i);
               final out = <SelectableWord>[];
               for (final l in ls) {
                 double v(String k) => (l[k] as num?)?.toDouble() ?? 0;
@@ -1835,6 +1827,33 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
     return out;
   }
 
+  /// 쪽의 글 줄들 ({t, x0, x1, y, h}, 쪽 크기 대비 0~1). 글자 정보가 없는 쪽(그림·스캔본)은 쪽 그림의 글자를 읽어 옴
+  Future<List<Map<String, Object?>>> _selectableLines(int i) async {
+    var ls = _textLineCache[i];
+    if (ls == null) {
+      final got = await _pdfLines(widget.files.first.path, i, i + 1, false);
+      ls = got.isEmpty ? const <Map<String, Object?>>[] : got.first.lines;
+      _textLineCache[i] = ls;
+    }
+    if (ls.any((l) => '${l['t'] ?? ''}'.trim().isNotEmpty)) return ls;
+    List<Map>? ocr = _ocrCache[i];
+    if (ocr == null) {
+      if (i >= _imagePages.length) return const [];
+      try {
+        final raw = await _pdfChannel.invokeMethod<List<Object?>>('ocrLines', {'path': _imagePages[i].path}) ?? const [];
+        ocr = [
+          for (final e in raw)
+            if (e is Map && e['x'] is num && e['w'] is num)
+              {'t': e['t'], 'x0': e['x'], 'x1': (e['x'] as num) + (e['w'] as num), 'y': e['y'], 'h': e['h']},
+        ];
+      } catch (_) {
+        ocr = const [];
+      }
+      _ocrCache[i] = ocr;
+    }
+    return [for (final m in ocr) m.cast<String, Object?>()];
+  }
+
   // ── 길게 눌러 글 고르기 (PDF, 내보낸 PDF 포함) ──
   final PageTextSelection _textSel = PageTextSelection();
   final GlobalKey _textLayerKey = GlobalKey();
@@ -1855,12 +1874,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
     final pages = _visiblePageRects(box.size);
     final lines = <SelLine>[];
     for (final (idx, rect) in pages) {
-      var ls = _textLineCache[idx];
-      if (ls == null) {
-        final got = await _pdfLines(widget.files.first.path, idx, idx + 1, false);
-        ls = got.isEmpty ? const <Map<String, Object?>>[] : got.first.lines;
-        _textLineCache[idx] = ls;
-      }
+      final ls = await _selectableLines(idx);
       for (final l in ls) {
         double v(String k) => (l[k] as num?)?.toDouble() ?? 0;
         final String t = '${l['t'] ?? ''}';
@@ -1873,11 +1887,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
     _textSel.lines = lines;
     if (local != null && _textSel.selectWordAt(local)) {
       HapticFeedback.selectionClick();
-      return;
     }
-    // 글자 정보가 없는 쪽(그림·스캔본)이나 지원하지 않는 기기: 그림 속 글자를 읽어 복사하는 창
-    HapticFeedback.selectionClick();
-    _openTextCopySheet();
   }
 
   BookPaper? _curlPaper(bool spread, bool fromRight, Size size) {
@@ -2787,14 +2797,6 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
         },
         closeAfterTap: true,
       ),
-      if (_isPdfFile)
-        QuickToolItem(
-        id: 'copy',
-          icon: const Icon(Icons.copy_all_outlined, color: Colors.white, size: 17),
-          tooltip: _tr('글자 복사', 'Copy Text', '复制文字', '文字をコピー'),
-          onTap: _openTextCopySheet,
-          closeAfterTap: true,
-        ),
       QuickToolItem(
         id: 'bookmark',
         icon: Icon(
@@ -2824,31 +2826,6 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
         ),
     ];
     return {for (final it in list) it.id: it};
-  }
-
-  /// 지금 보고 있는 쪽(2페이지 보기면 두 쪽)의 글을 보여 주고 복사할 수 있게 함
-  Future<void> _openTextCopySheet() async {
-    final bool spread = _isSpreadActive(context);
-    final int first = spread ? (_currentPage ~/ 2) * 2 : _currentPage;
-    final pages = await _pdfLines(widget.files.first.path, first, math.min(_totalPages, first + (spread ? 2 : 1)), false);
-    if (!mounted) return;
-    var text = pages.map((p) => p.lines.map((l) => l['t']).join('\n')).join('\n\n');
-    if (text.trim().isEmpty) {
-      // 글자 정보가 없는 쪽(그림으로 된 쪽·스캔본): 쪽 그림에서 글자를 읽어 옴
-      final parts = <String>[];
-      for (int i = first; i < math.min(_totalPages, first + (spread ? 2 : 1)); i++) {
-        if (i >= _imagePages.length) break;
-        try {
-          final raw = await _pdfChannel.invokeMethod<List<Object?>>('ocrLines', {'path': _imagePages[i].path}) ?? const [];
-          final ls = [for (final e in raw) if (e is Map && '${e['t'] ?? ''}'.trim().isNotEmpty) e]
-            ..sort((a, b) => ((a['y'] as num?) ?? 0).compareTo((b['y'] as num?) ?? 0));
-          parts.add(ls.map((e) => '${e['t']}'.trim()).join('\n'));
-        } catch (_) {}
-      }
-      text = parts.where((t) => t.isNotEmpty).join('\n\n');
-    }
-    if (!mounted) return;
-    await showTextCopySheet(context, text: text, tr: _tr);
   }
 
   void _resetAnyZoom() {

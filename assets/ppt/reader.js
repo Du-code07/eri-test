@@ -463,6 +463,35 @@ async function pageText(from, to) {
   }
   return out;
 }
+/** 화면에 보이는 슬라이드 글의 낱말 상자들 (화면 크기 대비 0~1) — 앱이 한글·워드처럼 길게 눌러 글을 고르는 데 씀 */
+function visibleTextBoxes() {
+  const W = innerWidth || 1, H = innerHeight || 1, out = [];
+  const range = document.createRange();
+  for (const layer of host.querySelectorAll('section.slide .slide-text')) {
+    const clip = layer.getBoundingClientRect();
+    const walker = document.createTreeWalker(layer, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node && out.length < 20000; node = walker.nextNode()) {
+      const data = node.data;
+      if (!data.trim()) continue;
+      const word = /\S+/g;
+      for (let m = word.exec(data); m; m = word.exec(data)) {
+        try { range.setStart(node, m.index); range.setEnd(node, m.index + m[0].length); } catch (_) { continue; }
+        const r = [...range.getClientRects()].find(rect => rect.width >= 0.5 && rect.height >= 0.5);
+        if (!r || r.right <= 0 || r.bottom <= 0 || r.left >= W || r.top >= H) continue;
+        if (r.right <= clip.left || r.left >= clip.right || r.bottom <= clip.top || r.top >= clip.bottom) continue;
+        out.push({ t: m[0], x: r.left / W, y: r.top / H, w: r.width / W, h: r.height / H });
+      }
+    }
+  }
+  return out;
+}
+/** 슬라이드 하나가 화면에 놓인 자리 [왼쪽, 위, 너비, 높이] (화면 크기 대비 0~1, 화면에 없으면 null) — 사진으로 된 슬라이드의 글자 읽기 결과를 겹쳐 놓는 데 씀 */
+function slideRect(index) {
+  const frame = host.querySelector(`section.slide[data-page="${index | 0}"]`);
+  if (!frame) return null;
+  const W = innerWidth || 1, H = innerHeight || 1, r = frame.getBoundingClientRect();
+  return [r.left / W, r.top / H, r.width / W, r.height / H];
+}
 /** [from, to) 슬라이드의 줄들 [[{t, y, fs, bold}…]…] — 앱이 제목(가장 큰 글자)과 부제목을 고른다 */
 async function slideLineData(from, to) {
   if (!presentation) return [];
@@ -484,7 +513,7 @@ const observer = new ResizeObserver(() => {
 observer.observe(host);
 host.addEventListener('click', event => { if (event.target.closest('a')) event.preventDefault(); });
 window.freaderPpt = { beginDocument, appendChunk, openDocument, configure, display, next, previous, progress, highlightSelection, thumbnail, destroy,
-  search, showSearchResult, clearSearch, pageText, slideLineData, slideImage,
+  search, showSearchResult, clearSearch, pageText, slideLineData, slideImage, visibleTextBoxes, slideRect,
   getState: () => ({ ready: !disposed, loaded, page, count: presentation?.slideCount || 0, step, stepCount, received, awaitingPassword, spread: options.spread, format: options.format, maxBytes: MAX_BYTES }) };
 window.addEventListener('pagehide', destroy, { once: true });
 emit('ready', { version: '0.89.8' });

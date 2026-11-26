@@ -36,11 +36,6 @@ class SystemBars {
     }
   }
 
-  static void prepareLeave() {
-    _enterTimer?.cancel();
-    _enterTimer = null;
-  }
-
   static void leaveViewer() {
     if (_viewers > 0) _viewers--;
     if (_viewers == 0) {
