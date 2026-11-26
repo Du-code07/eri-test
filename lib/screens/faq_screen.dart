@@ -61,6 +61,13 @@ class FaqScreen extends StatelessWidget {
             'プライバシー保護のため、端末全体は探さず、選んだフォルダの中だけでファイルを探します。アプリ設定 > 検索するフォルダ で追加・削除できます'),
       ),
       (
+        t('각종 막대의 위치를 바꿀 수 있나요?', 'Can I change the position of the toolbars and bars?', '可以更改各种工具栏和条的位置吗？', '各種バーの位置は変えられますか？'),
+        t('와이드 메인화면 막대, 도구 모음 막대, 메모 도구 모음 막대, 페이지 막대, 스크롤 막대 모두 길게 누른 뒤 드래그해서 원하는 위치로 옮길 수 있어요',
+            'You can long-press and drag the Wide main screen bar, Toolbar, Memo Toolbar, Page Bar, and Scroll Bar to move them to your preferred position',
+            '宽屏主界面栏、工具栏、笔记工具栏、页面条和滚动条都可以长按后拖动到想要的位置',
+            'ワイドメイン画面バー、ツールバー、メモツールバー、ページバー、スクロールバーはすべて長押ししてドラッグすると好きな位置へ動かせます'),
+      ),
+      (
         t('메모나 북마크가 원본 파일을 바꾸나요?', 'Do notes or bookmarks change the original file?', '笔记或书签会修改原文件吗？', 'メモやブックマークで元のファイルは変わりますか？'),
         t('아니요. 메모와 북마크는 앱 안에 따로 저장돼서 원본 파일은 바뀌지 않아요. 스캔과 합치기도 원본을 바꾸지 않고 새 파일을 만들어요',
             'No. Notes and bookmarks are stored separately in the app and do not change the original file. Scanning and merging also create new files without changing the originals',

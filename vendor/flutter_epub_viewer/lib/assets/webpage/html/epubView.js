@@ -1007,7 +1007,8 @@ function renderBook(data, opts, loadToken) {
     // This is a final safeguard - if something bypassed our other blocks, prevent the navigation
     // BUT: Don't block if the user is actively dragging selection handles (isSelecting is true)
     // because that would cause the page to snap back when dragging handles after navigation
-    if (hasActiveSelection() && !isSelecting) {
+    var isScrolledFlow = rendition && rendition.settings && (rendition.settings.flow === 'scrolled-doc' || rendition.settings.flow === 'scrolled');
+    if (!isScrolledFlow && hasActiveSelection() && !isSelecting) {
       // Try to revert to previous location
       // Store the previous location before blocking
       if (rendition.location && rendition.location.start) {
@@ -1538,22 +1539,24 @@ function renderBook(data, opts, loadToken) {
           var deltaX = Math.abs(currentTouchX - touchStartX);
           var deltaY = Math.abs(currentTouchY - touchStartY);
 
-          // If there's significant movement (more than 10px), it's a swipe - block it
+          // If there's significant movement (more than 10px), allow vertical scroll freely in scrolled mode
+          var isScrolledFlowMove = rendition && rendition.settings && (rendition.settings.flow === 'scrolled-doc' || rendition.settings.flow === 'scrolled');
           if (deltaX > 10 || deltaY > 10) {
             hasMoved = true;
-            // Block horizontal swipes completely
-            if (deltaX > 30 && deltaX > deltaY * 1.5) {
-              e.preventDefault();
-              e.stopPropagation();
-              e.stopImmediatePropagation();
-              return false;
-            }
-            // Also block if it's a significant horizontal movement (even if not strictly horizontal)
-            if (deltaX > 50) {
-              e.preventDefault();
-              e.stopPropagation();
-              e.stopImmediatePropagation();
-              return false;
+            if (!isScrolledFlowMove) {
+              // Block horizontal swipes completely in paginated mode
+              if (deltaX > 30 && deltaX > deltaY * 1.5) {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                return false;
+              }
+              if (deltaX > 50) {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                return false;
+              }
             }
           }
         }
@@ -1586,17 +1589,15 @@ function renderBook(data, opts, loadToken) {
           var deltaY = Math.abs(currentTouchY - touchStartY);
           var touchDuration = Date.now() - touchStartTime;
 
-          // If there was minimal movement (< 10px) and short duration (< 300ms), it's a tap
+          var isScrolledFlowEnd = rendition && rendition.settings && (rendition.settings.flow === 'scrolled-doc' || rendition.settings.flow === 'scrolled');
           if (!hasMoved && deltaX < 10 && deltaY < 10 && touchDuration < 300) {
             // Simple tap - allow normal behavior
-          } else if (deltaX > 30 && deltaX > deltaY * 1.5) {
-            // It was a horizontal swipe - block it
+          } else if (!isScrolledFlowEnd && deltaX > 30 && deltaX > deltaY * 1.5) {
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();
             return false;
-          } else if (deltaX > 50) {
-            // Significant horizontal movement - block it
+          } else if (!isScrolledFlowEnd && deltaX > 50) {
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();

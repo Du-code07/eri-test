@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -18,9 +21,9 @@ class SelectableWord {
   }
 }
 
-/// 한글 파일처럼 글을 길게 눌러 고르기: 길게 누르면 그 낱말이 골라지고, 손을 떼지 않고 끌면 범위가 늘어남.
-/// 양쪽 물방울 손잡이로 범위를 고치고, 위에 뜬 [복사 | 모두 선택 | 공유] 막대로 바로 복사·공유 (색·손잡이·막대는 한글·워드와 같음)
-/// (그림으로 보여 주는 스크롤 보기·TXT에서 씀)
+/// 한글·워드 파일처럼 글을 길게 눌러 고르기:
+/// 길게 누르면 그 낱말이 골라지며 양쪽 물방울 손잡이와 [복사 | 모두 선택 | 공유] 막대가 바로 표시됨.
+/// 하이라이트가 있는 상태에서도 스크롤·줌이 자유롭게 되며, 화면이 움직이는 동안은 손잡이가 잠깐 숨겨졌다가 멈추면 다시 나타남.
 class WordSelectionLayer extends StatefulWidget {
   const WordSelectionLayer({
     super.key,
@@ -28,6 +31,7 @@ class WordSelectionLayer extends StatefulWidget {
     required this.tr,
     required this.child,
     this.highlight = '',
+    this.onEdgeAutoScroll,
   });
 
   /// 파일 내 단어 찾기에서 찾은 낱말을 형광펜으로 (빈 글이면 없음)
@@ -37,10 +41,28 @@ class WordSelectionLayer extends StatefulWidget {
   final String Function(String ko, String en, String zh, String ja) tr;
   final Widget child;
 
+  /// 손잡이를 화면 위·아래 끝으로 끌 때 스크롤 모드를 부드럽게 이동
+  final void Function(double dy)? onEdgeAutoScroll;
+
   /// 어느 쪽에서든 글이 골라져 있는가 (보는 화면이 탭으로 메뉴를 열지 않게)
   static final ValueNotifier<bool> active = ValueNotifier<bool>(false);
-  /// 길게 누른 채 끌거나 손잡이를 끄는 중인가 (슬라이드·스크롤 잠금용)
+
+  /// 손잡이를 끄는 중인가 (스크롤·줌 잠금용)
   static final ValueNotifier<bool> dragging = ValueNotifier<bool>(false);
+
+  /// 스크롤·줌으로 화면이 움직이는 중인가 (움직이는 동안 손잡이·막대 숨김)
+  static final ValueNotifier<bool> scrolling = ValueNotifier<bool>(false);
+  static Timer? _scrollIdleTimer;
+
+  static void notifyScrolling() {
+    if (!active.value || dragging.value) return;
+    if (!scrolling.value) scrolling.value = true;
+    _scrollIdleTimer?.cancel();
+    _scrollIdleTimer = Timer(const Duration(milliseconds: 180), () {
+      scrolling.value = false;
+    });
+  }
+
   static bool get locked => active.value || dragging.value;
   static final List<VoidCallback> _clearers = [];
   static BuildContext? _activeContext;
@@ -50,7 +72,7 @@ class WordSelectionLayer extends StatefulWidget {
     final box = _activeContext?.findRenderObject() as RenderBox?;
     if (box == null || !box.attached) return false;
     final local = box.globalToLocal(global);
-    return (Offset.zero & box.size).inflate(40).contains(local);
+    return (Offset.zero & box.size).inflate(44).contains(local);
   }
 
   /// 골라 둔 글을 모두 지움
@@ -70,11 +92,21 @@ class _WordSelectionLayerState extends State<WordSelectionLayer> {
   bool _menu = false;
   Size _size = Size.zero;
 
+  int? _dragPointer;
+  bool _dragStart = false;
+  Offset? _dragGlobal;
+  Timer? _autoScrollTimer;
+
   @override
   void initState() {
     super.initState();
     WordSelectionLayer._clearers.add(_clear);
+    WordSelectionLayer.scrolling.addListener(_onScrollState);
     _loadForHighlight();
+  }
+
+  void _onScrollState() {
+    if (mounted && _a != null) setState(() {});
   }
 
   @override
@@ -116,7 +148,6 @@ class _WordSelectionLayerState extends State<WordSelectionLayer> {
       final a = owner[at], b = owner[at + q.length - 1];
       for (int i = a; i <= b; i++) {
         final w = words[i];
-        // 낱말의 일부만 맞으면 그 부분만 (글자 수 비율로)
         final t = w.text.replaceAll(RegExp(r'\s+'), '');
         final start = i == a ? at - owner.indexOf(i) : 0;
         final end = i == b ? (at + q.length - 1) - owner.indexOf(i) + 1 : t.length;
@@ -132,13 +163,22 @@ class _WordSelectionLayerState extends State<WordSelectionLayer> {
 
   @override
   void dispose() {
+    _stopAutoScroll();
+    WordSelectionLayer.scrolling.removeListener(_onScrollState);
     WordSelectionLayer._clearers.remove(_clear);
     if (_a != null) WordSelectionLayer.active.value = false;
-    WordSelectionLayer.dragging.value = false;
+    if (_dragPointer != null) WordSelectionLayer.dragging.value = false;
     super.dispose();
   }
 
+  void _stopAutoScroll() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
+  }
+
   void _clear() {
+    _stopAutoScroll();
+    _dragPointer = null;
     if (_a == null) return;
     if (WordSelectionLayer._activeContext == context) WordSelectionLayer._activeContext = null;
     if (mounted) {
@@ -149,6 +189,7 @@ class _WordSelectionLayerState extends State<WordSelectionLayer> {
     }
     WordSelectionLayer.active.value = false;
     WordSelectionLayer.dragging.value = false;
+    WordSelectionLayer.scrolling.value = false;
   }
 
   Future<List<SelectableWord>> _ensureWords() async {
@@ -173,7 +214,7 @@ class _WordSelectionLayerState extends State<WordSelectionLayer> {
       final r = words[i].rect;
       final dx = p.dx < r.left ? r.left - p.dx : (p.dx > r.right ? p.dx - r.right : 0.0);
       final dy = p.dy < r.top ? r.top - p.dy : (p.dy > r.bottom ? p.dy - r.bottom : 0.0);
-      final d = dx * dx * 0.25 + dy * dy * 4; // 위아래로 떨어진 줄은 더 멀게
+      final d = dx * dx * 0.25 + dy * dy * 4;
       if (d < bestD) {
         bestD = d;
         best = i;
@@ -213,9 +254,10 @@ class _WordSelectionLayerState extends State<WordSelectionLayer> {
     HapticFeedback.selectionClick();
     setState(() {
       _a = _b = i;
-      _menu = false;
+      _menu = true;
     });
     WordSelectionLayer.active.value = true;
+    WordSelectionLayer.scrolling.value = false;
     WordSelectionLayer._activeContext = context;
   }
 
@@ -223,9 +265,10 @@ class _WordSelectionLayerState extends State<WordSelectionLayer> {
     if (_a == null) return;
     final i = _wordAt(local);
     if (i == null) return;
+    if (start && _b == i && _a == _hi) return;
+    if (!start && _b == i && _a == _lo) return;
     setState(() {
       if (start) {
-        // 앞쪽 손잡이를 움직임: 큰 쪽은 그대로
         final hi = _hi;
         _a = hi;
         _b = i;
@@ -234,6 +277,62 @@ class _WordSelectionLayerState extends State<WordSelectionLayer> {
         _a = lo;
         _b = i;
       }
+    });
+  }
+
+  /// 현재 위젯이 FittedBox 등으로 축소/확대된 실제 배율 계산 (TXT 800x1100 종이 보정용)
+  double _visualScale() {
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return 1.0;
+    final o = box.localToGlobal(Offset.zero);
+    final x = box.localToGlobal(const Offset(100, 0));
+    final s = (x - o).distance / 100.0;
+    return s.isFinite && s > 0.15 ? s : 1.0;
+  }
+
+  void _updateDragAtGlobal(Offset global) {
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+    final double inv = 1.0 / _visualScale();
+    // 손가락이 손잡이를 가리지 않게 화면 기준 24px 위의 글자를 가리킴
+    final Offset local = box.globalToLocal(global) - Offset(0, 24.0 * inv);
+    _extend(local, start: _dragStart);
+  }
+
+  void _checkEdgeAutoScroll(Offset global) {
+    final cb = widget.onEdgeAutoScroll;
+    if (cb == null) return;
+    final double screenH = MediaQuery.sizeOf(context).height;
+    const double edge = 76.0;
+    double step = 0;
+    if (global.dy > screenH - edge) {
+      step = ((global.dy - (screenH - edge)) / edge).clamp(0.2, 1.0) * 14.0;
+    } else if (global.dy < edge) {
+      step = -((edge - global.dy) / edge).clamp(0.2, 1.0) * 14.0;
+    }
+    if (step == 0) {
+      _stopAutoScroll();
+      return;
+    }
+    _autoScrollTimer ??= Timer.periodic(const Duration(milliseconds: 24), (_) {
+      if (!mounted || _dragPointer == null || _dragGlobal == null) {
+        _stopAutoScroll();
+        return;
+      }
+      final g = _dragGlobal!;
+      final double sh = MediaQuery.sizeOf(context).height;
+      double dy = 0;
+      if (g.dy > sh - edge) {
+        dy = ((g.dy - (sh - edge)) / edge).clamp(0.2, 1.0) * 14.0;
+      } else if (g.dy < edge) {
+        dy = -((edge - g.dy) / edge).clamp(0.2, 1.0) * 14.0;
+      }
+      if (dy == 0) {
+        _stopAutoScroll();
+        return;
+      }
+      cb(dy);
+      _updateDragAtGlobal(g);
     });
   }
 
@@ -254,58 +353,81 @@ class _WordSelectionLayerState extends State<WordSelectionLayer> {
       if (_a != null && words != null && words.isNotEmpty) {
         final rects = [for (int i = _lo; i <= _hi; i++) _px(words[i].rect)];
         children.add(Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: _SelectionPainter(rects)))));
-        final first = rects.first, last = rects.last;
-        const double hr = 11; // 손잡이 반지름 (한글·워드와 같은 물방울 모양)
-        Widget handle(Offset at, bool start) => Positioned(
-              left: at.dx - (start ? hr * 2 : 0) - 14,
-              top: at.dy - 10,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onPanStart: (_) {
-                  WordSelectionLayer.dragging.value = true;
-                  setState(() => _menu = false);
-                },
-                onPanUpdate: (d) {
-                  final box = context.findRenderObject() as RenderBox?;
-                  if (box == null) return;
-                  // 손가락이 손잡이를 가리지 않게 조금 위의 글자를 기준으로
-                  _extend(box.globalToLocal(d.globalPosition) - const Offset(0, 28), start: start);
-                },
-                onPanEnd: (_) {
-                  WordSelectionLayer.dragging.value = false;
-                  setState(() => _menu = true);
-                },
-                onPanCancel: () => WordSelectionLayer.dragging.value = false,
-                child: Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: CustomPaint(size: const Size(hr * 2, hr * 2), painter: TextSelectHandlePainter(start)),
+        final bool hideUi = WordSelectionLayer.scrolling.value && _dragPointer == null;
+        if (!hideUi) {
+          final first = rects.first, last = rects.last;
+          // FittedBox 축소 시에도 화면상 일정한 크기로 잡기 쉽게 보정 (TXT·PDF 공통)
+          final double inv = (1.0 / _visualScale()).clamp(0.65, 2.8);
+          final double hr = 11.0 * inv;
+          final double pad = 18.0 * inv;
+
+          Widget handle(Offset at, bool start) => Positioned(
+                left: at.dx - (start ? hr * 2 : 0) - pad,
+                top: at.dy - (10.0 * inv),
+                child: Listener(
+                  behavior: HitTestBehavior.opaque,
+                  onPointerDown: (e) {
+                    _dragPointer = e.pointer;
+                    _dragStart = start;
+                    _dragGlobal = e.position;
+                    WordSelectionLayer.dragging.value = true;
+                    WordSelectionLayer.scrolling.value = false;
+                    if (_menu) setState(() => _menu = false);
+                  },
+                  onPointerMove: (e) {
+                    if (_dragPointer != e.pointer) return;
+                    _dragGlobal = e.position;
+                    _updateDragAtGlobal(e.position);
+                    _checkEdgeAutoScroll(e.position);
+                  },
+                  onPointerUp: (e) {
+                    if (_dragPointer != e.pointer) return;
+                    _stopAutoScroll();
+                    _dragPointer = null;
+                    _dragGlobal = null;
+                    WordSelectionLayer.dragging.value = false;
+                    if (mounted) setState(() => _menu = true);
+                  },
+                  onPointerCancel: (e) {
+                    if (_dragPointer != e.pointer) return;
+                    _stopAutoScroll();
+                    _dragPointer = null;
+                    _dragGlobal = null;
+                    WordSelectionLayer.dragging.value = false;
+                    if (mounted) setState(() => _menu = true);
+                  },
+                  child: Padding(
+                    padding: EdgeInsets.all(pad),
+                    child: CustomPaint(size: Size(hr * 2, hr * 2), painter: TextSelectHandlePainter(start)),
+                  ),
+                ),
+              );
+
+          children.add(handle(first.bottomLeft, true));
+          children.add(handle(last.bottomRight, false));
+          if (_menu && _dragPointer == null) {
+            final top = rects.map((r) => r.top).reduce(math.min);
+            final bottom = rects.map((r) => r.bottom).reduce(math.max);
+            final double barOffset = 60.0 * inv;
+            final double y = top - barOffset > 8 ? top - barOffset : bottom + 30.0 * inv;
+            children.add(Positioned(
+              left: 0,
+              right: 0,
+              top: y.clamp(0, (_size.height - 56 * inv).clamp(0, double.infinity)).toDouble(),
+              child: Center(
+                child: Transform.scale(
+                  scale: inv,
+                  child: _menuBar(),
                 ),
               ),
-            );
-        children.add(handle(first.bottomLeft, true));
-        children.add(handle(last.bottomRight, false));
-        if (_menu) {
-          final top = rects.map((r) => r.top).reduce((a, b) => a < b ? a : b);
-          final bottom = rects.map((r) => r.bottom).reduce((a, b) => a > b ? a : b);
-          final double y = top - 60 > 8 ? top - 60 : bottom + 30;
-          children.add(Positioned(
-            left: 0,
-            right: 0,
-            top: y.clamp(0, (_size.height - 56).clamp(0, double.infinity)).toDouble(),
-            child: Center(child: _menuBar()),
-          ));
+            ));
+          }
         }
       }
       return GestureDetector(
         behavior: HitTestBehavior.translucent,
         onLongPressStart: (d) {
-          WordSelectionLayer.dragging.value = true;
           _start(d.localPosition);
-        },
-        onLongPressMoveUpdate: (d) => _extend(d.localPosition),
-        onLongPressEnd: (_) {
-          WordSelectionLayer.dragging.value = false;
-          if (_a != null) setState(() => _menu = true);
         },
         onTap: _a == null ? null : _clear,
         child: Stack(clipBehavior: Clip.none, children: children),

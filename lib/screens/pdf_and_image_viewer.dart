@@ -631,10 +631,12 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
       final String safeHashKey = '${first.path.hashCode.abs()}_$safeFileLen';
 
       if (widget.isPdf || lower.endsWith('.pdf')) {
-        final outDir = Directory('${tempDir.path}/pdf_$safeHashKey');
+        final String rq = StorageService.renderQuality.value;
+        final outDir = Directory('${tempDir.path}/pdf_${safeHashKey}_$rq');
         final List<dynamic>? renderedPaths = await _pdfChannel.invokeMethod('renderPdfToImages', {
           'pdfPath': first.path,
           'outDirPath': outDir.path,
+          'quality': rq,
         });
         if (renderedPaths != null) {
           _imagePages = renderedPaths.map((p) => File(p.toString())).toList();
@@ -1130,7 +1132,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
         final img = Image.file(
           _imagePages[i],
           fit: BoxFit.fill,
-          cacheWidth: math.min(4096, (w * dpr * 1.5).round()),
+          cacheWidth: math.min(4096, (w * dpr * (StorageService.renderQuality.value == 'low' ? 1.0 : (StorageService.renderQuality.value == 'medium' ? 1.25 : 1.5))).round()),
           gaplessPlayback: true,
           filterQuality: FilterQuality.high,
         );
@@ -1178,6 +1180,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
         if (_isPdfFile && !_isMemoMode) {
           content = WordSelectionLayer(
             tr: _tr,
+            onEdgeAutoScroll: (dy) => _scrollCtrl.scrollByDelta(dy),
             loadWords: () async {
               final ls = await _selectableLines(i);
               final out = <SelectableWord>[];
@@ -1706,8 +1709,9 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
         (region.bottom - pr.top) / pr.height,
       );
       // 확대 시 글자·선 선명도를 높이기 위해 1.35배 초과 샘플링 (긴 변 4096, 1600만 화소 상한)
-      double w = region.width * scale * dpr * 1.35;
-      double h = region.height * scale * dpr * 1.35;
+      final double qMul = StorageService.renderQuality.value == 'low' ? 0.95 : (StorageService.renderQuality.value == 'medium' ? 1.15 : 1.35);
+      double w = region.width * scale * dpr * qMul;
+      double h = region.height * scale * dpr * qMul;
       final double k = math.min(1.0, math.min(4096 / math.max(w, h), math.sqrt(16e6 / (w * h))));
       w *= k;
       h *= k;
@@ -1768,8 +1772,31 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
   Widget _buildPageStage(BuildContext context, Widget pages) {
     final List<Widget> children = [RepaintBoundary(key: _curlKey, child: pages)];
     children.add(Positioned.fill(child: BookCurlLayer(drag: _book, paper: _backdrop(context), backsideFromPaper: true /* 한 쪽 보기 종이 뒷면: 앱 테마와 상관없이 쪽의 종이 색(흰색·검은색·세피아) */)));
-    // 길게 눌러 고른 글: 바탕·손잡이·[복사 | 모두 선택 | 공유] 막대
-    children.add(Positioned.fill(child: SizedBox.expand(key: _textLayerKey, child: PageTextSelectLayer(sel: _textSel, tr: _tr))));
+    // 길게 눌러 고른 글: 바탕·손잡이·[복사 | 모두 선택 | 공유] 막대 (확대·이동 시 글자와 함께 이동)
+    children.add(Positioned.fill(
+      child: AnimatedBuilder(
+        animation: _zoomController,
+        builder: (context, child) => Transform(transform: _zoomController.value, child: child),
+        child: SizedBox.expand(
+          key: _textLayerKey,
+          child: PageTextSelectLayer(
+            sel: _textSel,
+            tr: _tr,
+            hideHandles: _pdfZooming && !_pdfHandleDragging,
+            onHandleDragStart: () {
+              _pdfZoomIdleTimer?.cancel();
+              setState(() {
+                _pdfHandleDragging = true;
+                _pdfZooming = false;
+              });
+            },
+            onHandleDragEnd: () {
+              if (mounted) setState(() => _pdfHandleDragging = false);
+            },
+          ),
+        ),
+      ),
+    ));
     return Stack(fit: StackFit.expand, clipBehavior: Clip.hardEdge, children: children);
   }
 
@@ -1856,6 +1883,9 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
 
   // ── 길게 눌러 글 고르기 (PDF, 내보낸 PDF 포함) ──
   final PageTextSelection _textSel = PageTextSelection();
+  bool _pdfHandleDragging = false;
+  bool _pdfZooming = false;
+  Timer? _pdfZoomIdleTimer;
   final GlobalKey _textLayerKey = GlobalKey();
   final Map<int, List<Map<String, Object?>>> _textLineCache = {};
   int _textSelGen = 0;
@@ -1867,7 +1897,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
   }
 
   Future<void> _startTextSelect(Offset global) async {
-    if (_isMemoMode || _activeTouchPointerIds.length >= 2 || _currentZoomScale > 1.03 || _pageModeScroll) return;
+    if (_isMemoMode || _activeTouchPointerIds.length >= 2 || _pageModeScroll) return;
     final box = _textLayerKey.currentContext?.findRenderObject() as RenderBox?;
     if (box == null || !box.hasSize) return;
     final int gen = ++_textSelGen;
@@ -2605,6 +2635,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
     if (_tapGuide?.mounted ?? false) _tapGuide!.remove();
     SystemBars.leaveViewer();
     _book.dispose();
+    _pdfZoomIdleTimer?.cancel();
     _textSel.dispose();
     // 서재로 완전히 복귀할 때 방향이 초기화됨
     _zoomController.dispose();
@@ -2953,12 +2984,8 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
                   // PDF: 길게 누르면 그 자리의 낱말을 고르고 손잡이로 범위를 조절 → [복사 | 모두 선택 | 공유]
                   // (글자 정보가 없는 쪽은 그림 속 글자를 읽어 복사하는 창)
                   onLongPressStart: _isPdfFile && !_pageModeScroll ? (d) {
-                    if (_isMemoMode || _activeTouchPointerIds.length >= 2 || _currentZoomScale > 1.03) return;
+                    if (_isMemoMode || _activeTouchPointerIds.length >= 2) return;
                     _startTextSelect(d.globalPosition);
-                  } : null,
-                  onLongPressMoveUpdate: _isPdfFile ? (d) {
-                    final local = _textLocal(d.globalPosition);
-                    if (local != null && _textSel.active) _textSel.extendTo(local);
                   } : null,
                   // PDF·CBZ 쪽은 원래 크기·선명도 그대로 (앱 화면을 크게 보여 줄 때도)
                   child: UiUnscale(child: _pageModeScroll ? _buildScrollPages() : _buildPageStage(context,
@@ -3003,18 +3030,29 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
                     _stageSize = stage.biggest;
                     return InteractiveViewer(
                       transformationController: _zoomController,
-                      // 메모 중에도 (손으로 그리기가 아니면) 손가락으로 확대한 쪽을 옮김 (삼성 노트처럼: 펜은 쓰고 손가락은 움직임)
-                      panEnabled: (!_isMemoMode || !_allowFingerDrawing) && (_currentZoomScale > 1.03 || _activeTouchPointerIds.length >= 2),
-                      scaleEnabled: (!_isMemoMode || !_allowFingerDrawing),
+                      // 메모 중에도 (손으로 그리기가 아니면) 손가락으로 확대한 쪽을 옮김; 손잡이 드래그 중에는 잠금
+                      panEnabled: !_pdfHandleDragging && (!_isMemoMode || !_allowFingerDrawing) && (_currentZoomScale > 1.03 || _activeTouchPointerIds.length >= 2),
+                      scaleEnabled: !_pdfHandleDragging && (!_isMemoMode || !_allowFingerDrawing),
                       minScale: 1.0,
                       maxScale: 5.0,
                       onInteractionUpdate: (_) {
+                        if (_textSel.active && !_pdfHandleDragging) {
+                          if (!_pdfZooming) setState(() => _pdfZooming = true);
+                          _pdfZoomIdleTimer?.cancel();
+                          _pdfZoomIdleTimer = Timer(const Duration(milliseconds: 180), () {
+                            if (mounted && _pdfZooming) setState(() => _pdfZooming = false);
+                          });
+                        }
                         final s = _zoomController.value.getMaxScaleOnAxis();
                         if ((s - _currentZoomScale).abs() > 0.02) {
                           setState(() => _currentZoomScale = s);
                         }
                       },
                       onInteractionEnd: (_) {
+                        _pdfZoomIdleTimer?.cancel();
+                        _pdfZoomIdleTimer = Timer(const Duration(milliseconds: 180), () {
+                          if (mounted && _pdfZooming) setState(() => _pdfZooming = false);
+                        });
                         final s = _zoomController.value.getMaxScaleOnAxis();
                         if (s < 1.03) {
                           _zoomController.value = Matrix4.identity();

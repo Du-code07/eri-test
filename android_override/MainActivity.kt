@@ -287,24 +287,42 @@ class MainActivity : FlutterActivity() {
         mainHandler.postDelayed({ hideSystemStatusBar() }, 450L)
     }
 
-    /// 화면이 지원하는 가장 높은 주사율(예: 120Hz)로 그리게 요청함.
-    /// 갤럭시 탭처럼 주사율이 바뀌는 기기는 따로 요청하지 않으면 앱 화면을 60Hz로 묶어 두는 경우가 있어
-    /// 창을 열고 닫거나 스크롤·슬라이드할 때 다른 앱보다 뚝뚝 끊겨 보였음
-    private fun preferHighRefreshRate() {
+    /// 주사율 설정 적용: "auto" (시스템 자동) / "60" (60Hz 절전) / "120" (지원 최대 주사율, 기본값)
+    private fun applyRefreshRateMode(mode: String) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
         try {
+            val lp = window.attributes
+            if (mode == "auto") {
+                if (lp.preferredDisplayModeId != 0) {
+                    lp.preferredDisplayModeId = 0
+                    window.attributes = lp
+                }
+                return
+            }
             val d = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display else @Suppress("DEPRECATION") windowManager.defaultDisplay
             if (d == null) return
             val cur = d.mode
-            val best = d.supportedModes
-                .filter { it.physicalWidth == cur.physicalWidth && it.physicalHeight == cur.physicalHeight }
-                .maxByOrNull { it.refreshRate } ?: return
-            if (window.attributes.preferredDisplayModeId != best.modeId) {
-                val lp = window.attributes
-                lp.preferredDisplayModeId = best.modeId
+            val sameRes = d.supportedModes.filter {
+                it.physicalWidth == cur.physicalWidth && it.physicalHeight == cur.physicalHeight
+            }
+            val target = if (mode == "60") {
+                sameRes.minByOrNull { kotlin.math.abs(it.refreshRate - 60f) }
+            } else {
+                sameRes.maxByOrNull { it.refreshRate }
+            } ?: return
+            if (lp.preferredDisplayModeId != target.modeId) {
+                lp.preferredDisplayModeId = target.modeId
                 window.attributes = lp
             }
         } catch (_: Throwable) {}
+    }
+
+    private fun preferHighRefreshRate() {
+        val saved = try {
+            getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+                .getString("flutter.refresh_rate_mode_v1", "120") ?: "120"
+        } catch (_: Throwable) { "120" }
+        applyRefreshRateMode(saved)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -602,6 +620,10 @@ class MainActivity : FlutterActivity() {
                     })
                     result.success(true)
                 } catch (_: Throwable) { result.success(false) }
+            } else if (call.method == "setRefreshRate") {
+                val mode = call.argument<String>("mode") ?: "120"
+                runOnUiThread { applyRefreshRateMode(mode) }
+                result.success(true)
             } else if (call.method == "clearAppData") {
                 // 앱 설정 > 데이터 지우기: 안드로이드 설정의 '데이터 삭제'와 같음 (앱이 바로 닫힘)
                 // 허용해 둔 권한(카메라)도 함께 해제 (지우기는 권한을 처음 상태로 되돌리고, 13 이상은 직접 반납까지)
@@ -863,6 +885,7 @@ class MainActivity : FlutterActivity() {
             } else if (call.method == "renderPdfToImages") {
                 val pdfPath = call.argument<String>("pdfPath")
                 val outDirPath = call.argument<String>("outDirPath")
+                val quality = call.argument<String>("quality") ?: "high"
                 if (pdfPath == null || outDirPath == null) {
                     result.error("INVALID_ARGS", "Missing paths", null)
                     return@setMethodCallHandler
@@ -874,20 +897,26 @@ class MainActivity : FlutterActivity() {
                         val pfd = ParcelFileDescriptor.open(File(pdfPath), ParcelFileDescriptor.MODE_READ_ONLY)
                         val renderer = PdfRenderer(pfd)
                         val pagePaths = ArrayList<String>()
+                        val targetW = when (quality) { "low" -> 960f; "medium" -> 1200f; else -> 1440f }
+                        val minScale = when (quality) { "low" -> 1.0f; "medium" -> 1.25f; else -> 1.5f }
+                        val maxScale = when (quality) { "low" -> 1.5f; "medium" -> 2.0f; else -> 2.5f }
+                        val minW = when (quality) { "low" -> 480; "medium" -> 600; else -> 720 }
+                        val minH = when (quality) { "low" -> 640; "medium" -> 800; else -> 960 }
+                        val jpegQ = when (quality) { "low" -> 78; "medium" -> 85; else -> 90 }
 
                         for (i in 0 until renderer.pageCount) {
                             val pageFile = File(outDir, "page_${String.format("%04d", i)}.jpg")
                             if (!pageFile.exists() || pageFile.length() == 0L) {
                                 val page = renderer.openPage(i)
-                                val scale = (1440f / page.width.toFloat().coerceAtLeast(1f)).coerceIn(1.5f, 2.5f)
-                                val width = (page.width * scale).toInt().coerceAtLeast(720)
-                                val height = (page.height * scale).toInt().coerceAtLeast(960)
+                                val scale = (targetW / page.width.toFloat().coerceAtLeast(1f)).coerceIn(minScale, maxScale)
+                                val width = (page.width * scale).toInt().coerceAtLeast(minW)
+                                val height = (page.height * scale).toInt().coerceAtLeast(minH)
                                 val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
                                 bitmap.eraseColor(Color.WHITE)
                                 page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                                 page.close()
                                 FileOutputStream(pageFile).use { out ->
-                                    bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+                                    bitmap.compress(Bitmap.CompressFormat.JPEG, jpegQ, out)
                                 }
                                 bitmap.recycle()
                             }

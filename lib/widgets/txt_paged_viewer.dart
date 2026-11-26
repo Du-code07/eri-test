@@ -266,7 +266,7 @@ class _TxtPagedViewerState extends State<TxtPagedViewer> {
   @override
   Widget build(BuildContext context) {
     final background = widget.theme == 'dark'
-        ? const Color(0xff1e1e1e)
+        ? (StorageService.pureBlackDark.value ? Colors.black : const Color(0xff1e1e1e))
         : widget.theme == 'sepia'
         ? const Color(0xfffbf0d9)
         : Colors.white;
@@ -284,6 +284,7 @@ class _TxtPagedViewerState extends State<TxtPagedViewer> {
         // EPUB처럼 글을 길게 눌러 골라 복사
         child: WordSelectionLayer(
           tr: _tr,
+          onEdgeAutoScroll: widget.scroll ? (dy) => widget.scrollController?.scrollByDelta(dy) : null,
           loadWords: () async => _wordsOf(text),
           child: CustomPaint(
             painter: _TxtPaperPainter(text, foreground,

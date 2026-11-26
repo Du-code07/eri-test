@@ -2315,7 +2315,14 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   Timer? _slideShowExitTimer;
   double _slideShowDragDx = 0;
 
+  String? _slideShowReturnCfi;
+
   Future<void> _startSlideShow() async {
+    // 메모 편집 중이었으면 먼저 저장해 메모가 유실되지 않게 함
+    if (_isMemoMode) {
+      await _saveMemoSession();
+    }
+    _slideShowReturnCfi = _currentCfi;
     // 슬라이드 쇼는 항상 첫 슬라이드부터 시작한다
     final first = '$_documentPositionPrefix:0';
     setState(() {
@@ -2333,17 +2340,43 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
 
   Future<void> _endSlideShow() async {
     _slideShowExitTimer?.cancel();
+    final String? returnCfi = _slideShowReturnCfi;
+    _slideShowReturnCfi = null;
     setState(() {
       _slideShow = false;
       _slideShowExitVisible = false;
-      _initialCfi = _currentCfi;
+      _initialCfi = returnCfi ?? _currentCfi;
     });
+    if (returnCfi != null && returnCfi.isNotEmpty && returnCfi != _currentCfi) {
+      _readerDisplay(returnCfi);
+    }
     final bool? want = StorageService.desiredLandscapeNotifier.value;
     try {
       await _pdfChannel.invokeMethod('setScreenOrientation', {
         'mode': want == null ? 'unspecified' : (want ? 'landscape' : 'portrait'),
       });
     } catch (_) {}
+
+    // 슬라이드 쇼 종료 후 화면 방향·레이아웃이 안정되면 현재 슬라이드의 메모와 쪽 좌표를 다시 불러옴
+    Future<void> restoreMemo() async {
+      if (!mounted || _slideShow) return;
+      final String key = _memoKeyFor(_memoBase);
+      _currentPageLocationKey = key;
+      final int seq = ++_memoLoadSeq;
+      final strokes = await _getMemo(key);
+      if (mounted && seq == _memoLoadSeq && !_slideShow) {
+        setState(() => _memoStrokes = List<MemoStroke>.of(strokes));
+      }
+      if (_docVertical) {
+        await _pushScrollMemos();
+      } else {
+        await _refreshPageFrames();
+      }
+    }
+
+    unawaited(restoreMemo());
+    Timer(const Duration(milliseconds: 280), () => unawaited(restoreMemo()));
+    Timer(const Duration(milliseconds: 650), () => unawaited(restoreMemo()));
   }
 
   void _showSlideShowExit() {
@@ -2648,8 +2681,8 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
 
   void _scheduleIdleShot() {
     _dropIdleShot();
-    // 책처럼 넘기기용 (편집 모드 중이거나 방금 종료한 직후에는 찍지 않음)
-    if (!_curlOn || _isTxt || _isHwpEditMode || _inHwpEditCooldown) return;
+    // 책처럼 넘기기용 (스냅샷 끄기 설정, 편집 모드 중이거나 방금 종료한 직후에는 찍지 않음)
+    if (StorageService.pageSnapshotOff.value || !_curlOn || _isTxt || _isHwpEditMode || _inHwpEditCooldown) return;
     _idleShotTimer = Timer(const Duration(milliseconds: 380), () async {
       if (!mounted || !_curlOn || _book.busy || _isHwpEditMode || _inHwpEditCooldown) return;
       if (_epubZoomScale > 1.03 || !_docViewNone) return; // 확대해 둔 동안은 찍지 않음
@@ -3862,7 +3895,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   }
 
   Color _getBgColor() {
-    if (_epubBgTheme == 'dark') return const Color(0xFF1E1E1E);
+    if (_epubBgTheme == 'dark') return StorageService.pureBlackDark.value ? const Color(0xFF000000) : const Color(0xFF1E1E1E);
     if (_epubBgTheme == 'sepia') return const Color(0xFFFBF0D9);
     return const Color(0xFFFFFFFF);
   }
@@ -3876,7 +3909,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   EpubTheme _buildTheme() {
     // 종이색: 화면 뒤에 종이 질감 그림을 깔고 책 바탕은 투명하게
     final String cssBg = _epubBgTheme == 'dark'
-        ? '#1E1E1E'
+        ? (StorageService.pureBlackDark.value ? '#000000' : '#1E1E1E')
         : (_epubBgTheme == 'sepia' ? 'transparent' : '#FFFFFF');
     final String cssFg = _epubBgTheme == 'dark'
         ? '#D4D4D4'
@@ -5488,7 +5521,7 @@ Offstage(offstage: _tocFreeze != null, child: EpubViewer(
                     },
                     onRelocated: (value) async {
                       if (!_epubDisplayed && mounted) setState(() => _epubDisplayed = true);
-                      _hasTextSelection = false;
+                      if (!_pageModeScroll) _hasTextSelection = false;
                       final waiter = _relocateWaiter;
                       if (waiter != null && !waiter.isCompleted) waiter.complete();
                       if (!_hasRestoredInitialPosition &&

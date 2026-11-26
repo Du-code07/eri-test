@@ -479,22 +479,22 @@ class PageTextSelectLayer extends StatelessWidget {
         const double hr = 11; // 손잡이 반지름
 
         Widget handle(bool start, Offset at) => Positioned(
-              left: at.dx - (start ? hr * 2 : 0) - 14,
+              left: at.dx - (start ? hr * 2 : 0) - 18,
               top: at.dy - 10,
-              child: GestureDetector(
+              child: Listener(
                 behavior: HitTestBehavior.opaque,
-                onPanStart: (_) => onHandleDragStart?.call(),
-                onPanUpdate: (d) {
+                onPointerDown: (_) => onHandleDragStart?.call(),
+                onPointerMove: (e) {
                   final box = context.findRenderObject() as RenderBox?;
                   if (box == null) return;
                   // 손가락이 손잡이를 가리지 않게 조금 위의 글자를 기준으로
-                  sel.moveHandle(start, box.globalToLocal(d.globalPosition) - const Offset(0, 28));
-                  onHandleDragUpdate?.call(start, d.globalPosition);
+                  sel.moveHandle(start, box.globalToLocal(e.position) - const Offset(0, 28));
+                  onHandleDragUpdate?.call(start, e.position);
                 },
-                onPanEnd: (_) => onHandleDragEnd?.call(),
-                onPanCancel: () => onHandleDragEnd?.call(),
+                onPointerUp: (_) => onHandleDragEnd?.call(),
+                onPointerCancel: (_) => onHandleDragEnd?.call(),
                 child: Padding(
-                  padding: const EdgeInsets.all(14),
+                  padding: const EdgeInsets.all(18),
                   child: CustomPaint(size: const Size(hr * 2, hr * 2), painter: TextSelectHandlePainter(start)),
                 ),
               ),

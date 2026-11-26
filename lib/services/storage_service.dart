@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -165,8 +166,15 @@ class StorageService {
     }
     Anim.off.value = prefs.getBool('anim_off_v109') ?? false;
     pageCurl = prefs.getBool('page_curl_v109') ?? false;
+    final rr = prefs.getString('refresh_rate_mode_v1');
+    refreshRateMode.value = (rr == 'auto' || rr == '60' || rr == '120') ? rr! : '120';
+    final rq = prefs.getString('render_quality_v1');
+    renderQuality.value = (rq == 'low' || rq == 'medium' || rq == 'high') ? rq! : 'high';
+    pageSnapshotOff.value = prefs.getBool('page_snapshot_off_v1') ?? false;
+    pureBlackDark.value = prefs.getBool('pure_black_dark_v1') ?? false;
     final zones = prefs.getString('tap_zones_v122');
     tapZones.value = zones != null && RegExp(r'^[PNMX]{9}$').hasMatch(zones) ? zones : tapZonesDefault;
+    unawaited(applyRefreshRateToNative(refreshRateMode.value));
   }
 
   /// 탭 영역 (화면 3×3 칸, 왼쪽 위부터 줄마다): P = 이전, N = 다음, M = 메뉴, X = 없음
@@ -194,6 +202,52 @@ class StorageService {
     Anim.off.value = off;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('anim_off_v109', off);
+  }
+
+  /// 주사율 조절: 'auto' (시스템 자동) | '60' (60Hz 절전) | '120' (120Hz 부드럽게, 기본값)
+  static final ValueNotifier<String> refreshRateMode = ValueNotifier<String>('120');
+
+  static Future<void> applyRefreshRateToNative(String mode) async {
+    try {
+      const ch = MethodChannel('ebook_reader/pdf_renderer');
+      await ch.invokeMethod('setRefreshRate', {'mode': mode});
+    } catch (_) {}
+  }
+
+  static Future<void> setRefreshRateMode(String mode) async {
+    final v = (mode == 'auto' || mode == '60' || mode == '120') ? mode : '120';
+    refreshRateMode.value = v;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('refresh_rate_mode_v1', v);
+    await applyRefreshRateToNative(v);
+  }
+
+  /// 문서 렌더링 화질: 'low' (절전) | 'medium' (표준) | 'high' (고화질, 기본값)
+  static final ValueNotifier<String> renderQuality = ValueNotifier<String>('high');
+
+  static Future<void> setRenderQuality(String q) async {
+    final v = (q == 'low' || q == 'medium' || q == 'high') ? q : 'high';
+    renderQuality.value = v;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('render_quality_v1', v);
+  }
+
+  /// 페이지 전환 스냅샷 끄기 (기본 끄기 = false)
+  static final ValueNotifier<bool> pageSnapshotOff = ValueNotifier<bool>(false);
+
+  static Future<void> setPageSnapshotOff(bool off) async {
+    pageSnapshotOff.value = off;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('page_snapshot_off_v1', off);
+  }
+
+  /// 순수 검정 다크 모드 (OLED 절전, 기본 끄기 = false)
+  static final ValueNotifier<bool> pureBlackDark = ValueNotifier<bool>(false);
+
+  static Future<void> setPureBlackDark(bool on) async {
+    pureBlackDark.value = on;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('pure_black_dark_v1', on);
   }
 
   /// 와이드 스타일 왼쪽 막대에 꺼내 둔 그룹 (즐겨찾기 밑, 누르면 그 그룹으로)

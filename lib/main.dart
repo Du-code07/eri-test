@@ -257,15 +257,16 @@ class _MyEbookAppState extends State<MyEbookApp> with SingleTickerProviderStateM
         onSecondaryContainer: AppColors.onSignature,
       );
     } else {
-      // 다크: 대표 색 자리에는 회색 (글꼴 찾기 단추 바탕과 같은 색), 그 위 글씨는 흰색
+      // 다크: 순수 검정 다크 모드 켜짐 시 OLED 절전용 #000000 바탕 사용
+      final bool oled = StorageService.pureBlackDark.value;
       scheme = scheme.copyWith(
-        surface: const Color(0xFF141416),
+        surface: oled ? Colors.black : const Color(0xFF141416),
         onSurface: const Color(0xFFE6E6E9),
         onSurfaceVariant: const Color(0xFFB4B4BA),
-        surfaceContainerLowest: const Color(0xFF0E0E10),
-        surfaceContainerLow: const Color(0xFF1A1A1D),
-        surfaceContainer: const Color(0xFF1F1F22),
-        surfaceContainerHigh: const Color(0xFF29292D),
+        surfaceContainerLowest: oled ? Colors.black : const Color(0xFF0E0E10),
+        surfaceContainerLow: oled ? const Color(0xFF0A0A0A) : const Color(0xFF1A1A1D),
+        surfaceContainer: oled ? const Color(0xFF111113) : const Color(0xFF1F1F22),
+        surfaceContainerHigh: oled ? const Color(0xFF1A1A1D) : const Color(0xFF29292D),
         surfaceContainerHighest: sig,
         primary: const Color(0xFFE6E6E9),
         onPrimary: const Color(0xFF1A1A1C),
@@ -275,9 +276,11 @@ class _MyEbookAppState extends State<MyEbookApp> with SingleTickerProviderStateM
         onSecondaryContainer: Colors.white,
       );
     }
+    final bool oledDark = b == Brightness.dark && StorageService.pureBlackDark.value;
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
+      scaffoldBackgroundColor: oledDark ? Colors.black : null,
       // 애니메이션 멈추기: 화면 넘어갈 때도 바로
       pageTransitionsTheme: Anim.off.value
           ? const PageTransitionsTheme(builders: {
@@ -297,6 +300,7 @@ class _MyEbookAppState extends State<MyEbookApp> with SingleTickerProviderStateM
       // 제목 느낌의 글씨는 모두 굵게 (상단바 제목·창 제목·항목 제목)
       textTheme: _boldTitles,
       appBarTheme: AppBarTheme(
+        backgroundColor: oledDark ? Colors.black : null,
         iconTheme: IconThemeData(size: 21, color: scheme.onSurface),
         actionsIconTheme: IconThemeData(size: 21, color: scheme.onSurfaceVariant),
       ),
@@ -378,8 +382,14 @@ class _MyEbookAppState extends State<MyEbookApp> with SingleTickerProviderStateM
   Widget build(BuildContext context) {
     return ValueListenableBuilder<String?>(
       valueListenable: UserFonts.appFontName,
-      // 애니메이션 멈추기를 바꾸면 화면 전환 방식도 다시 정함
-      builder: (context, _, __) => ValueListenableBuilder<bool>(valueListenable: Anim.off, builder: (context, _, __) => _buildApp(context)),
+      // 애니메이션 멈추기·순수 검정 다크 모드를 바꾸면 앱 테마와 전환 방식을 즉시 반영
+      builder: (context, _, __) => ValueListenableBuilder<bool>(
+        valueListenable: Anim.off,
+        builder: (context, _, __) => ValueListenableBuilder<bool>(
+          valueListenable: StorageService.pureBlackDark,
+          builder: (context, _, __) => _buildApp(context),
+        ),
+      ),
     );
   }
 

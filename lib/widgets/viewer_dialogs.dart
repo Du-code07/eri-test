@@ -1096,6 +1096,7 @@ class ContinuousPageController {
 
   /// 한 화면만큼 아래(+1)/위(-1)로 부드럽게
   void scrollByScreen(int dir) => _state?._scrollByScreen(dir);
+  void scrollByDelta(double dy) => _state?._scrollByDelta(dy);
 
   /// 현재 확대 배율
   double get scale => _state?._scale ?? 1.0;
@@ -1581,6 +1582,13 @@ class _ContinuousPageListState extends State<ContinuousPageList> with SingleTick
     _animateTo(_ox, target);
   }
 
+  void _scrollByDelta(double dy) {
+    if (_tops.length < 2 || dy == 0) return;
+    _stopSim();
+    _oy = (_oy + dy).clamp(0.0, _maxY).toDouble();
+    _moved();
+  }
+
   Offset? _downLocal; // 손가락이 처음 닿은 자리
 
   void _resetZoom() {
@@ -1594,7 +1602,7 @@ class _ContinuousPageListState extends State<ContinuousPageList> with SingleTick
   }
 
   void _onScaleStart(ScaleStartDetails d) {
-    if (WordSelectionLayer.locked) return;
+    if (WordSelectionLayer.dragging.value) return;
     _stopSim();
     _startScale = _scale;
     // 한 손가락 끌기: 손가락이 처음 닿은 자리를 기준으로 (움직이기 시작한 거리만큼 버리지 않고 그대로 따라오게)
@@ -1604,7 +1612,8 @@ class _ContinuousPageListState extends State<ContinuousPageList> with SingleTick
   }
 
   void _onScaleUpdate(ScaleUpdateDetails d) {
-    if (WordSelectionLayer.locked) return;
+    if (WordSelectionLayer.dragging.value) return;
+    WordSelectionLayer.notifyScrolling();
     // 손가락 수가 바뀌면 기준을 다시 잡아 튀지 않게
     if (d.pointerCount != _pointers) {
       _pointers = d.pointerCount;
@@ -1619,7 +1628,7 @@ class _ContinuousPageListState extends State<ContinuousPageList> with SingleTick
   }
 
   void _onScaleEnd(ScaleEndDetails d) {
-    if (WordSelectionLayer.locked) return;
+    if (WordSelectionLayer.dragging.value) return;
     final v = d.velocity.pixelsPerSecond;
     // 거의 원래 크기면 딱 맞춤
     if (_scale > 0.97 && _scale < 1.03 && _scale != 1) {

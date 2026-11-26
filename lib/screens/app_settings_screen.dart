@@ -23,6 +23,7 @@ import '../widgets/app_colors.dart';
 
 import '../services/storage_service.dart';
 import '../widgets/choice_sheet.dart';
+import '../widgets/sheet_pull_to_close.dart';
 import 'language_select_screen.dart';
 
 /// 앱 설정 화면: 항목을 누르면 아래에서 고르기 창이 올라온다.
@@ -279,6 +280,242 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
     );
   }
 
+  String _refreshRateLabel(String mode) => switch (mode) {
+        'auto' => _t('시스템 자동 (권장)', 'System Auto (Recommended)', '系统自动（推荐）', 'システム自動（推奨）'),
+        '60' => _t('60Hz (절전)', '60Hz (Power Saving)', '60Hz（省电）', '60Hz（省電力）'),
+        _ => _t('120Hz (부드럽게)', '120Hz (Smooth)', '120Hz（流畅）', '120Hz（滑らか）'),
+      };
+
+  String _renderQualityLabel(String q) => switch (q) {
+        'low' => _t('절전', 'Power Saving', '省电', '省電力'),
+        'medium' => _t('표준', 'Standard', '标准', '標準'),
+        _ => _t('고화질', 'High Quality', '高清', '高画質'),
+      };
+
+  Future<void> _pickRefreshRate(VoidCallback refreshSheet) async {
+    final v = await showChoiceSheet<String>(
+      context: context,
+      title: _t('주사율 조절', 'Refresh Rate', '刷新率调节', 'リフレッシュレート'),
+      options: [
+        ChoiceOption('auto', _refreshRateLabel('auto'), icon: Icons.auto_mode_outlined),
+        ChoiceOption('60', _refreshRateLabel('60'), icon: Icons.battery_saver_outlined),
+        ChoiceOption('120', _refreshRateLabel('120'), icon: Icons.speed_outlined),
+      ],
+      current: StorageService.refreshRateMode.value,
+      centered: StorageService.simpleStyle,
+    );
+    if (v == null || !mounted) return;
+    await StorageService.setRefreshRateMode(v);
+    if (mounted) {
+      setState(() {});
+      refreshSheet();
+    }
+  }
+
+  Future<void> _pickRenderQuality(VoidCallback refreshSheet) async {
+    final v = await showChoiceSheet<String>(
+      context: context,
+      title: _t('문서 렌더링 화질', 'Document Render Quality', '文档渲染画质', '文書レンダリング画質'),
+      options: [
+        ChoiceOption('low', _renderQualityLabel('low'), icon: Icons.eco_outlined),
+        ChoiceOption('medium', _renderQualityLabel('medium'), icon: Icons.tune_outlined),
+        ChoiceOption('high', _renderQualityLabel('high'), icon: Icons.high_quality_outlined),
+      ],
+      current: StorageService.renderQuality.value,
+      centered: StorageService.simpleStyle,
+    );
+    if (v == null || !mounted) return;
+    await StorageService.setRenderQuality(v);
+    if (mounted) {
+      setState(() {});
+      refreshSheet();
+    }
+  }
+
+  /// 성능 및 배터리 설정 창 (컴팩트: 아래에서 올라오는 창 / 와이드: 가운데 창 — 파일 표시 방식과 동일)
+  Future<void> _openPerformanceSheet() async {
+    await _measureCache();
+    if (!mounted) return;
+    final bool centered = StorageService.simpleStyle;
+    Widget buildBody(BuildContext ctx, StateSetter setSheetState, ScrollController? scroll, ScrollPhysics? physics) {
+      final cs = Theme.of(ctx).colorScheme;
+      void refresh() {
+        if (ctx.mounted) setSheetState(() {});
+        if (mounted) setState(() {});
+      }
+
+      Widget row({
+        required IconData icon,
+        required String title,
+        required String subtitle,
+        VoidCallback? onTap,
+        Widget? trailing,
+        Color? titleColor,
+      }) {
+        return ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
+          leading: Icon(icon, size: 22, color: titleColor ?? cs.onSurface),
+          title: Text(title, style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700, color: titleColor)),
+          subtitle: Text(subtitle, style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant)),
+          trailing: trailing ?? Icon(Icons.chevron_right, color: cs.onSurfaceVariant),
+          onTap: onTap,
+        );
+      }
+
+      final rr = StorageService.refreshRateMode.value;
+      final rq = StorageService.renderQuality.value;
+      final snapOff = StorageService.pageSnapshotOff.value;
+      final oled = StorageService.pureBlackDark.value;
+      final animOff = Anim.off.value;
+
+      final list = ListView(
+        controller: scroll,
+        physics: physics,
+        shrinkWrap: centered,
+        padding: const EdgeInsets.only(bottom: 16),
+        children: [
+          row(
+            icon: Icons.speed_outlined,
+            title: _t('주사율 조절', 'Refresh Rate', '刷新率调节', 'リフレッシュレート'),
+            subtitle: '${_refreshRateLabel(rr)} · ${_t('화면 주사율을 조절해 부드러움과 배터리를 맞춰요', 'Balance smoothness and battery life', '调节刷新率以平衡流畅度与续航', '滑らかさとバッテリー消費を調整します')}',
+            onTap: () => _pickRefreshRate(refresh),
+          ),
+          row(
+            icon: Icons.high_quality_outlined,
+            title: _t('문서 렌더링 화질', 'Document Render Quality', '文档渲染画质', '文書レンダリング画質'),
+            subtitle: '${_renderQualityLabel(rq)} · ${_t('화질을 낮추면 배터리와 메모리 사용이 줄어요', 'Lower quality uses less battery and memory', '降低画质可减少耗电和内存占用', '画質を下げると電池とメモリ消費を抑えます')}',
+            onTap: () => _pickRenderQuality(refresh),
+          ),
+          row(
+            icon: Icons.photo_camera_back_outlined,
+            title: _t('페이지 전환 스냅샷 끄기', 'Turn Off Page Turn Snapshots', '关闭翻页快照', 'ページ切替スナップショットをオフ'),
+            subtitle: _t('쪽 넘김용 미리 찍기를 꺼서 배터리와 CPU 부하를 줄여요', 'Skips page-turn captures to save battery and CPU', '关闭翻页预截图以节省电量和 CPU', 'ページめくり用の事前キャプチャを省き省電力化します'),
+            onTap: () async {
+              await StorageService.setPageSnapshotOff(!snapOff);
+              refresh();
+            },
+            trailing: Switch(
+              value: snapOff,
+              onChanged: (v) async {
+                await StorageService.setPageSnapshotOff(v);
+                refresh();
+              },
+            ),
+          ),
+          row(
+            icon: Icons.contrast_outlined,
+            title: _t('순수 검정 다크 모드', 'Pure Black Dark Mode', '纯黑深色模式', 'ピュアブラックダークモード'),
+            subtitle: _t('다크 모드 배경을 완전한 검정색으로 바꿔 OLED 전력을 아껴요', 'Uses pure black backgrounds in dark mode to save OLED power', '深色模式使用纯黑背景以节省 OLED 电量', 'ダークモードを完全な黒にしてOLED電力を抑えます'),
+            onTap: () async {
+              await StorageService.setPureBlackDark(!oled);
+              refresh();
+            },
+            trailing: Switch(
+              value: oled,
+              onChanged: (v) async {
+                await StorageService.setPureBlackDark(v);
+                refresh();
+              },
+            ),
+          ),
+          row(
+            icon: Icons.motion_photos_off_outlined,
+            title: _t('애니메이션 끄기', 'Turn Off Animations', '关闭动画', 'アニメーションをオフ'),
+            subtitle: _t('버튼·창이 움직임 없이 바로 바뀌어요', 'Buttons and windows change instantly without motion', '按钮和窗口立即切换，没有动画', 'ボタン・ウィンドウが動きなしですぐ切り替わります'),
+            onTap: () async {
+              await StorageService.setAnimOff(!animOff);
+              refresh();
+            },
+            trailing: Switch(
+              value: animOff,
+              onChanged: (v) async {
+                await StorageService.setAnimOff(v);
+                refresh();
+              },
+            ),
+          ),
+          const Divider(height: 16, indent: 20, endIndent: 20),
+          row(
+            icon: Icons.cleaning_services_outlined,
+            title: _t('임시 캐시 지우기', 'Clear Temporary Cache', '清除临时缓存', '一時キャッシュを削除'),
+            subtitle: _cacheBytes == null
+                ? _t('다시 만들 수 있는 임시 파일을 비워 저장공간을 확보해요', 'Deletes temporary files that can be rebuilt', '删除可重新生成的临时文件以释放空间', '再作成できる一時ファイルを削除して空き容量を増やします')
+                : _t('임시 파일 ${_fmtBytes(_cacheBytes!)} · 다시 만들 수 있는 임시 파일을 비워요', 'Temporary files ${_fmtBytes(_cacheBytes!)} · Safe to clear', '临时文件 ${_fmtBytes(_cacheBytes!)} · 可安全清除', '一時ファイル ${_fmtBytes(_cacheBytes!)} · 安全に削除できます'),
+            onTap: () async {
+              await _clearCache();
+              refresh();
+            },
+          ),
+          row(
+            icon: Icons.delete_forever_outlined,
+            title: _t('데이터 지우기', 'Clear Data', '清除数据', 'データを削除'),
+            subtitle: _t('앱 안의 파일·메모·설정을 지우고 처음 상태로 되돌려요', 'Resets the app to how it was when first installed', '删除应用内文件·笔记·设置并恢复初始状态', 'アプリ内のデータを消して初期状態に戻します'),
+            titleColor: Colors.redAccent,
+            onTap: _clearData,
+          ),
+        ],
+      );
+
+      final header = Padding(
+        padding: EdgeInsets.fromLTRB(20, centered ? 20 : 0, 12, 8),
+        child: Row(
+          children: [
+            Icon(Icons.battery_saver_outlined, size: 22, color: cs.onSurface),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                _t('성능 및 배터리', 'Performance & Battery', '性能与电池', 'パフォーマンスとバッテリー'),
+                style: (Theme.of(ctx).textTheme.titleMedium ?? const TextStyle()).copyWith(fontWeight: FontWeight.w800),
+              ),
+            ),
+            if (centered)
+              IconButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                icon: const Icon(Icons.close_rounded, size: 20),
+              ),
+          ],
+        ),
+      );
+
+      if (centered) {
+        return ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: 460, maxHeight: MediaQuery.sizeOf(ctx).height * 0.82),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [header, Flexible(child: list)]),
+        );
+      }
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SheetGrip(below: 12),
+          header,
+          Expanded(child: list),
+        ],
+      );
+    }
+
+    if (centered) {
+      await showPopDialog<void>(
+        context: context,
+        builder: (ctx) => StatefulBuilder(
+          builder: (ctx, setSheetState) => Dialog(
+            insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+            clipBehavior: Clip.antiAlias,
+            child: buildBody(ctx, setSheetState, null, null),
+          ),
+        ),
+      );
+    } else {
+      await showPullSheet<void>(
+        context,
+        sheetAnimationStyle: Anim.off.value ? AnimationStyle.noAnimation : null,
+        builder: (ctx, scroll, physics) => StatefulBuilder(
+          builder: (ctx, setSheetState) => pullSheetScope(scroll, physics, buildBody(ctx, setSheetState, scroll, physics)),
+        ),
+      );
+    }
+  }
+
   // ── 데이터 ──
   int? _cacheBytes;
 
@@ -469,16 +706,12 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                 if (mounted) setState(() {});
               },
             ),
-            // 애니메이션 끄기: 앱 전체의 움직임을 바로 바뀌게
-            ValueListenableBuilder<bool>(
-              valueListenable: Anim.off,
-              builder: (context, off, _) => _item(
-                icon: Icons.motion_photos_off_outlined,
-                title: _t('애니메이션 끄기', 'Turn Off Animations', '关闭动画', 'アニメーションをオフ'),
-                subtitle: _t('버튼·창이 움직임 없이 바로 바뀌어요', 'Buttons and windows change instantly without motion', '按钮和窗口立即切换，没有动画', 'ボタン・ウィンドウが動きなしですぐ切り替わります'),
-                onTap: () => StorageService.setAnimOff(!off),
-                trailing: Switch(value: off, onChanged: StorageService.setAnimOff),
-              ),
+            // 성능 및 배터리: 주사율·렌더링 화질·스냅샷·순수 검정·애니메이션·캐시·데이터
+            _item(
+              icon: Icons.battery_saver_outlined,
+              title: _t('성능 및 배터리', 'Performance & Battery', '性能与电池', 'パフォーマンスとバッテリー'),
+              subtitle: _t('주사율·화질·절전·애니메이션·캐시 관리', 'Refresh rate, quality, power saving, animations & cache', '刷新率·画质·省电·动画·缓存管理', 'リフレッシュレート・画質・省電力・アニメ・キャッシュ'),
+              onTap: _openPerformanceSheet,
             ),
             // 파일: 파일 목록·여는 방식에 관한 설정
             _section(_t('파일', 'Files', '文件', 'ファイル')),
@@ -573,21 +806,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                 );
               },
             ),
-            _section(_t('데이터', 'Data', '数据', 'データ')),
-            _item(
-              icon: Icons.cleaning_services_outlined,
-              title: _t('캐시 지우기', 'Clear Cache', '清除缓存', 'キャッシュを削除'),
-              subtitle: _cacheBytes == null
-                  ? _t('미리 그려 둔 쪽·목차 등 임시 파일', 'Temporary files such as pre-rendered pages and contents', '预先渲染的页面、目录等临时文件', '事前に描いたページ・目次などの一時ファイル')
-                  : _t('임시 파일 ${_fmtBytes(_cacheBytes!)}', 'Temporary files ${_fmtBytes(_cacheBytes!)}', '临时文件 ${_fmtBytes(_cacheBytes!)}', '一時ファイル ${_fmtBytes(_cacheBytes!)}'),
-              onTap: _clearCache,
-            ),
-            _item(
-              icon: Icons.delete_forever_outlined,
-              title: _t('데이터 지우기', 'Clear Data', '清除数据', 'データを削除'),
-              subtitle: _t('앱을 처음 설치한 상태로 되돌려요', 'Resets the app to how it was when first installed', '将应用恢复到刚安装时的状态', 'アプリをインストール直後の状態に戻します'),
-              onTap: _clearData,
-            ),
+
             _section(_t('도움말', 'Help', '帮助', 'ヘルプ')),
             _item(
               icon: Icons.lightbulb_outline,
