@@ -889,17 +889,27 @@ class MainActivity : FlutterActivity() {
                     return@setMethodCallHandler
                 }
                 runOnUiThread {
-                    var target: WebView? = null
-                    fun findVisibleWebView(v: View) {
-                        if (v is WebView && v.visibility == View.VISIBLE && v.width > 50 && v.height > 50) {
-                            target = v
+                    // 숨겨진 표지 생성용 WebView(alpha=0 / about:blank)가 아니라 실제 열려 있는 한글·워드 문서 WebView를 정확히 선택
+                    var docTarget: WebView? = null
+                    var fallbackTarget: WebView? = null
+                    var bestArea = 0
+                    fun findDocWebView(v: View) {
+                        if (v is WebView && v.visibility == View.VISIBLE && v.alpha > 0.5f && v.width > 100 && v.height > 100) {
+                            val u = (v.url ?: "").lowercase()
+                            val area = v.width * v.height
+                            if (u.contains("/hwp/") || u.contains("/docx/") || u.contains("hwp/index.html") || u.contains("docx/index.html")) {
+                                docTarget = v
+                            } else if (u.isNotEmpty() && u != "about:blank" && area > bestArea) {
+                                bestArea = area
+                                fallbackTarget = v
+                            }
                         }
                         if (v is ViewGroup) {
-                            for (i in 0 until v.childCount) findVisibleWebView(v.getChildAt(i))
+                            for (i in 0 until v.childCount) findDocWebView(v.getChildAt(i))
                         }
                     }
-                    findVisibleWebView(window.decorView)
-                    val wv = target
+                    findDocWebView(window.decorView)
+                    val wv = docTarget ?: fallbackTarget
                     if (wv == null) {
                         result.success(null)
                         return@runOnUiThread

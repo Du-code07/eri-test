@@ -4811,8 +4811,8 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
         unawaited(_hwpController.cleanupPrintAllPages());
       }
 
-      // 2차 폴백: 기기 제약으로 벡터 출력이 실패한 경우에만 A4(595x842pt) 고화질 캡처로 자동 전환
-      if (!cancelled && (savedPath == null || !File(savedPath).existsSync())) {
+      // 2차 폴백: 기기 제약으로 벡터 출력이 실패하거나 빈 파일(2KB 미만)인 경우 A4(595x842pt) 고화질 캡처로 자동 전환
+      if (!cancelled && (savedPath == null || !File(savedPath).existsSync() || File(savedPath).lengthSync() < 2000)) {
         final List<Map<String, Object?>> pageItems = [];
         final int total = math.max(1, _docPageCount);
         if (savedScroll || savedDisplay != 'one' || savedTheme != 'white' || _epubZoomScale != 1.0) {

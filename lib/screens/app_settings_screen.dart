@@ -1083,66 +1083,84 @@ class _WideTabletPainter extends CustomPainter {
   bool shouldRepaint(_WideTabletPainter old) => old.color != color;
 }
 
-/// 잠금 아이콘: 기존 Material Icons.lock_outline 비율 그대로 안쪽 열쇠구멍 동그라미만 제거
+/// 잠금 아이콘: 실제 Icons.lock_outline을 그대로 그린 뒤 안쪽 열쇠구멍 동그라미만 정확히 제거
 class CleanLockIcon extends StatelessWidget {
   const CleanLockIcon({super.key, required this.size, required this.color});
   final double size;
   final Color color;
 
   @override
-  Widget build(BuildContext context) => SizedBox(
-        width: size,
-        height: size,
-        child: CustomPaint(painter: _CleanLockPainter(color)),
-      );
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: ShaderMask(
+        blendMode: BlendMode.dstOut,
+        shaderCallback: (bounds) => const LinearGradient(colors: [Colors.transparent, Colors.transparent]).createShader(bounds),
+        child: _LockWithoutDot(size: size, color: color),
+      ),
+    );
+  }
 }
 
-class _CleanLockPainter extends CustomPainter {
-  _CleanLockPainter(this.color);
+class _LockWithoutDot extends StatelessWidget {
+  const _LockWithoutDot({required this.size, required this.color});
+  final double size;
   final Color color;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final s = size.width / 24.0;
-    final p = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0 * s
-      ..strokeCap = StrokeCap.butt
-      ..strokeJoin = StrokeJoin.miter;
-    // Material lock_outline 비율: 각진 직사각형 몸체 + 반원 고리 (안쪽 동그라미 없음)
-    final shackle = Path()
-      ..moveTo(8.0 * s, 9.0 * s)
-      ..lineTo(8.0 * s, 6.2 * s)
-      ..arcToPoint(Offset(16.0 * s, 6.2 * s), radius: Radius.circular(4.0 * s), clockwise: true)
-      ..lineTo(16.0 * s, 9.0 * s);
-    canvas.drawPath(shackle, p);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(Rect.fromLTWH(5.0 * s, 9.0 * s, 14.0 * s, 11.5 * s), Radius.circular(1.8 * s)),
-      p,
+  Widget build(BuildContext context) {
+    final s = size / 24.0;
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        Icon(Icons.lock_outline, size: size, color: color),
+        // Icons.lock_outline의 안쪽 열쇠구멍 원(중심 x=12, y=15, r=2.1)만 배경색으로 깔끔히 가림
+        Positioned(
+          left: 9.6 * s,
+          top: 12.6 * s,
+          width: 4.8 * s,
+          height: 4.8 * s,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              shape: BoxShape.circle,
+            ),
+          ),
+        ),
+      ],
     );
   }
-
-  @override
-  bool shouldRepaint(_CleanLockPainter old) => old.color != color;
 }
 
-/// 관리(성능 및 배터리) 아이콘: 배터리 윤곽 안에 주사율 절전(eco_outlined) 나뭇잎을 그린 아이콘
+/// 관리(성능 및 배터리) 아이콘: 배터리 윤곽 안에 주사율 60Hz 절전 아이콘(Icons.eco_outlined)을 그대로 배치
 class BatteryLeafIcon extends StatelessWidget {
   const BatteryLeafIcon({super.key, required this.size, required this.color});
   final double size;
   final Color color;
 
   @override
-  Widget build(BuildContext context) => SizedBox(
-        width: size,
-        height: size,
-        child: CustomPaint(painter: _BatteryLeafPainter(color)),
-      );
+  Widget build(BuildContext context) {
+    final s = size / 24.0;
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          CustomPaint(size: Size(size, size), painter: _BatteryOutlinePainter(color)),
+          Padding(
+            padding: EdgeInsets.only(top: 2.2 * s),
+            child: Icon(Icons.eco_outlined, size: 10.5 * s, color: color),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
-class _BatteryLeafPainter extends CustomPainter {
-  _BatteryLeafPainter(this.color);
+class _BatteryOutlinePainter extends CustomPainter {
+  _BatteryOutlinePainter(this.color);
   final Color color;
 
   @override
@@ -1154,32 +1172,16 @@ class _BatteryLeafPainter extends CustomPainter {
       ..strokeWidth = 1.75 * s
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
-    // 배터리 단자
-    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(9.5 * s, 2.0 * s, 5.0 * s, 2.2 * s), Radius.circular(0.8 * s)), p);
-    // 배터리 몸체
-    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(5.8 * s, 4.2 * s, 12.4 * s, 17.6 * s), Radius.circular(2.0 * s)), p);
-    // 배터리 안쪽 절전 나뭇잎 (eco_outlined와 동일한 윤곽 + 잎맥)
-    final leafStroke = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.45 * s
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-    final leaf = Path()
-      ..moveTo(9.0 * s, 16.5 * s)
-      ..cubicTo(8.5 * s, 12.2 * s, 10.8 * s, 9.6 * s, 15.0 * s, 9.4 * s)
-      ..cubicTo(15.2 * s, 13.6 * s, 12.8 * s, 16.4 * s, 9.0 * s, 16.5 * s)
-      ..close();
-    canvas.drawPath(leaf, leafStroke);
-    // 나뭇잎 줄기·잎맥
-    canvas.drawLine(Offset(8.6 * s, 17.4 * s), Offset(12.6 * s, 12.6 * s), leafStroke..strokeWidth = 1.25 * s);
+    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(9.5 * s, 1.8 * s, 5.0 * s, 2.2 * s), Radius.circular(0.8 * s)), p);
+    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(5.2 * s, 4.0 * s, 13.6 * s, 18.0 * s), Radius.circular(2.0 * s)), p);
   }
 
   @override
-  bool shouldRepaint(_BatteryLeafPainter old) => old.color != color;
+  bool shouldRepaint(_BatteryOutlinePainter old) => old.color != color;
 }
 
-/// 페이지 수 숨기기 아이콘: 겹쳐진 페이지 위에 대각선 취소선 (대각선 위로는 선이 닿지 않게 끊김 처리)
+/// 페이지 수 숨기기 아이콘: 그룹 이름 숨기기(Icons.label_off_outlined)와 동일하게
+/// 대각선 아래쪽은 선이 닿고, 대각선 위쪽에만 간격을 비워 선이 닿지 않게 표현
 class _SlashedPagesIcon extends StatelessWidget {
   const _SlashedPagesIcon({required this.size, required this.color});
   final double size;
@@ -1203,7 +1205,7 @@ class _SlashedPagesPainter extends CustomPainter {
     final p = Paint()
       ..color = color
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.8 * s
+      ..strokeWidth = 1.85 * s
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
     canvas.saveLayer(Offset.zero & size, Paint());
@@ -1216,15 +1218,15 @@ class _SlashedPagesPainter extends CustomPainter {
       ..quadraticBezierTo(4.0 * s, 20.2 * s, 5.6 * s, 20.2 * s)
       ..lineTo(16.6 * s, 20.2 * s);
     canvas.drawPath(back, p);
-    // 그룹 이름 숨기기(label_off_outlined)처럼 대각선 주변을 투명하게 비워 선이 닿지 않게 처리
-    final erase = Paint()
+    // 대각선 위쪽(+1.55, -1.55 방향)만 비워서 아래쪽 선은 대각선에 닿고 위쪽 선만 정확히 떨어지게 처리
+    final eraseAbove = Paint()
       ..blendMode = BlendMode.clear
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 4.2 * s
-      ..strokeCap = StrokeCap.round;
-    canvas.drawLine(Offset(2.6 * s, 2.6 * s), Offset(21.4 * s, 21.4 * s), erase);
-    // 대각선 취소선
-    canvas.drawLine(Offset(3.0 * s, 3.0 * s), Offset(21.0 * s, 21.0 * s), p..strokeWidth = 1.85 * s);
+      ..strokeWidth = 2.0 * s
+      ..strokeCap = StrokeCap.butt;
+    canvas.drawLine(Offset(3.6 * s, 0.5 * s), Offset(22.6 * s, 19.5 * s), eraseAbove);
+    // 대각선 취소선 (Material *_off_outlined와 동일한 각도·굵기)
+    canvas.drawLine(Offset(2.8 * s, 2.8 * s), Offset(21.2 * s, 21.2 * s), p..strokeWidth = 1.9 * s);
     canvas.restore();
   }
 

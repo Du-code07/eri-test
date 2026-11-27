@@ -41,7 +41,13 @@ class ButtonGuideScreen extends StatelessWidget {
           _tr('앱 설정의 항목', 'Items in the app settings', '应用设置中的各项', 'アプリ設定の項目')),
     ];
     return Scaffold(
-      appBar: AppBar(title: Text(_tr('가이드', 'Guide', '指南', 'ガイド'), style: const TextStyle(fontWeight: FontWeight.w800))),
+      appBar: AppBar(
+        title: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.lightbulb_outline, size: 22, color: cs.onSurface),
+          const SizedBox(width: 10),
+          Text(_tr('가이드', 'Guide', '指南', 'ガイド'), style: const TextStyle(fontWeight: FontWeight.w800)),
+        ]),
+      ),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
