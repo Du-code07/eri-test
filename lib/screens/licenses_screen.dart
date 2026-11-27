@@ -93,7 +93,13 @@ class _LicensesScreenState extends State<LicensesScreen> {
     final cs = Theme.of(context).colorScheme;
     final list = _packages;
     return Scaffold(
-      appBar: AppBar(title: Text(_tr('오픈소스 라이선스', 'Open Source Licenses', '开源许可', 'オープンソースライセンス'), style: const TextStyle(fontWeight: FontWeight.w800))),
+      appBar: AppBar(
+        title: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.article_outlined, size: 22, color: Theme.of(context).colorScheme.onSurface),
+          const SizedBox(width: 10),
+          Flexible(child: Text(_tr('오픈소스 라이선스', 'Open Source Licenses', '开源许可', 'オープンソースライセンス'), style: const TextStyle(fontWeight: FontWeight.w800), overflow: TextOverflow.ellipsis)),
+        ]),
+      ),
       body: SafeArea(
         child: list == null
             ? const Center(child: CircularProgressIndicator())

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'app_settings_screen.dart';
 
 import '../services/app_lock.dart';
 import '../widgets/app_colors.dart';
@@ -173,7 +174,13 @@ class _PrivacyLockScreenState extends State<PrivacyLockScreen> {
     final cs = Theme.of(context).colorScheme;
     final bool pin = AppLock.method.value == 'pin';
     return Scaffold(
-      appBar: AppBar(title: Text(_t('사생활 보호', 'Privacy', '隐私保护', 'プライバシー保護'), style: const TextStyle(fontWeight: FontWeight.w800))),
+      appBar: AppBar(
+        title: Row(mainAxisSize: MainAxisSize.min, children: [
+          CleanLockIcon(size: 22, color: Theme.of(context).colorScheme.onSurface),
+          const SizedBox(width: 10),
+          Text(_t('잠금', 'Lock', '锁定', 'ロック'), style: const TextStyle(fontWeight: FontWeight.w800)),
+        ]),
+      ),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.only(top: 4, bottom: 24),

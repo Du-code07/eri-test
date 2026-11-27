@@ -1471,7 +1471,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
     final hideExt = await StorageService.getHideFileExtension();
     final hideGroup = await StorageService.getHideGroupName();
     final hideThumbs = await StorageService.getHideThumbnails();
-    FavoriteRibbon.animationOff.value = await StorageService.getRibbonAnimationOff();
+
     await StorageService.loadListSwipeOff();
     final covers = await StorageService.getCustomCovers();
     final viewMode = await StorageService.getBookshelfViewMode();
@@ -4616,8 +4616,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
                             onImage: true,
                             width: 18,
                             height: 27,
-                            extraHitArea: 38, // 표지형 즐겨찾기 띠 터치·잡아당기기 작동 범위 확대
-                            tapNeedsSetting: true,
+                            extraHitArea: 38, // 표지형 즐겨찾기 띠 터치·잡아당기기 작동 범위 확대,
                             onTap: () => _toggleFavorite(file),
                           ),
                         ),
@@ -5155,7 +5154,6 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
                                   isDark: widget.isDarkMode,
                                   extraHitWidth: 32,
                                   extraHitHeight: 46,
-                                  tapNeedsSetting: true,
                                   onTap: () => _toggleFavorite(file),
                                 ),
                               ),

@@ -38,7 +38,11 @@ class _LegalScreenState extends State<LegalScreen> {
     };
     return Scaffold(
       appBar: AppBar(
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+        title: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(widget.doc == LegalDoc.terms ? Icons.gavel_outlined : Icons.privacy_tip_outlined, size: 22, color: Theme.of(context).colorScheme.onSurface),
+          const SizedBox(width: 10),
+          Flexible(child: Text(title, style: const TextStyle(fontWeight: FontWeight.w800), overflow: TextOverflow.ellipsis)),
+        ]),
         actions: [
           if (widget.lang != 'ko')
             TextButton(

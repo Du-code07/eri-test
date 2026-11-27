@@ -119,7 +119,13 @@ class FaqScreen extends StatelessWidget {
     ];
 
     return Scaffold(
-      appBar: AppBar(title: Text(t('자주 묻는 질문', 'FAQ', '常见问题', 'よくある質問'), style: const TextStyle(fontWeight: FontWeight.w800))),
+      appBar: AppBar(
+        title: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.help_outline, size: 22, color: cs.onSurface),
+          const SizedBox(width: 10),
+          Text(t('자주 묻는 질문', 'FAQ', '常见问题', 'よくある質問'), style: const TextStyle(fontWeight: FontWeight.w800)),
+        ]),
+      ),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),

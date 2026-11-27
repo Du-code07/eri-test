@@ -262,7 +262,7 @@ class _GuideRunnerState extends State<_GuideRunner> with TickerProviderStateMixi
           _Step('list', tr('새로 고침', 'Refresh', '刷新', '更新'),
               tr('목록을 맨 위에서 아래로 당기면 새로 고침 아이콘이 나오며 서재를 다시 읽어 와요', 'Pull the list down from the top to show the refresh icon and reload your library', '从顶部向下拉列表，会出现刷新图标并重新读取书架', '一覧を一番上から下に引くと更新アイコンが出て、書斎を読み込み直します')),
           _Step('ribbon', tr('즐겨찾기 띠', 'Favorite Ribbon', '收藏带', 'お気に入りリボン'),
-              tr('누르거나 아래로 당기면 즐겨찾기에 넣거나 뺄 수 있어요', 'Tap or pull down to add or remove from favorites', '点击或向下拉即可加入或移出收藏', 'タップするか下に引くとお気に入りに追加・解除できます')),
+              tr('누르면 즐겨찾기에 넣거나 뺄 수 있어요', 'Tap to add or remove from favorites', '点击即可加入或移出收藏', 'タップするとお気に入りに追加・解除できます')),
           _Step('card', tr('파일', 'File', '文件', 'ファイル'),
               tr('파일을 길게 눌러 여러 개를 고른 뒤 한꺼번에 옮길 수 있어요\n(파일 표시 방식이 목록형인 경우 개별 파일을 왼쪽으로 밀면 삭제, 오른쪽으로 밀면 즐겨찾기 할 수 있어요)',
                   'Long-press to select multiple files and move them all at once\n(In list view, swipe a file left to delete or right to favorite)',

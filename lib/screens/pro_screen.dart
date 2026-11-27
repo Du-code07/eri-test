@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'app_settings_screen.dart';
 import 'package:flutter/services.dart';
 
 import '../services/pro.dart';
@@ -62,7 +63,13 @@ class ProScreen extends StatelessWidget {
         );
 
     return Scaffold(
-      appBar: AppBar(title: Text(_t('이리ERI 프로', '이리ERI Pro', '이리ERI 专业版', '이리ERI プロ'), style: const TextStyle(fontWeight: FontWeight.w800))),
+      appBar: AppBar(
+        title: Row(mainAxisSize: MainAxisSize.min, children: [
+          SimpleCrownIcon(size: 22, color: cs.onSurface),
+          const SizedBox(width: 10),
+          Text(_t('이리ERI 프로', '이리ERI Pro', '이리ERI 专业版', '이리ERI プロ'), style: const TextStyle(fontWeight: FontWeight.w800)),
+        ]),
+      ),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),

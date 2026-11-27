@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/scan_folders.dart';
 import '../services/storage_service.dart';
 import '../widgets/app_colors.dart';
+import '../widgets/morph_icons.dart';
 
 /// 앱 설정 > 탐색할 폴더: 파일 탐색·글꼴 찾기가 찾아볼 폴더를 넣고 뺌
 class ScanFoldersScreen extends StatefulWidget {
@@ -62,7 +63,11 @@ class _ScanFoldersScreenState extends State<ScanFoldersScreen> {
     final list = _folders;
     return Scaffold(
       appBar: AppBar(
-        title: Text(_tr('탐색할 폴더', 'Folders to Search', '要查找的文件夹', '探すフォルダ'), style: const TextStyle(fontWeight: FontWeight.w800)),
+        title: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.folder_open_outlined, size: 22, color: cs.onSurface),
+          const SizedBox(width: 10),
+          Text(_tr('탐색할 폴더', 'Folders to Search', '要查找的文件夹', '探すフォルダ'), style: const TextStyle(fontWeight: FontWeight.w800)),
+        ]),
         actions: [
           TextButton.icon(
             style: TextButton.styleFrom(foregroundColor: cs.onSurface, padding: const EdgeInsets.symmetric(horizontal: 12)),
@@ -115,7 +120,7 @@ class _ScanFoldersScreenState extends State<ScanFoldersScreen> {
                           title: Text(f.name.isEmpty ? f.uri : f.name, maxLines: 2, overflow: TextOverflow.ellipsis,
                               style: const TextStyle(fontWeight: FontWeight.w700)),
                           trailing: IconButton(
-                            icon: const Icon(Icons.delete_outline),
+                            icon: const TrashLidIcon(open: false),
                             tooltip: _tr('빼기', 'Remove', '移除', '外す'),
                             onPressed: () => _remove(f),
                           ),

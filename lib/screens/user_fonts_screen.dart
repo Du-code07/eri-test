@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import '../widgets/app_colors.dart';
 import '../widgets/morph_icons.dart';
+import '../widgets/file_type_icon.dart';
 import '../widgets/pop_dialog.dart';
 
 import '../services/user_fonts.dart';
@@ -249,7 +250,16 @@ class _UserFontsScreenState extends State<UserFontsScreen> {
     final cs = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
-        title: Text(_title),
+        title: Row(mainAxisSize: MainAxisSize.min, children: [
+          if (widget.category == 'app')
+            Icon(Icons.font_download_outlined, size: 22, color: cs.onSurface)
+          else if (widget.category == 'epub')
+            FileTypeIcon(ext: 'epub', size: 22, color: cs.onSurface)
+          else
+            const DocPairIcon(size: 24),
+          const SizedBox(width: 10),
+          Flexible(child: Text(_title, overflow: TextOverflow.ellipsis)),
+        ]),
         actions: [
           // 초기화: 넣어 둔 글꼴을 모두 빼고 기본 글꼴로
           TextButton.icon(

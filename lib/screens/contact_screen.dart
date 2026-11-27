@@ -94,7 +94,13 @@ class _ContactScreenState extends State<ContactScreen> {
         );
     final String need = _t('적어 주세요', 'Required', '请填写', '入力してください');
     return Scaffold(
-      appBar: AppBar(title: Text(_t('문의하기', 'Contact Us', '联系我们', 'お問い合わせ'), style: const TextStyle(fontWeight: FontWeight.w800))),
+      appBar: AppBar(
+        title: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.mail_outline, size: 22, color: Theme.of(context).colorScheme.onSurface),
+          const SizedBox(width: 10),
+          Text(_t('문의하기', 'Contact Us', '联系我们', 'お問い合わせ'), style: const TextStyle(fontWeight: FontWeight.w800)),
+        ]),
+      ),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),

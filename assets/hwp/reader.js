@@ -3013,15 +3013,32 @@ async function preparePrintAllPages() {
   style.id = 'eri-print-style';
   style.textContent = `
     @page { size: A4; margin: 0; }
-    @media print {
-      html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; width: auto !important; height: auto !important; overflow: visible !important; filter: none !important; }
-      body > *:not(#eri-print-root) { display: none !important; }
-      #eri-print-root { display: block !important; position: static !important; width: 210mm !important; background: #fff !important; }
-      .eri-print-page { width: 210mm; height: 297mm; page-break-after: always; break-after: page; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #fff; box-sizing: border-box; }
-      .eri-print-page:last-child { page-break-after: auto; break-after: auto; }
-      .eri-print-page svg { width: 100%; height: 100%; display: block; }
+    html.eri-printing, body.eri-printing {
+      margin: 0 !important; padding: 0 !important;
+      background: #fff !important;
+      width: 210mm !important; height: auto !important;
+      overflow: visible !important; filter: none !important;
     }
-    #eri-print-root { display: none; }
+    body.eri-printing > *:not(#eri-print-root) { display: none !important; }
+    body.eri-printing #eri-print-root {
+      display: block !important; position: relative !important;
+      width: 210mm !important; background: #fff !important;
+      filter: none !important;
+    }
+    .eri-print-page {
+      width: 210mm !important; height: 297mm !important;
+      margin: 0 !important; padding: 0 !important;
+      page-break-after: always; break-after: page;
+      overflow: hidden; background: #fff !important;
+      position: relative; box-sizing: border-box;
+      filter: none !important;
+    }
+    .eri-print-page:last-child { page-break-after: auto; break-after: auto; }
+    .eri-print-page > svg {
+      display: block !important; width: 210mm !important; height: 297mm !important;
+      filter: none !important;
+    }
+    .eri-print-page::after { display: none !important; }
   `;
   document.head.appendChild(style);
   const root = document.createElement('div');
@@ -3030,21 +3047,25 @@ async function preparePrintAllPages() {
   for (let i = 0; i < total; i++) {
     const entry = svgForPage(i);
     const svg = entry.template.cloneNode(true);
-    const box = svg.getAttribute('viewBox')?.trim().split(/[\s,]+/).map(Number);
-    if (box && box.length === 4 && box[2] > 0 && box[3] > 0) {
-      svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-    }
-    const wrap = document.createElement('div');
+    svg.setAttribute('width', '794');
+    svg.setAttribute('height', '1123');
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    const wrap = document.createElement('section');
     wrap.className = 'eri-print-page';
     wrap.appendChild(svg);
     root.appendChild(wrap);
   }
   document.body.appendChild(root);
+  document.documentElement.classList.add('eri-printing');
+  document.body.classList.add('eri-printing');
+  try { if (document.fonts && document.fonts.ready) await document.fonts.ready; } catch (_) {}
   await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
   return true;
 }
 
 function cleanupPrintAllPages() {
+  document.documentElement.classList.remove('eri-printing');
+  document.body.classList.remove('eri-printing');
   document.getElementById('eri-print-root')?.remove();
   document.getElementById('eri-print-style')?.remove();
   return true;

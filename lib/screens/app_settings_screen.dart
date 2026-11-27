@@ -3,7 +3,6 @@ import '../services/pro.dart';
 import 'pro_screen.dart';
 import 'faq_screen.dart';
 import 'contact_screen.dart';
-import '../widgets/favorite_ribbon.dart';
 import '../widgets/file_type_icon.dart';
 import 'user_fonts_screen.dart';
 import 'tap_zone_screen.dart';
@@ -555,11 +554,11 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                       padding: const EdgeInsets.fromLTRB(22, 12, 12, 0),
                       child: Row(
                         children: [
-                          _BatteryLeafIcon(size: 23, color: cs.onSurface),
+                          BatteryLeafIcon(size: 23, color: cs.onSurface),
                           const SizedBox(width: 14),
                           Expanded(
                             child: Text(
-                              _t('성능 및 배터리', 'Performance & Battery', '性能与电池', 'パフォーマンスとバッテリー'),
+                              _t('관리', 'Manage', '管理', '管理'),
                               style: (Theme.of(ctx).textTheme.titleLarge ?? const TextStyle()).copyWith(fontWeight: FontWeight.w800),
                             ),
                           ),
@@ -849,22 +848,22 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
               subtitle: languageOptionLabel(_langSetting),
               onTap: _pickLanguage,
             ),
-            // 사생활 보호: 자물쇠 안 동그라미 없는 깔끔한 아이콘
+            // 잠금: 기존 자물쇠에서 안쪽 동그라미만 뺀 아이콘
             _item(
               icon: Icons.lock_outline,
-              leading: _CleanLockIcon(size: 23, color: cs.onSurface),
-              title: _t('사생활 보호', 'Privacy', '隐私保护', 'プライバシー保護'),
-              subtitle: _t('앱 파일을 잠글 수 있어요', 'Lock your app and files', '可以锁定应用和文件', 'アプリとファイルをロックできます'),
+              leading: CleanLockIcon(size: 23, color: cs.onSurface),
+              title: _t('잠금', 'Lock', '锁定', 'ロック'),
+              subtitle: _t('앱·파일을 잠글 수 있어요', 'Lock your app and files', '可以锁定应用和文件', 'アプリ・ファイルをロックできます'),
               onTap: () async {
                 await Navigator.of(context).push(PushAsideRoute(builder: (_) => PrivacyLockScreen(t: _t)));
                 if (mounted) setState(() {});
               },
             ),
-            // 성능 및 배터리: 배터리 안 나뭇잎 아이콘
+            // 관리: 배터리 안 절전 나뭇잎 아이콘
             _item(
               icon: Icons.battery_saver_outlined,
-              leading: _BatteryLeafIcon(size: 23, color: cs.onSurface),
-              title: _t('성능 및 배터리', 'Performance & Battery', '性能与电池', 'パフォーマンスとバッテリー'),
+              leading: BatteryLeafIcon(size: 23, color: cs.onSurface),
+              title: _t('관리', 'Manage', '管理', '管理'),
               subtitle: _t('주사율·화질·절전·애니메이션·캐시 관리', 'Refresh rate, quality, power saving, animations & cache', '刷新率·画质·省电·动画·缓存管理', 'リフレッシュレート・画質・省電力・アニメ・キャッシュ'),
               onTap: _openPerformanceSheet,
             ),
@@ -881,16 +880,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
               ].join(' · '),
               onTap: _pickViewMode,
             ),
-            ValueListenableBuilder<bool>(
-              valueListenable: FavoriteRibbon.animationOff,
-              builder: (context, tapFav, _) => _item(
-                icon: Icons.bookmark_remove_outlined,
-                title: _t('책갈피 터치로 즐겨찾기', 'Tap bookmark to favorite', '轻触书签即可收藏', 'しおりをタップしてお気に入り'),
-                subtitle: _t('당기지 않고 터치로 즐겨찾기', 'Tap instead of pulling', '无需下拉，轻触即可收藏', '引っ張らずにタップでお気に入り'),
-                onTap: () => StorageService.setRibbonAnimationOff(!tapFav),
-                trailing: Switch(value: tapFav, onChanged: StorageService.setRibbonAnimationOff),
-              ),
-            ),
+
             _item(
               icon: Icons.bookmark_added_outlined,
               title: _t('페이지 기억하기', 'Remember Last Page', '记住页面', 'ページを記憶'),
@@ -943,7 +933,8 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
             _section(_t('프로', 'Pro', '专业版', 'プロ')),
             // 이리ERI 프로: 유료 기능과 무료 제공 기간 안내
             _item(
-              icon: Icons.diamond_outlined,
+              icon: Icons.workspace_premium_outlined,
+              leading: SimpleCrownIcon(size: 23, color: cs.onSurface),
               title: _t('이리ERI 프로', '이리ERI Pro', '이리ERI 专业版', '이리ERI プロ'),
               subtitle: Pro.freePeriod
                   ? _t('2027년 유료 출시 전까지 무료로 쓸 수 있어요', 'Free to use until the paid launch in 2027', '在2027年付费版推出前可免费使用', '2027年の有料リリース前まで無料で使えます')
@@ -1048,13 +1039,9 @@ class _StyleCircleGridPainter extends CustomPainter {
       ..strokeWidth = 1.8 * s
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
-    // 좌상단: 동그라미
     canvas.drawCircle(Offset(7.0 * s, 7.0 * s), 3.4 * s, p);
-    // 우상단: 둥근 네모
     canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(13.6 * s, 3.6 * s, 6.8 * s, 6.8 * s), Radius.circular(1.6 * s)), p);
-    // 좌하단: 둥근 네모
     canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(3.6 * s, 13.6 * s, 6.8 * s, 6.8 * s), Radius.circular(1.6 * s)), p);
-    // 우하단: 플러스(+)
     canvas.drawLine(Offset(17.0 * s, 14.0 * s), Offset(17.0 * s, 20.0 * s), p);
     canvas.drawLine(Offset(14.0 * s, 17.0 * s), Offset(20.0 * s, 17.0 * s), p);
   }
@@ -1063,7 +1050,7 @@ class _StyleCircleGridPainter extends CustomPainter {
   bool shouldRepaint(_StyleCircleGridPainter old) => old.color != color;
 }
 
-/// 와이드 아이콘: 컴팩트(휴대폰) 아이콘을 옆으로 눕히고 화면을 넓힌 태블릿 아이콘
+/// 와이드 아이콘: 컴팩트(스마트폰) 아이콘을 옆으로 눕히고 화면을 넓힌 태블릿 (버튼 없이 테두리 채움)
 class _WideTabletIcon extends StatelessWidget {
   const _WideTabletIcon({required this.size, required this.color});
   final double size;
@@ -1084,30 +1071,21 @@ class _WideTabletPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final s = size.width / 24.0;
-    final p = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.8 * s
-      ..strokeCap = StrokeCap.round;
-    // 가로로 넓은 태블릿 본체
-    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(1.8 * s, 4.2 * s, 20.4 * s, 15.6 * s), Radius.circular(2.6 * s)), p);
-    // 안쪽 넓은 화면 영역
-    final screenP = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.3 * s;
-    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(4.2 * s, 6.4 * s, 14.2 * s, 11.2 * s), Radius.circular(1.0 * s)), screenP);
-    // 오른쪽 짧은 홈 막대
-    canvas.drawLine(Offset(20.1 * s, 10.2 * s), Offset(20.1 * s, 13.8 * s), p);
+    // smartphone_rounded와 동일한 채워진 베젤 스타일: 바깥 둥근 사각형에서 안쪽 넓은 화면을 비움
+    final path = Path()
+      ..fillType = PathFillType.evenOdd
+      ..addRRect(RRect.fromRectAndRadius(Rect.fromLTWH(1.5 * s, 3.8 * s, 21.0 * s, 16.4 * s), Radius.circular(2.6 * s)))
+      ..addRRect(RRect.fromRectAndRadius(Rect.fromLTWH(4.3 * s, 5.8 * s, 15.4 * s, 12.4 * s), Radius.circular(0.8 * s)));
+    canvas.drawPath(path, Paint()..color = color..style = PaintingStyle.fill);
   }
 
   @override
   bool shouldRepaint(_WideTabletPainter old) => old.color != color;
 }
 
-/// 사생활 보호 아이콘: 안쪽 열쇠구멍 동그라미를 뺀 깔끔한 자물쇠
-class _CleanLockIcon extends StatelessWidget {
-  const _CleanLockIcon({required this.size, required this.color});
+/// 잠금 아이콘: 기존 Material Icons.lock_outline 비율 그대로 안쪽 열쇠구멍 동그라미만 제거
+class CleanLockIcon extends StatelessWidget {
+  const CleanLockIcon({super.key, required this.size, required this.color});
   final double size;
   final Color color;
 
@@ -1129,27 +1107,29 @@ class _CleanLockPainter extends CustomPainter {
     final p = Paint()
       ..color = color
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.85 * s
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-    // 자물쇠 고리
+      ..strokeWidth = 2.0 * s
+      ..strokeCap = StrokeCap.butt
+      ..strokeJoin = StrokeJoin.miter;
+    // Material lock_outline 비율: 각진 직사각형 몸체 + 반원 고리 (안쪽 동그라미 없음)
     final shackle = Path()
-      ..moveTo(8.0 * s, 10.2 * s)
-      ..lineTo(8.0 * s, 7.6 * s)
-      ..arcToPoint(Offset(16.0 * s, 7.6 * s), radius: Radius.circular(4.0 * s), clockwise: true)
-      ..lineTo(16.0 * s, 10.2 * s);
+      ..moveTo(8.0 * s, 9.0 * s)
+      ..lineTo(8.0 * s, 6.2 * s)
+      ..arcToPoint(Offset(16.0 * s, 6.2 * s), radius: Radius.circular(4.0 * s), clockwise: true)
+      ..lineTo(16.0 * s, 9.0 * s);
     canvas.drawPath(shackle, p);
-    // 자물쇠 몸체 (안쪽 동그라미 없음)
-    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(5.0 * s, 10.2 * s, 14.0 * s, 10.4 * s), Radius.circular(2.4 * s)), p);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(Rect.fromLTWH(5.0 * s, 9.0 * s, 14.0 * s, 11.5 * s), Radius.circular(1.8 * s)),
+      p,
+    );
   }
 
   @override
   bool shouldRepaint(_CleanLockPainter old) => old.color != color;
 }
 
-/// 성능 및 배터리 아이콘: 배터리 윤곽 안에 나뭇잎이 들어 있는 아이콘
-class _BatteryLeafIcon extends StatelessWidget {
-  const _BatteryLeafIcon({required this.size, required this.color});
+/// 관리(성능 및 배터리) 아이콘: 배터리 윤곽 안에 주사율 절전(eco_outlined) 나뭇잎을 그린 아이콘
+class BatteryLeafIcon extends StatelessWidget {
+  const BatteryLeafIcon({super.key, required this.size, required this.color});
   final double size;
   final Color color;
 
@@ -1174,29 +1154,32 @@ class _BatteryLeafPainter extends CustomPainter {
       ..strokeWidth = 1.75 * s
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
-    // 배터리 단자 (위쪽)
-    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(9.5 * s, 2.2 * s, 5.0 * s, 2.2 * s), Radius.circular(0.8 * s)), p);
+    // 배터리 단자
+    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(9.5 * s, 2.0 * s, 5.0 * s, 2.2 * s), Radius.circular(0.8 * s)), p);
     // 배터리 몸체
-    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(6.2 * s, 4.4 * s, 11.6 * s, 17.2 * s), Radius.circular(2.2 * s)), p);
-    // 배터리 안쪽 나뭇잎
-    final leaf = Path()
-      ..moveTo(9.4 * s, 16.4 * s)
-      ..quadraticBezierTo(8.8 * s, 10.8 * s, 14.6 * s, 9.6 * s)
-      ..quadraticBezierTo(15.2 * s, 15.2 * s, 9.4 * s, 16.4 * s)
-      ..close();
-    final fill = Paint()
+    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(5.8 * s, 4.2 * s, 12.4 * s, 17.6 * s), Radius.circular(2.0 * s)), p);
+    // 배터리 안쪽 절전 나뭇잎 (eco_outlined와 동일한 윤곽 + 잎맥)
+    final leafStroke = Paint()
       ..color = color
-      ..style = PaintingStyle.fill;
-    canvas.drawPath(leaf, fill);
-    // 나뭇잎 줄기
-    canvas.drawLine(Offset(9.0 * s, 17.2 * s), Offset(11.6 * s, 13.8 * s), p..strokeWidth = 1.35 * s);
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.45 * s
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    final leaf = Path()
+      ..moveTo(9.0 * s, 16.5 * s)
+      ..cubicTo(8.5 * s, 12.2 * s, 10.8 * s, 9.6 * s, 15.0 * s, 9.4 * s)
+      ..cubicTo(15.2 * s, 13.6 * s, 12.8 * s, 16.4 * s, 9.0 * s, 16.5 * s)
+      ..close();
+    canvas.drawPath(leaf, leafStroke);
+    // 나뭇잎 줄기·잎맥
+    canvas.drawLine(Offset(8.6 * s, 17.4 * s), Offset(12.6 * s, 12.6 * s), leafStroke..strokeWidth = 1.25 * s);
   }
 
   @override
   bool shouldRepaint(_BatteryLeafPainter old) => old.color != color;
 }
 
-/// 페이지 수 숨기기 아이콘: 겹쳐진 페이지 위에 대각선 취소선
+/// 페이지 수 숨기기 아이콘: 겹쳐진 페이지 위에 대각선 취소선 (대각선 위로는 선이 닿지 않게 끊김 처리)
 class _SlashedPagesIcon extends StatelessWidget {
   const _SlashedPagesIcon({required this.size, required this.color});
   final double size;
@@ -1223,19 +1206,71 @@ class _SlashedPagesPainter extends CustomPainter {
       ..strokeWidth = 1.8 * s
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
+    canvas.saveLayer(Offset.zero & size, Paint());
     // 앞쪽 페이지
     canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(6.8 * s, 3.6 * s, 13.4 * s, 13.4 * s), Radius.circular(1.8 * s)), p);
-    // 뒤쪽 페이지 ㄴ자 윤곽
+    // 뒤쪽 페이지
     final back = Path()
       ..moveTo(4.0 * s, 7.6 * s)
       ..lineTo(4.0 * s, 18.6 * s)
       ..quadraticBezierTo(4.0 * s, 20.2 * s, 5.6 * s, 20.2 * s)
       ..lineTo(16.6 * s, 20.2 * s);
     canvas.drawPath(back, p);
+    // 그룹 이름 숨기기(label_off_outlined)처럼 대각선 주변을 투명하게 비워 선이 닿지 않게 처리
+    final erase = Paint()
+      ..blendMode = BlendMode.clear
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 4.2 * s
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(Offset(2.6 * s, 2.6 * s), Offset(21.4 * s, 21.4 * s), erase);
     // 대각선 취소선
-    canvas.drawLine(Offset(3.2 * s, 3.2 * s), Offset(20.8 * s, 20.8 * s), p..strokeWidth = 1.9 * s);
+    canvas.drawLine(Offset(3.0 * s, 3.0 * s), Offset(21.0 * s, 21.0 * s), p..strokeWidth = 1.85 * s);
+    canvas.restore();
   }
 
   @override
   bool shouldRepaint(_SlashedPagesPainter old) => old.color != color;
+}
+
+/// 이리ERI 프로 아이콘: 심플한 3봉우리 왕관
+class SimpleCrownIcon extends StatelessWidget {
+  const SimpleCrownIcon({super.key, required this.size, required this.color});
+  final double size;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        width: size,
+        height: size,
+        child: CustomPaint(painter: _SimpleCrownPainter(color)),
+      );
+}
+
+class _SimpleCrownPainter extends CustomPainter {
+  _SimpleCrownPainter(this.color);
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = size.width / 24.0;
+    final p = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.85 * s
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    final crown = Path()
+      ..moveTo(3.5 * s, 17.5 * s)
+      ..lineTo(4.5 * s, 8.0 * s)
+      ..lineTo(8.8 * s, 12.2 * s)
+      ..lineTo(12.0 * s, 6.2 * s)
+      ..lineTo(15.2 * s, 12.2 * s)
+      ..lineTo(19.5 * s, 8.0 * s)
+      ..lineTo(20.5 * s, 17.5 * s)
+      ..close();
+    canvas.drawPath(crown, p);
+  }
+
+  @override
+  bool shouldRepaint(_SimpleCrownPainter old) => old.color != color;
 }

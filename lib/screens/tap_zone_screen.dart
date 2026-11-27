@@ -95,7 +95,11 @@ class _TapZoneScreenState extends State<TapZoneScreen> {
     final bool isDefault = _zones == StorageService.tapZonesDefault;
     return Scaffold(
       appBar: AppBar(
-        title: Text(_t('탭 영역', 'Tap Zones', '点击区域', 'タップ領域')),
+        title: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.grid_view_outlined, size: 22, color: Theme.of(context).colorScheme.onSurface),
+          const SizedBox(width: 10),
+          Text(_t('탭 영역', 'Tap Zones', '点击区域', 'タップ領域'), style: const TextStyle(fontWeight: FontWeight.w800)),
+        ]),
         // 초기화: 오른쪽 위, 바탕 없이 아이콘과 글자만 (기본값이면 흐리게)
         actions: [
           TextButton.icon(
