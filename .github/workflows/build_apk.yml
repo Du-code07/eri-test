@@ -66,6 +66,10 @@ jobs:
           rm -rf android/app/src/main/kotlin/com android/app/src/main/java/com
           mkdir -p android/app/src/main/kotlin/com/dudu/eri
           cp -f /tmp/v7_backup/android_override/MainActivity.kt android/app/src/main/kotlin/com/dudu/eri/MainActivity.kt
+          if [ -f /tmp/v7_backup/android_override/WebViewPdfPrinter.java ]; then
+            mkdir -p android/app/src/main/java/android/print
+            cp -f /tmp/v7_backup/android_override/WebViewPdfPrinter.java android/app/src/main/java/android/print/WebViewPdfPrinter.java
+          fi
           sed -i 's/namespace = "[^"]*"/namespace = "com.dudu.eri"/; s/applicationId = "[^"]*"/applicationId = "com.dudu.eri"/' android/app/build.gradle.kts
           grep -q 'namespace = "com.dudu.eri"' android/app/build.gradle.kts || { echo "namespace 바꾸기 실패"; exit 1; }
           grep -q 'applicationId = "com.dudu.eri"' android/app/build.gradle.kts || { echo "applicationId 바꾸기 실패"; exit 1; }
