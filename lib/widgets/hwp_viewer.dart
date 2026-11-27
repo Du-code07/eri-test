@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
@@ -126,14 +125,6 @@ class HwpReaderController {
   Future<void> editUndo() async => _invoke?.call('editUndo', []);
   Future<void> editRedo() async => _invoke?.call('editRedo', []);
   Future<void> cancelEditSession() async => _invoke?.call('cancelEditSession', []);
-
-  Future<Uint8List?> Function()? _capturePng;
-  /// 현재 화면에 그려진 페이지를 무손실 PNG 바이트로 캡처 (PDF 변환용)
-  Future<Uint8List?> capturePagePng() async => _capturePng?.call();
-
-  /// 벡터 PDF 출력용: 전체 페이지를 A4 인쇄 레이아웃으로 마운트/정리
-  Future<bool> preparePrintAllPages() async => (await _query?.call('preparePrintAllPages', [])) == true;
-  Future<void> cleanupPrintAllPages() async => _invoke?.call('cleanupPrintAllPages', []);
 
 
   /// PPT: 슬라이드 전체 그림(JPEG base64) — 글자가 그림으로만 된 슬라이드의 글자를 읽는 데 씀
@@ -411,7 +402,6 @@ class _HwpViewerState extends State<HwpViewer> {
     widget.controller._invoke = _navigate;
     widget.controller._query = _ask;
     widget.controller._setScrollLocked = _applyScrollLock;
-    widget.controller._capturePng = _capturePng;
     _armTimeout();
   }
 
@@ -656,7 +646,6 @@ class _HwpViewerState extends State<HwpViewer> {
       widget.controller._invoke = _navigate;
       widget.controller._query = _ask;
       widget.controller._setScrollLocked = _applyScrollLock;
-    widget.controller._capturePng = _capturePng;
     }
     if (_loaded &&
         (oldWidget.theme != widget.theme ||
@@ -698,7 +687,6 @@ class _HwpViewerState extends State<HwpViewer> {
     widget.controller._invoke = null;
     widget.controller._query = null;
     widget.controller._setScrollLocked = null;
-    widget.controller._capturePng = null;
     unawaited(_closeFile());
     // The platform view owns its controller and releases the WASM heap on close.
     _web = null;
@@ -739,17 +727,6 @@ class _HwpViewerState extends State<HwpViewer> {
     try {
       await _web?.evaluateJavascript(source: 'try{window.getSelection().removeAllRanges()}catch(e){}');
     } catch (_) {}
-  }
-
-  Future<Uint8List?> _capturePng() async {
-    if (_disposed || _failed || _web == null) return null;
-    try {
-      return await _web!.takeScreenshot(
-        screenshotConfiguration: ScreenshotConfiguration(compressFormat: CompressFormat.PNG),
-      );
-    } catch (_) {
-      return null;
-    }
   }
 
   void _applyScrollLock(bool locked) {

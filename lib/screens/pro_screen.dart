@@ -86,7 +86,6 @@ class ProScreen extends StatelessWidget {
             feature(Icons.photo_library_outlined, _t('이미지 합치기', 'Merge Images', '合并图片', '画像結合')),
             feature(Icons.picture_as_pdf_outlined, _t('PDF 합치기', 'Merge PDFs', '合并 PDF', 'PDF結合')),
             feature(Icons.edit_note_rounded, _t('문서 편집', 'Edit Document', '编辑文档', '文書編集')),
-            feature(Icons.transform_rounded, _t('PDF 변환하기', 'Convert to PDF', '转为 PDF', 'PDF変換')),
             feature(Icons.add_circle_outline, _t('앞으로 추가되는 유료 기능', 'Paid features added in the future', '今后新增的付费功能', '今後追加される有料機能')),
             const SizedBox(height: 18),
             Container(
