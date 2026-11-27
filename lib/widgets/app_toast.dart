@@ -6,6 +6,9 @@ import '../services/system_bars.dart';
 import 'app_colors.dart';
 
 OverlayEntry? _activeAppToast;
+
+/// 알림(토스트)이 화면에 떠 있는지 — 쪽 화면을 그림으로 저장할 때 알림까지 찍히지 않게 씀
+bool get appToastVisible => _activeAppToast != null;
 Timer? _activeAppToastTimer;
 
 /// 메인 화면에서는 하단 내비게이션 막대 뒤에서 전체 막대가 위로 스르륵 올라왔다가 다시 아래로 스르륵 사라지고,

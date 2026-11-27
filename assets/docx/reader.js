@@ -394,6 +394,9 @@ async function preparePages(html, current) {
         for (let c = Math.max(0, first); c <= Math.min(columns - 1, last); c++) columnImages[c].add(img.dataset.resource);
       }
     }
+    // FReader: 스크롤 보기용 — 맨 위 글 덩어리마다 몇째 칸(쪽)에서 시작·끝나는지와 시작 칸 안의 높이
+    // (스크롤 보기는 쪽마다 구역 전체를 복사하면 사진 많은 문서에서 매우 느려서, 그 쪽에 걸친 덩어리만 복사함)
+    measureBlocks(source, inner, columns, columnStride);
     // FReader: 본문 자리 (여백 줄이기에서 이 자리가 화면에 크게 오도록 맞춤)
     const box = { x: margin[3], y: margin[0], w: bodyWidth, h: bodyHeight };
     for (let column = 0; column < columns; column++) result.push({ source, column, width, height, bodyWidth, columnStride, sectionPageCount: columns, box, images: [...columnImages[column]] });
@@ -482,7 +485,9 @@ function missingImage(img, reason) {
   notice.textContent = '이 그림은 표시할 수 없어요'; img.replaceWith(notice);
 }
 function preparePageSource(source, entry, index) {
-    source.querySelector('.freader-columns').style.transform = `translateX(${-entry.column * entry.columnStride}px)`;
+    // 스크롤 보기의 가벼운 복사본은 이 쪽 앞뒤 글만 담고 있어 보일 칸 번호가 다름 (data-vcol)
+    const column = source.dataset.vcol != null ? Number(source.dataset.vcol) : entry.column;
+    source.querySelector('.freader-columns').style.transform = `translateX(${-column * entry.columnStride}px)`;
     // FReader: 머리말·꼬리말 쪽 번호와 첫 쪽 다른 머리말
     for (const field of source.querySelectorAll(':scope > .docx-hf [data-docx-field]')) {
       field.textContent = String(field.dataset.docxField === 'NUMPAGES' ? pages.length : index + 1);
@@ -549,6 +554,17 @@ async function render() {
   // FReader: 글자는 바로 보이게 하고(쪽 위치도 바로 알림), 사진은 이어서 채운다.
   // 사진까지 다 채워지면 'pageReady'를 알린다 (앱은 이때 이 쪽의 화면을 저장해 다음에 먼저 띄움).
   void loadVisibleImages(serial, visible);
+}
+/** 고친 뒤(되돌리기 포함): 보이는 그림의 주소를 지금 쓸 수 있는 주소로 다시 채움 */
+async function loadFrameImagesFresh(frame) {
+  const imgs = [...frame.querySelectorAll('img[data-resource]')].filter(img => {
+    const clip = (img.closest('.freader-content') || img.closest('.page')).getBoundingClientRect();
+    return [...img.getClientRects()].some(r => r.width > 0 && r.height > 0 && r.right > clip.left + .1 && r.left < clip.right - .1 && r.bottom > clip.top + .1 && r.top < clip.bottom - .1);
+  });
+  for (const img of imgs) {
+    if (disposed || !frame.isConnected) return;
+    try { const item = await imageFor(img.dataset.resource); if (img.getAttribute('src') !== item.url) img.src = item.url; } catch (_) {}
+  }
 }
 async function loadVisibleImages(serial, visible) {
   // Bounded decoding keeps temporary pixel buffers small for photo-heavy files.
@@ -767,6 +783,78 @@ resizeObserver.observe(host);
 let vertical = false, vhost = null, vSlots = [], vTops = [], vRaf = 0, vMetricsTimer = 0, vSerial = 0;
 const vMounted = new Map(); // 쪽 번호 → { frame, source, original, entry }
 const vOwner = new Map(); // 원래 글 덩어리 → 그것을 쓰고 있는 쪽 번호 (다른 쪽은 복사본)
+let blockInfo = new WeakMap(); // 원래 글 덩어리 → 맨 위 덩어리별 { first, last, top } (고치면 다시 잼)
+function measureBlocks(source, inner, columns, columnStride) {
+  try {
+    const ir = inner.getBoundingClientRect(), k = ir.width / (inner.offsetWidth || ir.width || 1) || 1;
+    if (!(k > 0) || !inner.isConnected) { blockInfo.delete(source); return; }
+    const info = [];
+    let prevLast = 0;
+    for (const el of inner.children) {
+      let first = Infinity, last = -1, top = 0, bottom = 0;
+      for (const r of el.getClientRects()) {
+        if (!(r.width > 0 || r.height > 0)) continue;
+        const c = Math.max(0, Math.min(columns - 1, Math.floor(((r.left - ir.left) / k + 0.5) / columnStride)));
+        const t = (r.top - ir.top) / k, b = (r.bottom - ir.top) / k;
+        if (c < first) { first = c; top = t; bottom = b; } else if (c === first) { top = Math.min(top, t); bottom = Math.max(bottom, b); }
+        if (c > last) last = c;
+      }
+      if (last < 0) { first = prevLast; last = prevLast; top = -1; bottom = -1; }
+      // h: 시작 칸에서 차지한 높이 (다음 쪽으로 이어지는 덩어리를 복사본에서도 같은 줄에서 끊으려고)
+      info.push({ first, last, top, h: Math.max(0, bottom - top) });
+      prevLast = last;
+    }
+    info.colH = inner.clientHeight;
+    blockInfo.set(source, info);
+  } catch (_) { blockInfo.delete(source); }
+}
+let vOriginalPage = null; // 원래 글 덩어리를 써야 하는 쪽 (찾은 낱말 형광펜·편집)
+/** 스크롤 보기용 쪽 복사본: 그 쪽에 걸친 맨 위 덩어리만 담고, 앞 덩어리 자리는 빈 칸으로 채워 같은 자리에 놓음 */
+function vMakeClone(entry, index) {
+  // 복사본의 그림 주소는 원래 글에 남아 있던 것(이미 지운 주소일 수 있음)이라 비우고, 붙인 뒤 새로 채움 (깨진 그림 표시 방지)
+  const made = vMakeCloneRaw(entry, index);
+  for (const img of made.querySelectorAll('img[data-resource][src]')) img.removeAttribute('src');
+  return made;
+}
+function vMakeCloneRaw(entry, index) {
+  const src = entry.source, info = blockInfo.get(src);
+  const inner = src.querySelector('.freader-columns');
+  if (!info || !inner || info.length !== inner.children.length) return src.cloneNode(true);
+  const c = entry.column, keep = [];
+  info.forEach((b, i) => { if (b.first <= c && b.last >= c) keep.push(i); });
+  if (!keep.length) return src.cloneNode(true);
+  const head = info[keep[0]];
+  // 앞쪽에서 두 쪽 넘게 이어 온 덩어리(아주 긴 표 등)는 끊기는 자리를 맞추기 어려우므로 구역 전체를 복사
+  if (head.first < c - 1 || !(info.colH > 0)) return src.cloneNode(true);
+  // 앞 쪽에서 이어지는 덩어리: 앞 칸에 원래와 같은 높이만큼만 들어가도록 빈 칸 높이를 정함 (줄 끊김을 원래와 똑같이)
+  const spacerH = head.first < c ? Math.max(0, info.colH - head.h - 0.5) : head.top;
+  const fresh = src.cloneNode(false);
+  for (const child of src.children) {
+    if (!child.classList.contains('freader-content')) { fresh.appendChild(child.cloneNode(true)); continue; }
+    const clip = child.cloneNode(false);
+    const box = inner.cloneNode(false);
+    const startCol = head.first;
+    if (spacerH > 0.5) {
+      const spacer = document.createElement('div');
+      spacer.className = 'freader-vspacer';
+      spacer.style.cssText = `height:${spacerH}px;margin:0;padding:0;break-inside:avoid;break-after:auto`;
+      box.appendChild(spacer);
+    }
+    keep.forEach((i, n) => {
+      const el = inner.children[i].cloneNode(true);
+      if (n === 0) {
+        el.style.marginTop = '0px'; el.style.breakBefore = 'auto';
+        if (head.first < c) { el.style.orphans = '1'; el.style.widows = '1'; }
+      }
+      box.appendChild(el);
+    });
+    clip.appendChild(box);
+    for (const rest of [...child.children].slice(1)) clip.appendChild(rest.cloneNode(true));
+    fresh.appendChild(clip);
+    fresh.dataset.vcol = String(c - startCol);
+  }
+  return fresh;
+}
 const V_GAP = 6; // 스크롤 보기 쪽 사이 간격 (예전 12의 절반)
 function pageFrames() { return vertical ? [...vMounted.values()].map(m => m.frame) : realFrames(); }
 let lastVHostW = 0;
@@ -1062,9 +1150,13 @@ function vTrimFor(i) {
   const y0 = b.y * (1 - TRIM_KEEP_Y), y1 = H - Math.max(0, H - b.y - b.h) * (1 - TRIM_KEEP_Y);
   return { x: x0 / W, y: y0 / H, w: Math.max(0.1, (x1 - x0) / W), h: Math.max(0.1, (y1 - y0) / H) };
 }
-function vVisRatio(i) { const t = vTrim[i], r = vRatios[i] || 1.414; return t ? r * t.h / t.w : r; }
+function vVisRatio(i) { const t = vTrim[i], r = vRatios[i] || 1.414; return t ? r * t.h / t.w * TRIM_PAD : r; }
+// 여백 줄이기: 쪽 넘김 보기처럼 잘라 낸 본문이 화면 끝에 딱 붙지 않게 양옆을 2%씩 띄움 (두 보기의 크기 비율을 같게)
+const TRIM_PAD = 0.96;
+function vSlotWidthCss(i) { return vTrim[i] ? `calc(var(--vw) * ${TRIM_PAD})` : ''; }
+function vSlotLeftCss(i) { return vTrim[i] ? `calc(var(--vml, 0px) + var(--vw) * ${(1 - TRIM_PAD) / 2})` : ''; }
 /** 쪽 전체가 화면에서 쓰는 너비 (여백 줄이기면 본문이 화면 너비를 채우도록 더 넓음) */
-function vFullWidth(i) { const t = vTrim[i]; return vPageWidth() / (t ? t.w : 1); }
+function vFullWidth(i) { const t = vTrim[i]; return t ? vPageWidth() * TRIM_PAD / t.w : vPageWidth(); }
 function vApplyTrim() {
   vTrim = pages.map((_, i) => vTrimFor(i));
   vSlots.forEach((slot, i) => {
@@ -1074,6 +1166,8 @@ function vApplyTrim() {
     Object.assign(full.style, t
       ? { left: `${-t.x / t.w * 100}%`, top: `${-t.y / t.h * 100}%`, width: `${100 / t.w}%`, height: `${100 / t.h}%` }
       : { left: '0', top: '0', width: '100%', height: '100%' });
+    slot.style.width = vSlotWidthCss(i);
+    slot.style.marginLeft = vSlotLeftCss(i);
     if (vRatios[i]) slot.style.height = `calc(var(--vw) * ${vVisRatio(i)})`;
   });
 }
@@ -1214,8 +1308,9 @@ function vReportMetrics() {
 function vMount(index) {
   if (vMounted.has(index) || !pages[index]) return;
   const entry = pages[index];
-  const original = !vOwner.has(entry.source);
-  const source = original ? entry.source : entry.source.cloneNode(true);
+  // 원래 글 덩어리는 정해 둔 쪽(찾은 낱말·편집)만 씀 — 원래 덩어리를 옮기면 구역 전체를 다시 배치해 느림
+  const original = index === vOriginalPage && !vOwner.has(entry.source);
+  const source = original ? entry.source : vMakeClone(entry, index);
   if (original) vOwner.set(entry.source, index);
   preparePageSource(source, entry, index);
   const slot = vFull(index), scale = vFullWidth(index) / entry.width;
@@ -1237,6 +1332,7 @@ function vUnmount(index) {
 }
 /** 이 쪽이 원래 글 덩어리를 쓰게 (찾은 낱말 형광펜은 원래 글에만 칠해짐) */
 function vEnsureOriginal(index) {
+  vOriginalPage = index;
   const m = vMounted.get(index); if (!m || m.original) return;
   const owner = vOwner.get(m.entry.source);
   if (owner != null) vUnmount(owner);
@@ -1252,14 +1348,16 @@ function vAdoptOriginal(index) {
   const orig = m.entry.source, clone = m.source;
   const ownerIdx = vOwner.get(orig);
   const o = ownerIdx != null ? vMounted.get(ownerIdx) : null;
+  vOriginalPage = index;
   if (o && o.source === orig) {
-    const mark = document.createComment('');
-    orig.replaceWith(mark); clone.replaceWith(orig); mark.replaceWith(clone);
-    o.source = clone; o.original = false;
-  } else {
-    clone.replaceWith(orig);
+    const other = vMakeClone(o.entry, ownerIdx);
+    orig.replaceWith(other);
+    o.source = other; o.original = false;
+    void vLoadImages(o.frame, vSerial);
   }
+  clone.replaceWith(orig);
   m.source = orig; m.original = true; vOwner.set(orig, index);
+  void vLoadImages(m.frame, vSerial);
   for (const [i, mm] of [[index, m], [ownerIdx, o]]) {
     if (!mm) continue;
     preparePageSource(mm.source, mm.entry, i);
@@ -1271,8 +1369,9 @@ function vAdoptOriginal(index) {
 function vRefreshClones() {
   if (!vertical || !vhost) return;
   for (const [i, m] of vMounted) {
+    if (pages[i]) m.entry = pages[i];
     if (m.original || !vOwner.has(m.entry.source)) continue;
-    const fresh = m.entry.source.cloneNode(true);
+    const fresh = vMakeClone(m.entry, i);
     for (const el of fresh.querySelectorAll('.eri-docx-caret, .eri-caret-handle, .eri-sel-handle, .eri-docx-sel-rect')) el.remove();
     preparePageSource(fresh, m.entry, i);
     fresh.style.transform = `scale(${vFullWidth(i) / m.entry.width})`;
@@ -1281,10 +1380,14 @@ function vRefreshClones() {
   }
 }
 async function vLoadImages(frame, serial) {
-  const imgs = [...frame.querySelectorAll('img[data-resource]')].filter(img => {
+  // 구역 전체가 든 쪽이면 그 쪽 그림 목록에 있는 것만 자리를 재 봄 (그림이 수백 장이면 전부 재는 것도 무거움)
+  const entry = pages[Number(frame.dataset.page)];
+  const full = !frame.querySelector('.freader-vspacer') && frame.querySelector('.freader-columns')?.children.length > 40;
+  const want = full && entry?.images ? new Set(entry.images) : null;
+  const imgs = [...frame.querySelectorAll('img[data-resource]')].filter(img => (!want || want.has(img.dataset.resource)) && (() => {
     const clip = (img.closest('.freader-content') || img.closest('.page')).getBoundingClientRect();
     return [...img.getClientRects()].some(r => r.width > 0 && r.height > 0 && r.right > clip.left + .1 && r.left < clip.right - .1 && r.bottom > clip.top + .1 && r.top < clip.bottom - .1);
-  });
+  })());
   for (const img of imgs) activeImagePaths.add(img.dataset.resource);
   for (const img of imgs) {
     if (!frame.isConnected || serial !== vSerial || disposed) return;
@@ -2662,8 +2765,11 @@ function docxScheduleReflow() {
   docxReflowTimer = setTimeout(() => {
     docxReflowTimer = 0;
     if (disposed) return;
-    docxRecountPages();
+    docxRecountPages(); // 쪽 수와 함께 덩어리 자리도 다시 잼
     vRefreshClones();
+    // 되돌리기 등으로 되살린 글에는 예전 그림 주소가 들어 있을 수 있음 → 보이는 쪽 그림을 다시 채움
+    if (vertical) { for (const m of vMounted.values()) if (m.original) void vLoadImages(m.frame, vSerial); }
+    else for (const frame of realFrames()) void loadFrameImagesFresh(frame);
   }, 250);
 }
 
@@ -2678,6 +2784,7 @@ function docxRecountPages() {
     if (!inner || !first) { for (const e of pages) if (e.source === source) result.push(e); continue; }
     const columnGap = first.columnStride - first.bodyWidth;
     const columns = Math.max(1, Math.ceil((inner.scrollWidth + columnGap - 1) / first.columnStride));
+    measureBlocks(source, inner, columns, first.columnStride);
     for (let column = 0; column < columns; column++) {
       const old = pages.find(e => e.source === source && e.column === column);
       result.push({ ...first, column, sectionPageCount: columns, images: old ? old.images : [] });

@@ -350,16 +350,26 @@ class _UserFontsScreenState extends State<UserFontsScreen> {
       ),
       body: Stack(
         children: [
-          ListView(
-            padding: const EdgeInsets.only(bottom: 160),
+          // EPUB 글꼴: 미리보기는 목록을 내려도 위에 붙어 따라옴
+          CustomScrollView(
+            slivers: [
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+                  child: Text(
+                    _description,
+                    style: TextStyle(fontSize: 14, height: 1.45, color: cs.onSurfaceVariant),
+                  ),
+                ),
+              ),
+              if (_pickable && widget.category == 'epub')
+                PinnedHeaderSliver(
+                  child: ColoredBox(color: Theme.of(context).scaffoldBackgroundColor, child: _buildEpubPreview(cs)),
+                ),
+              SliverPadding(
+                padding: const EdgeInsets.only(bottom: 160),
+                sliver: SliverList.list(
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
-            child: Text(
-              _description,
-              style: TextStyle(fontSize: 14, height: 1.45, color: cs.onSurfaceVariant),
-            ),
-          ),
           if (widget.category == 'doc') ...[
             _sectionLabel(cs, _t('지금 볼 수 있는 글꼴', 'Fonts available now', '目前可显示的字体', '今表示できるフォント')),
             for (final (name, note) in _builtIn)
@@ -373,7 +383,6 @@ class _UserFontsScreenState extends State<UserFontsScreen> {
             _sectionLabel(cs, _t('내가 넣은 글꼴', 'Fonts you added', '我添加的字体', '追加したフォント')),
           ],
           if (_pickable) ...[
-            if (widget.category == 'epub') _buildEpubPreview(cs),
             // 앱·EPUB: 눌러서 바로 그 글꼴로
             _fontChoice(cs, '', _t('기본 글꼴', 'Default font', '默认字体', '既定のフォント'),
                 widget.category == 'epub'
@@ -422,7 +431,10 @@ class _UserFontsScreenState extends State<UserFontsScreen> {
             ),
           ],
         ],
-      ),
+                ),
+              ),
+            ],
+          ),
       if (_notice != null)
         Positioned(
           left: 16,

@@ -204,6 +204,8 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   String _pageDisplay = 'one';
   // 한글·워드 여백 줄이기 (도구 모음에서 켜고 끔, 기본 끔)
   bool _trimMargins = false;
+  // 여백 줄이기를 켜고 끈 직후: 새 쪽 자리를 받을 때까지 메모를 잠깐 숨김 (옛 자리에 보였다가 옮겨 가는 것 방지)
+  bool _memoLayoutPending = false;
   // 사용자가 고른 EPUB 본문 글꼴 (없으면 책의 글꼴)
   UserFontEntry? _epubFont;
   // 페이지 모드: 탭(누른 자리로 넘김) / 스크롤(세로로 이어 보기) / 슬라이드(= _useSwipeTurn)
@@ -630,17 +632,27 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     _snapHide();
     _dropIdleShot();
     _dropBackShots();
-    setState(() => _trimMargins = on);
-    await StorageService.setTrimMargins(on);
-    // 쪽 자리가 바뀌므로 메모를 붙일 쪽 자리를 다시 받음
-    await Future<void>.delayed(const Duration(milliseconds: 160));
-    if (!mounted) return;
+    final before = _pageSlots;
+    setState(() {
+      _trimMargins = on;
+      _memoLayoutPending = !_docVertical;
+    });
+    unawaited(StorageService.setTrimMargins(on));
     if (_docVertical) {
-      unawaited(_pushScrollMemos());
-    } else {
-      await _refreshPageFrames();
+      // 스크롤 보기 메모는 문서가 쪽 위에 직접 그려 비율이 함께 바뀜
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      if (mounted) unawaited(_pushScrollMemos());
+      return;
     }
-    if (mounted) setState(() {});
+    // 쪽 넘김 보기: 문서가 새 자리로 다시 그리는 대로 쪽 자리를 바로 받아 메모를 맞춤 (짧은 간격으로 확인)
+    for (int i = 0; i < 20 && mounted; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      if (!mounted) return;
+      await _refreshPageFrames();
+      final now = _pageSlots;
+      if (now != null && now.isNotEmpty && (before == null || before.isEmpty || now.first.frame != before.first.frame || now.first.page != before.first.page)) break;
+    }
+    if (mounted) setState(() => _memoLayoutPending = false);
   }
 
   Future<void> _pickPageDisplay() async {
@@ -3122,6 +3134,8 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       !_hasTextSelection &&
       _activeStrokePoints.isEmpty &&
       !_findOpen &&
+      // 알림(저장 등)이 떠 있으면 화면 그대로 찍으면 알림까지 쪽 그림에 남아 넘길 때마다 보임
+      !appToastVisible &&
       _epubZoomScale <= 1.03;
 
   /// 문서 화면 자리에 보이는 그대로를 GPU로 복사 (책 화면을 다시 그리지 않아 화면이 멈추지 않음)
@@ -3502,7 +3516,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
         content,
         // 저장된 메모: 넘기는 종이 밑 (넘길 때 함께 넘어가고, 새 쪽 메모는 드러나는 만큼만 보임).
         // 한글·워드 스크롤 보기는 문서가 쪽 위에 직접 그림 (쪽과 함께 스크롤)
-        if (_memoStrokes.isNotEmpty && !_docVertical && !_slideShow && !_isHwpEditMode)
+        if (_memoStrokes.isNotEmpty && !_docVertical && !_slideShow && !_isHwpEditMode && !_memoLayoutPending)
           Positioned.fill(
             child: IgnorePointer(
               child: LayoutBuilder(

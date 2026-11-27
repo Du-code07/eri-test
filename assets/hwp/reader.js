@@ -312,10 +312,32 @@ function releaseEntry(entry) {
 function releaseIfUnused(entry) {
   if (!activeEntries.has(entry) && cache.get(entry.index) !== entry) releaseEntry(entry);
 }
+/**
+ * 쪽 그림 안의 이름표(id)를 쪽마다 다르게 바꿈.
+ * 스크롤 보기·두 쪽 보기는 여러 쪽 그림이 한 화면에 함께 있어서, 쪽마다 같은 이름(clip1 등)을 쓰면
+ * 표 칸 글자를 자르는 틀(clip-path)이 다른 쪽 것으로 잘못 걸려 칸 글자가 사라졌음
+ */
+function uniqueSvgIds(svg, tag) {
+  const map = new Map();
+  for (const el of svg.querySelectorAll('[id]')) { const id = el.id; const next = `${id}--${tag}`; map.set(id, next); el.id = next; }
+  if (!map.size) return;
+  const fix = (value) => value.replace(/url\(\s*(['"]?)#([^'")\s]+)\1\s*\)/g, (all, q, id) => map.has(id) ? `url(#${map.get(id)})` : all);
+  for (const el of svg.querySelectorAll('*')) {
+    for (const attr of [...el.attributes]) {
+      const v = attr.value;
+      if (attr.localName === 'href' && v.startsWith('#')) { const id = v.slice(1); if (map.has(id)) attr.value = `#${map.get(id)}`; }
+      else if (v.includes('url(')) attr.value = fix(v);
+    }
+  }
+  for (const st of svg.querySelectorAll('style')) if (st.textContent.includes('#')) {
+    st.textContent = st.textContent.replace(/url\(\s*(['"]?)#([^'")\s]+)\1\s*\)/g, (all, q, id) => map.has(id) ? `url(#${map.get(id)})` : all);
+  }
+}
 function svgForPage(index) {
   let entry = cache.get(index);
   if (entry) { cache.delete(index); cache.set(index, entry); return entry; }
   const source = doc.renderPageSvg(index), template = safeSvg(source), urls = [];
+  uniqueSvgIds(template, `p${index}`);
   let size = source.length * 2;
   try {
     for (const img of template.querySelectorAll('image')) {
@@ -854,7 +876,11 @@ function vTrimFor(i, w, h) {
   if (!(x1 - x0 > 16 && y1 - y0 > 16)) return null;
   return { x: x0 / w, y: y0 / h, w: (x1 - x0) / w, h: (y1 - y0) / h };
 }
-function vVisRatio(i) { const t = vTrim[i], r = vRatios[i] || 1.414; return t ? r * t.h / t.w : r; }
+function vVisRatio(i) { const t = vTrim[i], r = vRatios[i] || 1.414; return t ? r * t.h / t.w * TRIM_PAD : r; }
+// 여백 줄이기: 쪽 넘김 보기처럼 잘라 낸 본문이 화면 끝에 딱 붙지 않게 양옆을 2%씩 띄움 (두 보기의 크기 비율을 같게)
+const TRIM_PAD = 0.96;
+function vSlotWidthCss(i) { return vTrim[i] ? `calc(var(--vw) * ${TRIM_PAD})` : ''; }
+function vSlotLeftCss(i) { return vTrim[i] ? `calc(var(--vml, 0px) + var(--vw) * ${(1 - TRIM_PAD) / 2})` : ''; }
 function vApplyTrim(sizes) {
   vTrim = vSlots.map((_, i) => { const [w, h] = sizes[i] || [0, 0]; return vTrimFor(i, w, h); });
   vSlots.forEach((slot, i) => {
@@ -864,6 +890,8 @@ function vApplyTrim(sizes) {
     Object.assign(full.style, t
       ? { left: `${-t.x / t.w * 100}%`, top: `${-t.y / t.h * 100}%`, width: `${100 / t.w}%`, height: `${100 / t.h}%` }
       : { left: '0', top: '0', width: '100%', height: '100%' });
+    slot.style.width = vSlotWidthCss(i);
+    slot.style.marginLeft = vSlotLeftCss(i);
     if (vRatios[i]) slot.style.height = `calc(var(--vw) * ${vVisRatio(i)})`;
   });
 }

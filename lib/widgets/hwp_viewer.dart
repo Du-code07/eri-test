@@ -852,8 +852,10 @@ class _HwpViewerState extends State<HwpViewer> {
               ? NavigationActionPolicy.ALLOW
               : NavigationActionPolicy.CANCEL,
           onReceivedError: (controller, request, error) {
+            // 문서를 다 연 뒤의 보조 파일 실패(사진 많은 문서를 빠르게 넘길 때 기기가 바빠 잠깐 못 받은 글꼴 등)는
+            // 문서가 이미 잘 보이므로 경고를 띄우지 않음 (그 글자는 기본 글꼴로 보임)
             if (request.isForMainFrame == true ||
-                request.url.toString().startsWith('$_origin/assets/')) {
+                (!_loaded && request.url.toString().startsWith('$_origin/assets/'))) {
               unawaited(_reportMissingAsset(request.url.toString(), error.description));
             }
           },
