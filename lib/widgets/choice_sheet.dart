@@ -6,11 +6,12 @@ import 'sheet_pull_to_close.dart';
 
 /// 고르기 창의 선택지
 class ChoiceOption<T> {
-  const ChoiceOption(this.value, this.label, {this.icon, this.subtitle});
+  const ChoiceOption(this.value, this.label, {this.icon, this.iconWidget, this.subtitle});
 
   final T value;
   final String label;
   final IconData? icon;
+  final Widget? iconWidget;
 
   /// 이름 밑 작은 설명 (예: 앱 스타일 '작은 화면에 적합해요')
   final String? subtitle;
@@ -23,6 +24,7 @@ class ChoiceOption<T> {
 Future<T?> showChoiceSheet<T>({
   required BuildContext context,
   required String title,
+  Widget? titleIcon,
   required List<ChoiceOption<T>> options,
   required T current,
   String confirmLabel = '',
@@ -31,7 +33,7 @@ Future<T?> showChoiceSheet<T>({
   final r = await _showChoice<(T, bool)>(
     context,
     centered,
-    (ctx) => _ChoiceSheet<T>(title: title, options: options, current: current, confirmLabel: confirmLabel, centered: centered),
+    (ctx) => _ChoiceSheet<T>(title: title, titleIcon: titleIcon, options: options, current: current, confirmLabel: confirmLabel, centered: centered),
   );
   return r?.$1;
 }
@@ -61,7 +63,7 @@ Future<R?> _showChoice<R>(BuildContext context, bool centered, WidgetBuilder bui
 /// '확인'을 누르면 (고른 값, 스위치 값)을 돌려준다. 그냥 닫으면 null.
 /// 고르기 창 아래에 붙는 스위치 하나 (켜고 끌 때마다 [onChanged]가 바로 불림)
 class SheetToggle {
-  const SheetToggle({required this.label, this.subtitle, this.icon, required this.value, required this.onChanged, this.onlyFor, this.defaultValue = false});
+  const SheetToggle({required this.label, this.subtitle, this.icon, this.iconWidget, required this.value, required this.onChanged, this.onlyFor, this.defaultValue = false});
 
   /// [초기화]를 누르면 돌아가는 값
   final bool defaultValue;
@@ -69,6 +71,7 @@ class SheetToggle {
   final String label;
   final String? subtitle;
   final IconData? icon;
+  final Widget? iconWidget;
   final bool value;
   final ValueChanged<bool> onChanged;
 
@@ -79,12 +82,13 @@ class SheetToggle {
 Future<(T, bool)?> showChoiceSheetWithToggle<T>({
   required BuildContext context,
   required String title,
+  Widget? titleIcon,
   required List<ChoiceOption<T>> options,
   required T current,
-  required String toggleLabel,
+  String? toggleLabel,
   String? toggleSubtitle,
   IconData? toggleIcon,
-  required bool toggleValue,
+  bool toggleValue = false,
   String confirmLabel = '',
   /// 고르거나 스위치를 바꿀 때마다 바로 불림 (확인 버튼 없이 바로 적용)
   ValueChanged<(T, bool)>? onChanged,
@@ -101,6 +105,7 @@ Future<(T, bool)?> showChoiceSheetWithToggle<T>({
     (ctx) => _ChoiceSheet<T>(
       centered: centered,
       title: title,
+      titleIcon: titleIcon,
       options: options,
       current: current,
       confirmLabel: confirmLabel,
@@ -119,6 +124,7 @@ Future<(T, bool)?> showChoiceSheetWithToggle<T>({
 class _ChoiceSheet<T> extends StatefulWidget {
   const _ChoiceSheet({
     required this.title,
+    this.titleIcon,
     required this.options,
     required this.current,
     required this.confirmLabel,
@@ -139,6 +145,7 @@ class _ChoiceSheet<T> extends StatefulWidget {
   /// 가운데 창으로 띄웠는지 (아래 여백을 위아래 같게)
   final bool centered;
   final String title;
+  final Widget? titleIcon;
   final List<ChoiceOption<T>> options;
   final T current;
   final String confirmLabel;
@@ -187,14 +194,17 @@ class _ChoiceSheetState<T> extends State<_ChoiceSheet<T>> {
     }
   }
 
-  Widget _toggleRow(ColorScheme cs, {IconData? icon, required String label, String? subtitle, required bool value, required ValueChanged<bool> onChanged}) {
+  Widget _toggleRow(ColorScheme cs, {IconData? icon, Widget? iconWidget, required String label, String? subtitle, required bool value, required ValueChanged<bool> onChanged}) {
     return InkWell(
       onTap: () => onChanged(!value),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(24, 8, 16, 8),
         child: Row(
           children: [
-            if (icon != null) ...[
+            if (iconWidget != null) ...[
+              iconWidget,
+              const SizedBox(width: 14),
+            ] else if (icon != null) ...[
               Icon(icon, size: 19, color: cs.onSurfaceVariant),
               const SizedBox(width: 14),
             ],
@@ -231,6 +241,10 @@ class _ChoiceSheetState<T> extends State<_ChoiceSheet<T>> {
             padding: EdgeInsets.fromLTRB(24, 0, widget.resetLabel != null ? 12 : 24, 14),
             child: Row(
               children: [
+                if (widget.titleIcon != null) ...[
+                  widget.titleIcon!,
+                  const SizedBox(width: 12),
+                ],
                 Expanded(child: Text(widget.title, style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800))),
                 if (widget.resetLabel != null)
                   TextButton.icon(
@@ -256,13 +270,16 @@ class _ChoiceSheetState<T> extends State<_ChoiceSheet<T>> {
                         onTap: () {
                           setState(() => _selected = opt.value);
                           widget.onChanged?.call((_selected, _toggle));
-                          if (widget.toggleLabel == null) Navigator.pop(context, (_selected, _toggle));
+                          if (widget.toggleLabel == null && widget.moreToggles.isEmpty) Navigator.pop(context, (_selected, _toggle));
                         },
                         child: Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
                           child: Row(
                             children: [
-                              if (opt.icon != null) ...[
+                              if (opt.iconWidget != null) ...[
+                                opt.iconWidget!,
+                                const SizedBox(width: 14),
+                              ] else if (opt.icon != null) ...[
                                 Icon(opt.icon, size: 19, color: opt.value == _selected ? cs.onSurface : cs.onSurfaceVariant),
                                 const SizedBox(width: 14),
                               ],
@@ -307,6 +324,7 @@ class _ChoiceSheetState<T> extends State<_ChoiceSheet<T>> {
                             child: _toggleRow(
                               cs,
                               icon: widget.moreToggles[i].icon,
+                              iconWidget: widget.moreToggles[i].iconWidget,
                               label: widget.moreToggles[i].label,
                               subtitle: widget.moreToggles[i].subtitle,
                               value: _more[i],
@@ -317,32 +335,34 @@ class _ChoiceSheetState<T> extends State<_ChoiceSheet<T>> {
                             ),
                           ),
                   ],
-                  if (widget.toggleLabel != null) ...[
+                  if (widget.toggleLabel != null || widget.moreToggles.any((t) => t.onlyFor == null)) ...[
                     const Divider(height: 16, indent: 24, endIndent: 24),
-                    _toggleRow(
-                      cs,
-                      icon: widget.toggleIcon,
-                      label: widget.toggleLabel!,
-                      subtitle: widget.toggleSubtitle,
-                      value: _toggle,
-                      onChanged: (v) {
-                        setState(() => _toggle = v);
-                        widget.onChanged?.call((_selected, _toggle));
-                      },
-                    ),
-                    for (int i = 0; i < widget.moreToggles.length; i++)
-                      if (widget.moreToggles[i].onlyFor == null)
+                    if (widget.toggleLabel != null)
                       _toggleRow(
                         cs,
-                        icon: widget.moreToggles[i].icon,
-                        label: widget.moreToggles[i].label,
-                        subtitle: widget.moreToggles[i].subtitle,
-                        value: _more[i],
+                        icon: widget.toggleIcon,
+                        label: widget.toggleLabel!,
+                        subtitle: widget.toggleSubtitle,
+                        value: _toggle,
                         onChanged: (v) {
-                          setState(() => _more[i] = v);
-                          widget.moreToggles[i].onChanged(v);
+                          setState(() => _toggle = v);
+                          widget.onChanged?.call((_selected, _toggle));
                         },
                       ),
+                    for (int i = 0; i < widget.moreToggles.length; i++)
+                      if (widget.moreToggles[i].onlyFor == null)
+                        _toggleRow(
+                          cs,
+                          icon: widget.moreToggles[i].icon,
+                          iconWidget: widget.moreToggles[i].iconWidget,
+                          label: widget.moreToggles[i].label,
+                          subtitle: widget.moreToggles[i].subtitle,
+                          value: _more[i],
+                          onChanged: (v) {
+                            setState(() => _more[i] = v);
+                            widget.moreToggles[i].onChanged(v);
+                          },
+                        ),
                   ],
                 ],
               ),

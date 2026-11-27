@@ -1,3 +1,5 @@
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
 import 'package:flutter/services.dart';
 import 'dart:async';
 import 'package:flutter/widgets.dart';
@@ -173,9 +175,12 @@ class StorageService {
     renderQuality.value = (rq == 'low' || rq == 'medium' || rq == 'high') ? rq! : 'high';
     pageSnapshotOff.value = prefs.getBool('page_snapshot_off_v1') ?? false;
     pureBlackDark.value = prefs.getBool('pure_black_dark_v1') ?? false;
+    cacheMaxDays.value = prefs.getInt('cache_max_days_v1') ?? 30;
+    cacheMaxMb.value = prefs.getInt('cache_max_mb_v1') ?? 500;
     final zones = prefs.getString('tap_zones_v122');
     tapZones.value = zones != null && RegExp(r'^[PNMX]{9}$').hasMatch(zones) ? zones : tapZonesDefault;
     unawaited(applyRefreshRateToNative(refreshRateMode.value));
+    unawaited(enforceCachePolicy());
   }
 
   /// 탭 영역 (화면 3×3 칸, 왼쪽 위부터 줄마다): P = 이전, N = 다음, M = 메뉴, X = 없음
@@ -249,6 +254,73 @@ class StorageService {
     pureBlackDark.value = on;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('pure_black_dark_v1', on);
+  }
+
+  /// 임시 캐시 자동 보관 기한(일, 0 = 제한 없음, 기본 30일)
+  static final ValueNotifier<int> cacheMaxDays = ValueNotifier<int>(30);
+
+  /// 임시 캐시 최대 용량 한도(MB, 0 = 제한 없음, 기본 500MB)
+  static final ValueNotifier<int> cacheMaxMb = ValueNotifier<int>(500);
+
+  static Future<void> setCacheMaxDays(int days) async {
+    cacheMaxDays.value = days;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('cache_max_days_v1', days);
+    await enforceCachePolicy();
+  }
+
+  static Future<void> setCacheMaxMb(int mb) async {
+    cacheMaxMb.value = mb;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('cache_max_mb_v1', mb);
+    await enforceCachePolicy();
+  }
+
+  /// 기한이 지난 임시 캐시를 자동 삭제하고, 최대 용량 한도를 넘으면 가장 오래된 캐시부터 삭제
+  static Future<void> enforceCachePolicy() async {
+    final int maxDays = cacheMaxDays.value;
+    final int maxMb = cacheMaxMb.value;
+    if (maxDays <= 0 && maxMb <= 0) return;
+    try {
+      final dirs = <Directory>[
+        await getTemporaryDirectory(),
+        Directory('${(await getApplicationSupportDirectory()).path}/outline_cache'),
+      ];
+      final now = DateTime.now();
+      final cutoff = maxDays > 0 ? now.subtract(Duration(days: maxDays)) : null;
+      final remaining = <(File, DateTime, int)>[];
+      int totalBytes = 0;
+
+      for (final d in dirs) {
+        if (!await d.exists()) continue;
+        await for (final e in d.list(recursive: true, followLinks: false)) {
+          if (e is! File) continue;
+          try {
+            final stat = await e.stat();
+            if (cutoff != null && stat.modified.isBefore(cutoff)) {
+              await e.delete();
+              continue;
+            }
+            remaining.add((e, stat.modified, stat.size));
+            totalBytes += stat.size;
+          } catch (_) {}
+        }
+      }
+
+      if (maxMb > 0) {
+        final int limitBytes = maxMb * 1024 * 1024;
+        if (totalBytes > limitBytes) {
+          remaining.sort((a, b) => a.$2.compareTo(b.$2)); // 가장 오래된 캐시부터 삭제
+          for (final item in remaining) {
+            if (totalBytes <= limitBytes) break;
+            try {
+              await item.$1.delete();
+              totalBytes -= item.$3;
+            } catch (_) {}
+          }
+        }
+      }
+    } catch (_) {}
   }
 
   /// 와이드 스타일 왼쪽 막대에 꺼내 둔 그룹 (즐겨찾기 밑, 누르면 그 그룹으로)

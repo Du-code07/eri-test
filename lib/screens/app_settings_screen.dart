@@ -131,9 +131,11 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
       };
 
   Future<void> _pickTheme() async {
+    final cs = Theme.of(context).colorScheme;
     final v = await showChoiceSheet<String>(
       context: context,
-      title: _t('앱 테마', 'App Theme', '应用主题', 'アプリのテーマ'),
+      title: _t('테마', 'Theme', '主题', 'テーマ'),
+      titleIcon: Icon(_themeIcon(_themeMode), size: 22, color: cs.onSurface),
       options: [
         ChoiceOption('system', _themeLabel('system'), icon: _themeIcon('system')),
         ChoiceOption('light', _themeLabel('light'), icon: _themeIcon('light')),
@@ -141,7 +143,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
         ChoiceOption('comfort', _themeLabel('comfort'), icon: _themeIcon('comfort')),
       ],
       current: _themeMode,
-      centered: StorageService.simpleStyle, // 심플: 가운데 창
+      centered: true, // 컴팩트·와이드 모두 가운데 팝업 창
     );
     if (v == null || !mounted) return;
     setState(() => _themeMode = v);
@@ -152,18 +154,22 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
       style == 'simple' ? _t('와이드', 'Wide', '宽屏', 'ワイド') : _t('컴팩트', 'Compact', '紧凑', 'コンパクト');
 
   Future<void> _pickStyle() async {
+    final cs = Theme.of(context).colorScheme;
+    final cur = StorageService.appStyle.value;
     final v = await showChoiceSheet<String>(
       context: context,
-      title: _t('앱 스타일', 'App Style', '应用样式', 'アプリのスタイル'),
+      title: _t('스타일', 'Style', '样式', 'スタイル'),
+      titleIcon: _StyleCircleGridIcon(size: 22, color: cs.onSurface),
       options: [
-        // 컴팩트: 휴대폰 / 와이드: 태블릿
+        // 컴팩트: 세로 휴대폰 / 와이드: 옆으로 눕히고 화면을 키운 태블릿
         ChoiceOption('basic', _styleLabel('basic'), icon: Icons.smartphone_rounded,
             subtitle: _t('작은 화면에 적합해요', 'Suits small screens', '适合小屏幕', '小さい画面に向いています')),
-        ChoiceOption('simple', _styleLabel('simple'), icon: Icons.tablet_android_rounded,
+        ChoiceOption('simple', _styleLabel('simple'),
+            iconWidget: _WideTabletIcon(size: 22, color: cur == 'simple' ? cs.onSurface : cs.onSurfaceVariant),
             subtitle: _t('큰 화면에 적합해요', 'Suits large screens', '适合大屏幕', '大きい画面に向いています')),
       ],
-      current: StorageService.appStyle.value,
-      centered: StorageService.simpleStyle, // 심플: 가운데 창
+      current: cur,
+      centered: true, // 컴팩트·와이드 모두 가운데 팝업 창
     );
     if (v == null || !mounted) return;
     await StorageService.setAppStyle(v);
@@ -174,9 +180,10 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
     final v = await showChoiceSheet<String>(
       context: context,
       title: _t('언어', 'Language', '语言', '言語'),
+      titleIcon: const LanguageGlyphIcon(size: 22),
       options: [for (final code in LanguageSelectScreen.options) ChoiceOption(code, languageOptionLabel(code))],
       current: _langSetting,
-      centered: StorageService.simpleStyle, // 심플: 가운데 창
+      centered: true, // 컴팩트·와이드 모두 가운데 팝업 창
     );
     if (v == null || !mounted) return;
     widget.onChangeLanguage(v);
@@ -186,12 +193,13 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
     });
   }
 
-  /// 파일 표시 방식(표지형/목록형) + 파일 형식 숨기기 + 그룹 이름 숨기기 — 누르면 바로 적용
+  /// 파일 표시 방식(표지형/목록형) + 숨기기 옵션 — 누르면 바로 적용 (책갈피 터치 즐겨찾기는 페이지 기억하기 위로 이동)
   Future<void> _pickViewMode() async {
+    final cs = Theme.of(context).colorScheme;
     await showChoiceSheetWithToggle<String>(
       context: context,
       title: _t('파일 표시 방식', 'Bookshelf View Mode', '文件显示样式', 'ファイル表示形式'),
-      // 완료 대신 초기화: 목록형, 모든 스위치 끔
+      titleIcon: Icon(_viewMode == 'grid' ? Icons.grid_view_rounded : Icons.view_list_rounded, size: 22, color: cs.onSurface),
       resetLabel: _t('초기화', 'Reset', '重置', 'リセット'),
       resetTo: 'list',
       options: [
@@ -199,25 +207,15 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
         ChoiceOption('grid', _viewModeLabel('grid'), icon: Icons.grid_view_rounded),
       ],
       current: _viewMode,
-      centered: StorageService.simpleStyle, // 심플: 가운데 창
-      toggleIcon: Icons.bookmark_remove_outlined,
-      toggleLabel: _t('책갈피 터치로 즐겨찾기', 'Tap bookmark to favorite', '轻触书签即可收藏', 'しおりをタップしてお気に入り'),
-      toggleSubtitle: _t('당기지 않고 터치로 즐겨찾기', 'Tap instead of pulling', '无需下拉，轻触即可收藏', '引っ張らずにタップでお気に入り'),
-      toggleValue: FavoriteRibbon.animationOff.value,
+      centered: true, // 컴팩트·와이드 모두 가운데 팝업 창
       onChanged: (r) async {
-        final (mode, tapFav) = r;
+        final (mode, _) = r;
         if (!mounted) return;
         final bool modeChanged = mode != _viewMode;
-        final bool tapChanged = tapFav != FavoriteRibbon.animationOff.value;
-        setState(() {
-          _viewMode = mode;
-          FavoriteRibbon.animationOff.value = tapFav;
-        });
+        setState(() => _viewMode = mode);
         if (modeChanged) await widget.onChangeViewMode(mode);
-        if (tapChanged) await StorageService.setRibbonAnimationOff(tapFav);
       },
       moreToggles: [
-        // 목록형을 골랐을 때만: 파일을 옆으로 밀어 즐겨찾기·휴지통 하는 동작 끄기
         SheetToggle(
           icon: Icons.swipe_outlined,
           label: _t('밀어서 즐겨찾기·삭제 끄기', 'Turn off swipe actions', '关闭滑动收藏·删除', 'スワイプでお気に入り・削除をオフ'),
@@ -230,7 +228,6 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
             await StorageService.setListSwipeOff(v);
           },
         ),
-        // 표지형을 골랐을 때만: 표지 그림 끄기 (TXT처럼 가운데 아이콘만)
         SheetToggle(
           icon: Icons.hide_image_outlined,
           label: _t('표지 그림 끄기', 'Hide covers', '隐藏封面', '表紙を隠す'),
@@ -266,7 +263,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
           },
         ),
         SheetToggle(
-          icon: Icons.filter_none_outlined,
+          iconWidget: _SlashedPagesIcon(size: 19, color: cs.onSurfaceVariant),
           label: _t('페이지 수 숨기기', 'Hide page count', '隐藏页数', 'ページ数を隠す'),
           subtitle: _t('파일 아래 (페이지 수)', 'Under each file (page count)', '文件下方的页数', 'ファイルの下のページ数'),
           value: _hidePages,
@@ -281,10 +278,17 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
   }
 
   String _refreshRateLabel(String mode) => switch (mode) {
-        'auto' => _t('시스템 자동 (권장)', 'System Auto (Recommended)', '系统自动（推荐）', 'システム自動（推奨）'),
+        'auto' => _t('기본 시스템 (권장)', 'System Default (Recommended)', '默认系统（推荐）', 'システムデフォルト（推奨）'),
         '60' => _t('60Hz (절전)', '60Hz (Power Saving)', '60Hz（省电）', '60Hz（省電力）'),
         '90' => _t('90Hz (균형)', '90Hz (Balanced)', '90Hz（均衡）', '90Hz（バランス）'),
         _ => _t('120Hz (부드럽게)', '120Hz (Smooth)', '120Hz（流畅）', '120Hz（滑らか）'),
+      };
+
+  IconData _refreshRateIcon(String mode) => switch (mode) {
+        'auto' => Icons.brightness_auto_outlined,
+        '60' => Icons.eco_outlined,
+        '90' => Icons.tune_outlined,
+        _ => Icons.speed_outlined,
       };
 
   String _renderQualityLabel(String q) => switch (q) {
@@ -293,18 +297,34 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
         _ => _t('고화질', 'High Quality', '高清', '高画質'),
       };
 
+  IconData _renderQualityIcon(String q) => switch (q) {
+        'low' => Icons.eco_outlined,
+        'medium' => Icons.tune_outlined,
+        _ => Icons.high_quality_outlined,
+      };
+
+  String _cacheDaysLabel(int days) => days <= 0
+      ? _t('제한 없음', 'No limit', '无限制', '制限なし')
+      : _t('$days일', '$days days', '$days 天', '$days日');
+
+  String _cacheMbLabel(int mb) => mb <= 0
+      ? _t('제한 없음', 'No limit', '无限制', '制限なし')
+      : (mb >= 1024 ? '${(mb / 1024).toStringAsFixed(0)}GB' : '${mb}MB');
+
   Future<void> _pickRefreshRate(VoidCallback refreshSheet) async {
+    final cs = Theme.of(context).colorScheme;
     final v = await showChoiceSheet<String>(
       context: context,
       title: _t('주사율 조절', 'Refresh Rate', '刷新率调节', 'リフレッシュレート'),
+      titleIcon: Icon(_refreshRateIcon(StorageService.refreshRateMode.value), size: 22, color: cs.onSurface),
       options: [
-        ChoiceOption('auto', _refreshRateLabel('auto'), icon: Icons.auto_mode_outlined),
-        ChoiceOption('60', _refreshRateLabel('60'), icon: Icons.battery_saver_outlined),
-        ChoiceOption('90', _refreshRateLabel('90'), icon: Icons.tune_outlined),
-        ChoiceOption('120', _refreshRateLabel('120'), icon: Icons.speed_outlined),
+        ChoiceOption('auto', _refreshRateLabel('auto'), icon: _refreshRateIcon('auto')),
+        ChoiceOption('60', _refreshRateLabel('60'), icon: _refreshRateIcon('60')),
+        ChoiceOption('90', _refreshRateLabel('90'), icon: _refreshRateIcon('90')),
+        ChoiceOption('120', _refreshRateLabel('120'), icon: _refreshRateIcon('120')),
       ],
       current: StorageService.refreshRateMode.value,
-      centered: StorageService.simpleStyle,
+      centered: true,
     );
     if (v == null || !mounted) return;
     await StorageService.setRefreshRateMode(v);
@@ -315,16 +335,18 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
   }
 
   Future<void> _pickRenderQuality(VoidCallback refreshSheet) async {
+    final cs = Theme.of(context).colorScheme;
     final v = await showChoiceSheet<String>(
       context: context,
       title: _t('문서 렌더링 화질', 'Document Render Quality', '文档渲染画质', '文書レンダリング画質'),
+      titleIcon: Icon(_renderQualityIcon(StorageService.renderQuality.value), size: 22, color: cs.onSurface),
       options: [
-        ChoiceOption('low', _renderQualityLabel('low'), icon: Icons.eco_outlined),
-        ChoiceOption('medium', _renderQualityLabel('medium'), icon: Icons.tune_outlined),
-        ChoiceOption('high', _renderQualityLabel('high'), icon: Icons.high_quality_outlined),
+        ChoiceOption('low', _renderQualityLabel('low'), icon: _renderQualityIcon('low')),
+        ChoiceOption('medium', _renderQualityLabel('medium'), icon: _renderQualityIcon('medium')),
+        ChoiceOption('high', _renderQualityLabel('high'), icon: _renderQualityIcon('high')),
       ],
       current: StorageService.renderQuality.value,
-      centered: StorageService.simpleStyle,
+      centered: true,
     );
     if (v == null || !mounted) return;
     await StorageService.setRenderQuality(v);
@@ -334,197 +356,317 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
     }
   }
 
-  /// 성능 및 배터리 설정 창 (컴팩트: 아래에서 올라오는 창 / 와이드: 가운데 창 — 파일 표시 방식과 동일)
-  Future<void> _openPerformanceSheet() async {
+  /// 임시 캐시 자동 정리 기한 & 용량 한도 설정 창 (가운데 팝업)
+  Future<void> _openCachePolicySheet(VoidCallback refreshParent) async {
     await _measureCache();
     if (!mounted) return;
-    final bool centered = StorageService.simpleStyle;
-    Widget buildBody(BuildContext ctx, StateSetter setSheetState, ScrollController? scroll, ScrollPhysics? physics) {
-      final cs = Theme.of(ctx).colorScheme;
-      void refresh() {
-        if (ctx.mounted) setSheetState(() {});
-        if (mounted) setState(() {});
-      }
+    await showPopDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlgState) {
+          final cs = Theme.of(ctx).colorScheme;
+          void refreshAll() {
+            if (ctx.mounted) setDlgState(() {});
+            refreshParent();
+          }
 
-      Widget row({
-        required IconData icon,
-        required String title,
-        required String subtitle,
-        VoidCallback? onTap,
-        Widget? trailing,
-        Color? titleColor,
-      }) {
-        return ListTile(
-          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
-          leading: Icon(icon, size: 22, color: titleColor ?? cs.onSurface),
-          title: Text(title, style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700, color: titleColor)),
-          subtitle: Text(subtitle, style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant)),
-          trailing: trailing ?? Icon(Icons.chevron_right, color: cs.onSurfaceVariant),
-          onTap: onTap,
-        );
-      }
+          final int days = StorageService.cacheMaxDays.value;
+          final int mb = StorageService.cacheMaxMb.value;
 
-      final rr = StorageService.refreshRateMode.value;
-      final rq = StorageService.renderQuality.value;
-      final snapOff = StorageService.pageSnapshotOff.value;
-      final oled = StorageService.pureBlackDark.value;
-      final animOff = Anim.off.value;
-
-      final list = ListView(
-        controller: scroll,
-        physics: physics,
-        shrinkWrap: true,
-        padding: const EdgeInsets.only(bottom: 16),
-        children: [
-          row(
-            icon: Icons.speed_outlined,
-            title: _t('주사율 조절', 'Refresh Rate', '刷新率调节', 'リフレッシュレート'),
-            subtitle: '${_refreshRateLabel(rr)} · ${_t('주사율이 낮을수록 배터리 소모량이 줄어요', 'Lower refresh rate reduces battery usage', '刷新率越低，耗电量越少', 'リフレッシュレートが低いほど電池消費が減ります')}',
-            onTap: () => _pickRefreshRate(refresh),
-          ),
-          row(
-            icon: Icons.high_quality_outlined,
-            title: _t('문서 렌더링 화질', 'Document Render Quality', '文档渲染画质', '文書レンダリング画質'),
-            subtitle: '${_renderQualityLabel(rq)} · ${_t('화질을 낮추면 배터리와 메모리 사용이 줄어요', 'Lower quality uses less battery and memory', '降低画质可减少耗电和内存占用', '画質を下げると電池とメモリ消費を抑えます')}',
-            onTap: () => _pickRenderQuality(refresh),
-          ),
-          row(
-            icon: Icons.photo_camera_back_outlined,
-            title: _t('페이지 전환 스냅샷 끄기', 'Turn Off Page Turn Snapshots', '关闭翻页快照', 'ページ切替スナップショットをオフ'),
-            subtitle: _t('페이지 미리 찍기를 꺼서 배터리와 CPU 부하가 줄어요', 'Skips page pre-capture to reduce battery and CPU load', '关闭页面预截图以降低耗电和 CPU 负载', 'ページの事前キャプチャをオフにして電池とCPU負荷を抑えます'),
-            onTap: () async {
-              await StorageService.setPageSnapshotOff(!snapOff);
-              refresh();
-            },
-            trailing: Switch(
-              value: snapOff,
-              onChanged: (v) async {
-                await StorageService.setPageSnapshotOff(v);
-                refresh();
-              },
-            ),
-          ),
-          row(
-            icon: Icons.contrast_outlined,
-            title: _t('순수 검정 다크 모드', 'Pure Black Dark Mode', '纯黑深色模式', 'ピュアブラックダークモード'),
-            subtitle: _t('다크 모드 배경을 완전한 검정색으로 바꿔 배터리 소모량이 줄어요', 'Uses pure black backgrounds in dark mode to reduce battery usage', '将深色模式背景改为纯黑以减少耗电量', 'ダークモードの背景を完全な黒にして電池消費を抑えます'),
-            onTap: () async {
-              await StorageService.setPureBlackDark(!oled);
-              refresh();
-            },
-            trailing: Switch(
-              value: oled,
-              onChanged: (v) async {
-                await StorageService.setPureBlackDark(v);
-                refresh();
-              },
-            ),
-          ),
-          row(
-            icon: Icons.motion_photos_off_outlined,
-            title: _t('애니메이션 끄기', 'Turn Off Animations', '关闭动画', 'アニメーションをオフ'),
-            subtitle: _t('애니메이션을 끄면 화면 버벅임과 빠른 반응 속도에 도움이 돼요', 'Reduces stutter and improves responsiveness', '关闭动画可减少卡顿并提升响应速度', 'アニメーションをオフにするとカクつきが減り反応が速くなります'),
-            onTap: () async {
-              await StorageService.setAnimOff(!animOff);
-              refresh();
-            },
-            trailing: Switch(
-              value: animOff,
-              onChanged: (v) async {
-                await StorageService.setAnimOff(v);
-                refresh();
-              },
-            ),
-          ),
-          const Divider(height: 16, indent: 20, endIndent: 20),
-          row(
-            icon: Icons.cleaning_services_outlined,
-            title: _t('임시 캐시 지우기', 'Clear Temporary Cache', '清除临时缓存', '一時キャッシュを削除'),
-            subtitle: _cacheBytes == null
-                ? _t('다시 만들 수 있는 임시 파일을 비워 저장공간을 확보해요', 'Deletes temporary files that can be rebuilt', '删除可重新生成的临时文件以释放空间', '再作成できる一時ファイルを削除して空き容量を増やします')
-                : _t('임시 파일 ${_fmtBytes(_cacheBytes!)} · 다시 만들 수 있는 임시 파일을 비워요', 'Temporary files ${_fmtBytes(_cacheBytes!)} · Safe to clear', '临时文件 ${_fmtBytes(_cacheBytes!)} · 可安全清除', '一時ファイル ${_fmtBytes(_cacheBytes!)} · 安全に削除できます'),
-            onTap: () async {
-              await _clearCache();
-              refresh();
-            },
-          ),
-          row(
-            icon: Icons.delete_forever_outlined,
-            title: _t('데이터 지우기', 'Clear Data', '清除数据', 'データを削除'),
-            subtitle: _t('앱 안의 파일·메모·설정을 지우고 처음 상태로 되돌려요', 'Resets the app to how it was when first installed', '删除应用内文件·笔记·设置并恢复初始状态', 'アプリ内のデータを消して初期状態に戻します'),
-            titleColor: Colors.redAccent,
-            onTap: _clearData,
-          ),
-        ],
-      );
-
-      final header = SizedBox(
-        height: centered ? 64 : 48,
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(24, centered ? 12 : 0, 12, 0),
-          child: Row(
-            children: [
-              Icon(Icons.battery_saver_outlined, size: 23, color: cs.onSurface),
-              const SizedBox(width: 17),
-              Expanded(
-                child: Text(
-                  _t('성능 및 배터리', 'Performance & Battery', '性能与电池', 'パフォーマンスとバッテリー'),
-                  style: (Theme.of(ctx).textTheme.titleLarge ?? const TextStyle()).copyWith(fontWeight: FontWeight.w800),
-                ),
-              ),
-              if (centered)
-                IconButton(
-                  onPressed: () => Navigator.of(ctx).pop(),
-                  icon: const Icon(Icons.close_rounded, size: 20),
-                ),
-            ],
-          ),
-        ),
-      );
-
-      if (centered) {
-        return ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: 460, maxHeight: MediaQuery.sizeOf(ctx).height * 0.82),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [header, Flexible(child: list)]),
-        );
-      }
-      return SafeArea(
-        top: false,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(ctx).height * 0.78),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SheetGrip(below: 22),
-              header,
-              Flexible(child: list),
-            ],
-          ),
-        ),
-      );
-    }
-
-    if (centered) {
-      await showPopDialog<void>(
-        context: context,
-        builder: (ctx) => StatefulBuilder(
-          builder: (ctx, setSheetState) => Dialog(
+          return Dialog(
             insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
             clipBehavior: Clip.antiAlias,
-            child: buildBody(ctx, setSheetState, null, null),
-          ),
-        ),
-      );
-    } else {
-      await showPullSheet<void>(
-        context,
-        sheetAnimationStyle: Anim.off.value ? AnimationStyle.noAnimation : null,
-        builder: (ctx, scroll, physics) => StatefulBuilder(
-          builder: (ctx, setSheetState) => pullSheetScope(scroll, physics, buildBody(ctx, setSheetState, scroll, physics)),
-        ),
-      );
-    }
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 440),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(0, 20, 0, 14),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(22, 0, 12, 6),
+                      child: Row(
+                        children: [
+                          Icon(Icons.cleaning_services_outlined, size: 22, color: cs.onSurface),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              _t('임시 캐시 설정', 'Temporary Cache Settings', '临时缓存设置', '一時キャッシュ設定'),
+                              style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => Navigator.of(ctx).pop(),
+                            icon: const Icon(Icons.close_rounded, size: 20),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(22, 0, 22, 10),
+                      child: Text(
+                        _t('기한이 지나면 자동으로 삭제되고, 한도를 넘으면 가장 오래된 캐시부터 삭제돼요',
+                            'Expired cache is deleted automatically; oldest files are removed first when over the limit',
+                            '超过期限将自动删除，超出上限时从最早的缓存开始删除',
+                            '期限が過ぎると自動削除され、上限を超えると最も古いキャッシュから削除されます'),
+                        style: TextStyle(fontSize: 13, height: 1.4, color: cs.onSurfaceVariant),
+                      ),
+                    ),
+                    ListTile(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 22),
+                      leading: Icon(Icons.schedule_outlined, size: 21, color: cs.onSurface),
+                      title: Text(_t('보관 기한', 'Retention Period', '保留期限', '保存期間'), style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700)),
+                      subtitle: Text(_cacheDaysLabel(days), style: TextStyle(fontSize: 13.5, color: cs.onSurfaceVariant)),
+                      trailing: Icon(Icons.chevron_right, color: cs.onSurfaceVariant),
+                      onTap: () async {
+                        final v = await showChoiceSheet<int>(
+                          context: ctx,
+                          title: _t('보관 기한', 'Retention Period', '保留期限', '保存期間'),
+                          titleIcon: Icon(Icons.schedule_outlined, size: 21, color: cs.onSurface),
+                          options: [
+                            ChoiceOption(7, _cacheDaysLabel(7)),
+                            ChoiceOption(14, _cacheDaysLabel(14)),
+                            ChoiceOption(30, _cacheDaysLabel(30)),
+                            ChoiceOption(90, _cacheDaysLabel(90)),
+                            ChoiceOption(0, _cacheDaysLabel(0)),
+                          ],
+                          current: days,
+                          centered: true,
+                        );
+                        if (v == null) return;
+                        await StorageService.setCacheMaxDays(v);
+                        await _measureCache();
+                        refreshAll();
+                      },
+                    ),
+                    ListTile(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 22),
+                      leading: Icon(Icons.storage_outlined, size: 21, color: cs.onSurface),
+                      title: Text(_t('최대 용량 한도', 'Maximum Size Limit', '最大容量上限', '最大容量上限'), style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700)),
+                      subtitle: Text(_cacheMbLabel(mb), style: TextStyle(fontSize: 13.5, color: cs.onSurfaceVariant)),
+                      trailing: Icon(Icons.chevron_right, color: cs.onSurfaceVariant),
+                      onTap: () async {
+                        final v = await showChoiceSheet<int>(
+                          context: ctx,
+                          title: _t('최대 용량 한도', 'Maximum Size Limit', '最大容量上限', '最大容量上限'),
+                          titleIcon: Icon(Icons.storage_outlined, size: 21, color: cs.onSurface),
+                          options: [
+                            ChoiceOption(100, _cacheMbLabel(100)),
+                            ChoiceOption(300, _cacheMbLabel(300)),
+                            ChoiceOption(500, _cacheMbLabel(500)),
+                            ChoiceOption(1024, _cacheMbLabel(1024)),
+                            ChoiceOption(0, _cacheMbLabel(0)),
+                          ],
+                          current: mb,
+                          centered: true,
+                        );
+                        if (v == null) return;
+                        await StorageService.setCacheMaxMb(v);
+                        await _measureCache();
+                        refreshAll();
+                      },
+                    ),
+                    const Divider(height: 16, indent: 22, endIndent: 22),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 2),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _cacheBytes == null
+                                  ? _t('임시 파일 계산 중…', 'Calculating…', '计算中…', '計算中…')
+                                  : _t('현재 임시 파일 ${_fmtBytes(_cacheBytes!)}', 'Current cache ${_fmtBytes(_cacheBytes!)}', '当前缓存 ${_fmtBytes(_cacheBytes!)}', '現在のキャッシュ ${_fmtBytes(_cacheBytes!)}'),
+                              style: TextStyle(fontSize: 13.5, color: cs.onSurfaceVariant, fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: () async {
+                              await _clearCache();
+                              refreshAll();
+                            },
+                            child: Text(_t('지금 비우기', 'Clear Now', '立即清除', '今すぐ削除'), style: const TextStyle(fontWeight: FontWeight.w700)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// 성능 및 배터리 설정 창 (컴팩트·와이드 모두 가운데 팝업 창)
+  Future<void> _openPerformanceSheet() async {
+    await _measureCache();
+    if (!mounted) return;
+    await showPopDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheetState) {
+          final cs = Theme.of(ctx).colorScheme;
+          void refresh() {
+            if (ctx.mounted) setSheetState(() {});
+            if (mounted) setState(() {});
+          }
+
+          Widget row({
+            IconData? icon,
+            Widget? leading,
+            required String title,
+            required String subtitle,
+            VoidCallback? onTap,
+            Widget? trailing,
+            Color? titleColor,
+          }) {
+            return ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
+              leading: leading ?? Icon(icon, size: 22, color: titleColor ?? cs.onSurface),
+              title: Text(title, style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700, color: titleColor)),
+              subtitle: Text(subtitle, style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant)),
+              trailing: trailing ?? Icon(Icons.chevron_right, color: cs.onSurfaceVariant),
+              onTap: onTap,
+            );
+          }
+
+          final rr = StorageService.refreshRateMode.value;
+          final rq = StorageService.renderQuality.value;
+          final snapOff = StorageService.pageSnapshotOff.value;
+          final oled = StorageService.pureBlackDark.value;
+          final animOff = Anim.off.value;
+
+          return Dialog(
+            insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+            clipBehavior: Clip.antiAlias,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: 460, maxHeight: MediaQuery.sizeOf(ctx).height * 0.82),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    height: 64,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(22, 12, 12, 0),
+                      child: Row(
+                        children: [
+                          _BatteryLeafIcon(size: 23, color: cs.onSurface),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Text(
+                              _t('성능 및 배터리', 'Performance & Battery', '性能与电池', 'パフォーマンスとバッテリー'),
+                              style: (Theme.of(ctx).textTheme.titleLarge ?? const TextStyle()).copyWith(fontWeight: FontWeight.w800),
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => Navigator.of(ctx).pop(),
+                            icon: const Icon(Icons.close_rounded, size: 20),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Flexible(
+                    child: ListView(
+                      shrinkWrap: true,
+                      padding: const EdgeInsets.only(bottom: 16),
+                      children: [
+                        // 주사율 조절: 설정 변경 시 아이콘만 바뀌고 문구 앞 이름 생략
+                        row(
+                          icon: _refreshRateIcon(rr),
+                          title: _t('주사율 조절', 'Refresh Rate', '刷新率调节', 'リフレッシュレート'),
+                          subtitle: _t('주사율이 낮을수록 배터리 소모량이 줄어요', 'Lower refresh rate reduces battery usage', '刷新率越低，耗电量越少', 'リフレッシュレートが低いほど電池消費が減ります'),
+                          onTap: () => _pickRefreshRate(refresh),
+                        ),
+                        // 문서 렌더링 화질: 설정 변경 시 아이콘만 바뀌고 문구 앞 이름 생략
+                        row(
+                          icon: _renderQualityIcon(rq),
+                          title: _t('문서 렌더링 화질', 'Document Render Quality', '文档渲染画质', '文書レンダリング画質'),
+                          subtitle: _t('화질을 낮추면 배터리와 메모리 사용이 줄어요', 'Lower quality uses less battery and memory', '降低画质可减少耗电和内存占用', '画質を下げると電池とメモリ消費を抑えます'),
+                          onTap: () => _pickRenderQuality(refresh),
+                        ),
+                        row(
+                          icon: Icons.photo_camera_back_outlined,
+                          title: _t('페이지 전환 스냅샷 끄기', 'Turn Off Page Turn Snapshots', '关闭翻页快照', 'ページ切替スナップショットをオフ'),
+                          subtitle: _t('페이지 미리 찍기를 꺼서 배터리와 CPU 부하가 줄어요', 'Skips page pre-capture to reduce battery and CPU load', '关闭页面预截图以降低耗电和 CPU 负载', 'ページの事前キャプチャをオフにして電池とCPU負荷を抑えます'),
+                          onTap: () async {
+                            await StorageService.setPageSnapshotOff(!snapOff);
+                            refresh();
+                          },
+                          trailing: Switch(
+                            value: snapOff,
+                            onChanged: (v) async {
+                              await StorageService.setPageSnapshotOff(v);
+                              refresh();
+                            },
+                          ),
+                        ),
+                        row(
+                          icon: Icons.contrast_outlined,
+                          title: _t('순수 검정 다크 모드', 'Pure Black Dark Mode', '纯黑深色模式', 'ピュアブラックダークモード'),
+                          subtitle: _t('다크 모드 배경을 완전한 검정색으로 바꿔 배터리 소모량이 줄어요', 'Uses pure black backgrounds in dark mode to reduce battery usage', '将深色模式背景改为纯黑以减少耗电量', 'ダークモードの背景を完全な黒にして電池消費を抑えます'),
+                          onTap: () async {
+                            await StorageService.setPureBlackDark(!oled);
+                            refresh();
+                          },
+                          trailing: Switch(
+                            value: oled,
+                            onChanged: (v) async {
+                              await StorageService.setPureBlackDark(v);
+                              refresh();
+                            },
+                          ),
+                        ),
+                        row(
+                          icon: Icons.motion_photos_off_outlined,
+                          title: _t('애니메이션 끄기', 'Turn Off Animations', '关闭动画', 'アニメーションをオフ'),
+                          subtitle: _t('애니메이션을 끄면 화면 버벅임과 빠른 반응 속도에 도움이 돼요', 'Reduces stutter and improves responsiveness', '关闭动画可减少卡顿并提升响应速度', 'アニメーションをオフにするとカクつきが減り反応が速くなります'),
+                          onTap: () async {
+                            await StorageService.setAnimOff(!animOff);
+                            refresh();
+                          },
+                          trailing: Switch(
+                            value: animOff,
+                            onChanged: (v) async {
+                              await StorageService.setAnimOff(v);
+                              refresh();
+                            },
+                          ),
+                        ),
+                        const Divider(height: 16, indent: 20, endIndent: 20),
+                        row(
+                          icon: Icons.cleaning_services_outlined,
+                          title: _t('임시 캐시 설정', 'Temporary Cache', '临时缓存设置', '一時キャッシュ設定'),
+                          subtitle: _t(
+                            '보관 ${_cacheDaysLabel(StorageService.cacheMaxDays.value)} · 한도 ${_cacheMbLabel(StorageService.cacheMaxMb.value)}${_cacheBytes == null ? '' : ' (${_fmtBytes(_cacheBytes!)})'}',
+                            'Keep ${_cacheDaysLabel(StorageService.cacheMaxDays.value)} · Limit ${_cacheMbLabel(StorageService.cacheMaxMb.value)}${_cacheBytes == null ? '' : ' (${_fmtBytes(_cacheBytes!)})'}',
+                            '保留 ${_cacheDaysLabel(StorageService.cacheMaxDays.value)} · 上限 ${_cacheMbLabel(StorageService.cacheMaxMb.value)}${_cacheBytes == null ? '' : ' (${_fmtBytes(_cacheBytes!)})'}',
+                            '保存 ${_cacheDaysLabel(StorageService.cacheMaxDays.value)} · 上限 ${_cacheMbLabel(StorageService.cacheMaxMb.value)}${_cacheBytes == null ? '' : ' (${_fmtBytes(_cacheBytes!)})'}',
+                          ),
+                          onTap: () => _openCachePolicySheet(refresh),
+                        ),
+                        row(
+                          icon: Icons.delete_forever_outlined,
+                          title: _t('데이터 지우기', 'Clear Data', '清除数据', 'データを削除'),
+                          subtitle: _t('앱 안의 파일·메모·설정을 지우고 처음 상태로 되돌려요', 'Resets the app to how it was when first installed', '删除应用内文件·笔记·设置并恢复初始状态', 'アプリ内のデータを消して初期状態に戻します'),
+                          titleColor: Colors.redAccent,
+                          onTap: _clearData,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   // ── 데이터 ──
@@ -669,7 +811,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                         const SizedBox(width: 24),
                         Icon(Icons.settings_outlined, size: 23, color: cs.onSurface),
                         const SizedBox(width: 17),
-                        Text(_t('앱 설정', 'App Settings', '应用设置', 'アプリ設定'),
+                        Text(_t('설정', 'Settings', '设置', '設定'),
                             style: (Theme.of(context).textTheme.titleLarge ?? const TextStyle()).copyWith(fontWeight: FontWeight.w800)),
                       ]),
                     ),
@@ -677,7 +819,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                 ),
               ),
             )
-          : AppBar(title: Text(_t('앱 설정', 'App Settings', '应用设置', 'アプリ設定'), style: const TextStyle(fontWeight: FontWeight.w800))),
+          : AppBar(title: Text(_t('설정', 'Settings', '设置', '設定'), style: const TextStyle(fontWeight: FontWeight.w800))),
       body: SafeArea(
         top: !widget.asSheet,
         child: ListView(
@@ -686,17 +828,17 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
           padding: const EdgeInsets.only(bottom: 16),
           children: [
             _section(_t('일반', 'General', '通用', '一般')),
-            // 앱 스타일: 기본(아래 막대) / 심플(위 막대)
+            // 스타일: 컴팩트(휴대폰) / 와이드(태블릿)
             _item(
               icon: Icons.dashboard_customize_outlined,
-              title: _t('앱 스타일', 'App Style', '应用样式', 'アプリのスタイル'),
+              leading: _StyleCircleGridIcon(size: 23, color: cs.onSurface),
+              title: _t('스타일', 'Style', '样式', 'スタイル'),
               subtitle: _styleLabel(StorageService.appStyle.value),
               onTap: _pickStyle,
             ),
             _item(
-              // 지금 고른 테마에 맞는 아이콘
               icon: _themeIcon(_themeMode),
-              title: _t('앱 테마', 'App Theme', '应用主题', 'アプリのテーマ'),
+              title: _t('테마', 'Theme', '主题', 'テーマ'),
               subtitle: _themeLabel(_themeMode),
               onTap: _pickTheme,
             ),
@@ -707,19 +849,21 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
               subtitle: languageOptionLabel(_langSetting),
               onTap: _pickLanguage,
             ),
-            // 사생활 보호: 앱 잠금·모든 파일 잠금 (비밀번호·패턴·생체 인식)
+            // 사생활 보호: 자물쇠 안 동그라미 없는 깔끔한 아이콘
             _item(
               icon: Icons.lock_outline,
+              leading: _CleanLockIcon(size: 23, color: cs.onSurface),
               title: _t('사생활 보호', 'Privacy', '隐私保护', 'プライバシー保護'),
-              subtitle: _t('앱·파일을 비밀번호·패턴·생체 인식으로 잠가요', 'Lock the app and files with a PIN, pattern or biometrics', '用密码·图案·生物识别锁定应用和文件', 'アプリ・ファイルを暗証番号・パターン・生体認証でロックします'),
+              subtitle: _t('앱 파일을 잠글 수 있어요', 'Lock your app and files', '可以锁定应用和文件', 'アプリとファイルをロックできます'),
               onTap: () async {
                 await Navigator.of(context).push(PushAsideRoute(builder: (_) => PrivacyLockScreen(t: _t)));
                 if (mounted) setState(() {});
               },
             ),
-            // 성능 및 배터리: 주사율·렌더링 화질·스냅샷·순수 검정·애니메이션·캐시·데이터
+            // 성능 및 배터리: 배터리 안 나뭇잎 아이콘
             _item(
               icon: Icons.battery_saver_outlined,
+              leading: _BatteryLeafIcon(size: 23, color: cs.onSurface),
               title: _t('성능 및 배터리', 'Performance & Battery', '性能与电池', 'パフォーマンスとバッテリー'),
               subtitle: _t('주사율·화질·절전·애니메이션·캐시 관리', 'Refresh rate, quality, power saving, animations & cache', '刷新率·画质·省电·动画·缓存管理', 'リフレッシュレート・画質・省電力・アニメ・キャッシュ'),
               onTap: _openPerformanceSheet,
@@ -736,6 +880,16 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                 if (_hideGroup) _t('그룹 숨김', 'groups hidden', '隐藏分组', 'グループを隠す'),
               ].join(' · '),
               onTap: _pickViewMode,
+            ),
+            ValueListenableBuilder<bool>(
+              valueListenable: FavoriteRibbon.animationOff,
+              builder: (context, tapFav, _) => _item(
+                icon: Icons.bookmark_remove_outlined,
+                title: _t('책갈피 터치로 즐겨찾기', 'Tap bookmark to favorite', '轻触书签即可收藏', 'しおりをタップしてお気に入り'),
+                subtitle: _t('당기지 않고 터치로 즐겨찾기', 'Tap instead of pulling', '无需下拉，轻触即可收藏', '引っ張らずにタップでお気に入り'),
+                onTap: () => StorageService.setRibbonAnimationOff(!tapFav),
+                trailing: Switch(value: tapFav, onChanged: StorageService.setRibbonAnimationOff),
+              ),
             ),
             _item(
               icon: Icons.bookmark_added_outlined,
@@ -789,7 +943,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
             _section(_t('프로', 'Pro', '专业版', 'プロ')),
             // 이리ERI 프로: 유료 기능과 무료 제공 기간 안내
             _item(
-              icon: Icons.workspace_premium_outlined,
+              icon: Icons.diamond_outlined,
               title: _t('이리ERI 프로', '이리ERI Pro', '이리ERI 专业版', '이리ERI プロ'),
               subtitle: Pro.freePeriod
                   ? _t('2027년 유료 출시 전까지 무료로 쓸 수 있어요', 'Free to use until the paid launch in 2027', '在2027年付费版推出前可免费使用', '2027年の有料リリース前まで無料で使えます')
@@ -864,4 +1018,224 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
       ),
     );
   }
+}
+
+
+/// 스타일 아이콘: 첫 번째(좌상단) 칸을 동그라미로 그린 2x2 커스텀 레이아웃 아이콘
+class _StyleCircleGridIcon extends StatelessWidget {
+  const _StyleCircleGridIcon({required this.size, required this.color});
+  final double size;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        width: size,
+        height: size,
+        child: CustomPaint(painter: _StyleCircleGridPainter(color)),
+      );
+}
+
+class _StyleCircleGridPainter extends CustomPainter {
+  _StyleCircleGridPainter(this.color);
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = size.width / 24.0;
+    final p = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.8 * s
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    // 좌상단: 동그라미
+    canvas.drawCircle(Offset(7.0 * s, 7.0 * s), 3.4 * s, p);
+    // 우상단: 둥근 네모
+    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(13.6 * s, 3.6 * s, 6.8 * s, 6.8 * s), Radius.circular(1.6 * s)), p);
+    // 좌하단: 둥근 네모
+    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(3.6 * s, 13.6 * s, 6.8 * s, 6.8 * s), Radius.circular(1.6 * s)), p);
+    // 우하단: 플러스(+)
+    canvas.drawLine(Offset(17.0 * s, 14.0 * s), Offset(17.0 * s, 20.0 * s), p);
+    canvas.drawLine(Offset(14.0 * s, 17.0 * s), Offset(20.0 * s, 17.0 * s), p);
+  }
+
+  @override
+  bool shouldRepaint(_StyleCircleGridPainter old) => old.color != color;
+}
+
+/// 와이드 아이콘: 컴팩트(휴대폰) 아이콘을 옆으로 눕히고 화면을 넓힌 태블릿 아이콘
+class _WideTabletIcon extends StatelessWidget {
+  const _WideTabletIcon({required this.size, required this.color});
+  final double size;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        width: size,
+        height: size,
+        child: CustomPaint(painter: _WideTabletPainter(color)),
+      );
+}
+
+class _WideTabletPainter extends CustomPainter {
+  _WideTabletPainter(this.color);
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = size.width / 24.0;
+    final p = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.8 * s
+      ..strokeCap = StrokeCap.round;
+    // 가로로 넓은 태블릿 본체
+    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(1.8 * s, 4.2 * s, 20.4 * s, 15.6 * s), Radius.circular(2.6 * s)), p);
+    // 안쪽 넓은 화면 영역
+    final screenP = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.3 * s;
+    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(4.2 * s, 6.4 * s, 14.2 * s, 11.2 * s), Radius.circular(1.0 * s)), screenP);
+    // 오른쪽 짧은 홈 막대
+    canvas.drawLine(Offset(20.1 * s, 10.2 * s), Offset(20.1 * s, 13.8 * s), p);
+  }
+
+  @override
+  bool shouldRepaint(_WideTabletPainter old) => old.color != color;
+}
+
+/// 사생활 보호 아이콘: 안쪽 열쇠구멍 동그라미를 뺀 깔끔한 자물쇠
+class _CleanLockIcon extends StatelessWidget {
+  const _CleanLockIcon({required this.size, required this.color});
+  final double size;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        width: size,
+        height: size,
+        child: CustomPaint(painter: _CleanLockPainter(color)),
+      );
+}
+
+class _CleanLockPainter extends CustomPainter {
+  _CleanLockPainter(this.color);
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = size.width / 24.0;
+    final p = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.85 * s
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    // 자물쇠 고리
+    final shackle = Path()
+      ..moveTo(8.0 * s, 10.2 * s)
+      ..lineTo(8.0 * s, 7.6 * s)
+      ..arcToPoint(Offset(16.0 * s, 7.6 * s), radius: Radius.circular(4.0 * s), clockwise: true)
+      ..lineTo(16.0 * s, 10.2 * s);
+    canvas.drawPath(shackle, p);
+    // 자물쇠 몸체 (안쪽 동그라미 없음)
+    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(5.0 * s, 10.2 * s, 14.0 * s, 10.4 * s), Radius.circular(2.4 * s)), p);
+  }
+
+  @override
+  bool shouldRepaint(_CleanLockPainter old) => old.color != color;
+}
+
+/// 성능 및 배터리 아이콘: 배터리 윤곽 안에 나뭇잎이 들어 있는 아이콘
+class _BatteryLeafIcon extends StatelessWidget {
+  const _BatteryLeafIcon({required this.size, required this.color});
+  final double size;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        width: size,
+        height: size,
+        child: CustomPaint(painter: _BatteryLeafPainter(color)),
+      );
+}
+
+class _BatteryLeafPainter extends CustomPainter {
+  _BatteryLeafPainter(this.color);
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = size.width / 24.0;
+    final p = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.75 * s
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    // 배터리 단자 (위쪽)
+    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(9.5 * s, 2.2 * s, 5.0 * s, 2.2 * s), Radius.circular(0.8 * s)), p);
+    // 배터리 몸체
+    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(6.2 * s, 4.4 * s, 11.6 * s, 17.2 * s), Radius.circular(2.2 * s)), p);
+    // 배터리 안쪽 나뭇잎
+    final leaf = Path()
+      ..moveTo(9.4 * s, 16.4 * s)
+      ..quadraticBezierTo(8.8 * s, 10.8 * s, 14.6 * s, 9.6 * s)
+      ..quadraticBezierTo(15.2 * s, 15.2 * s, 9.4 * s, 16.4 * s)
+      ..close();
+    final fill = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+    canvas.drawPath(leaf, fill);
+    // 나뭇잎 줄기
+    canvas.drawLine(Offset(9.0 * s, 17.2 * s), Offset(11.6 * s, 13.8 * s), p..strokeWidth = 1.35 * s);
+  }
+
+  @override
+  bool shouldRepaint(_BatteryLeafPainter old) => old.color != color;
+}
+
+/// 페이지 수 숨기기 아이콘: 겹쳐진 페이지 위에 대각선 취소선
+class _SlashedPagesIcon extends StatelessWidget {
+  const _SlashedPagesIcon({required this.size, required this.color});
+  final double size;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        width: size,
+        height: size,
+        child: CustomPaint(painter: _SlashedPagesPainter(color)),
+      );
+}
+
+class _SlashedPagesPainter extends CustomPainter {
+  _SlashedPagesPainter(this.color);
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = size.width / 24.0;
+    final p = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.8 * s
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    // 앞쪽 페이지
+    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(6.8 * s, 3.6 * s, 13.4 * s, 13.4 * s), Radius.circular(1.8 * s)), p);
+    // 뒤쪽 페이지 ㄴ자 윤곽
+    final back = Path()
+      ..moveTo(4.0 * s, 7.6 * s)
+      ..lineTo(4.0 * s, 18.6 * s)
+      ..quadraticBezierTo(4.0 * s, 20.2 * s, 5.6 * s, 20.2 * s)
+      ..lineTo(16.6 * s, 20.2 * s);
+    canvas.drawPath(back, p);
+    // 대각선 취소선
+    canvas.drawLine(Offset(3.2 * s, 3.2 * s), Offset(20.8 * s, 20.8 * s), p..strokeWidth = 1.9 * s);
+  }
+
+  @override
+  bool shouldRepaint(_SlashedPagesPainter old) => old.color != color;
 }

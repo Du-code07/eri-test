@@ -73,11 +73,17 @@ class _ScanFoldersScreenState extends State<ScanFoldersScreen> {
           const SizedBox(width: 8),
         ],
       ),
+      floatingActionButton: FloatingActionButton.extended(
+        heroTag: 'scan_folder_add',
+        onPressed: _add,
+        icon: const Icon(Icons.create_new_folder_outlined),
+        label: Text(_tr('폴더 넣기', 'Add Folder', '添加文件夹', 'フォルダを追加'), style: const TextStyle(fontWeight: FontWeight.w800)),
+      ),
       body: SafeArea(
         child: list == null
             ? const SizedBox.shrink()
             : ListView(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 110),
                 children: [
                   Padding(
                     padding: const EdgeInsets.fromLTRB(8, 0, 8, 14),
@@ -109,21 +115,13 @@ class _ScanFoldersScreenState extends State<ScanFoldersScreen> {
                           title: Text(f.name.isEmpty ? f.uri : f.name, maxLines: 2, overflow: TextOverflow.ellipsis,
                               style: const TextStyle(fontWeight: FontWeight.w700)),
                           trailing: IconButton(
-                            icon: const Icon(Icons.close),
+                            icon: const Icon(Icons.delete_outline),
                             tooltip: _tr('빼기', 'Remove', '移除', '外す'),
                             onPressed: () => _remove(f),
                           ),
                         ),
                       ),
                     ),
-                  const SizedBox(height: 14),
-                  Center(
-                    child: FilledButton.icon(
-                      onPressed: _add,
-                      icon: const Icon(Icons.create_new_folder_outlined),
-                      label: Text(_tr('폴더 넣기', 'Add Folder', '添加文件夹', 'フォルダを追加')),
-                    ),
-                  ),
                 ],
               ),
       ),
