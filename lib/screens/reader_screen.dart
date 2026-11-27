@@ -2026,6 +2026,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
         setState(() => _progressBarHidden = val);
       },
       onReset: _resetViewerSettings,
+      isOtherDefault: () => !_useVolumeTurn && _progressBarPosSetting == 'bottom' && _memoToolbarPos == 'bottom' && _toolbarPos == 'bottom' && !ScrollThumbBar.leftHanded.value,
     );
   }
 

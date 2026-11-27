@@ -31,6 +31,7 @@ class _UserFontsScreenState extends State<UserFontsScreen> {
   List<UserFontEntry> _fonts = const [];
   bool _busy = false;
   String _active = ''; // 앱·EPUB: 지금 쓰는 글꼴 ('' = 기본 글꼴)
+  String? _epubPreviewFamily; // EPUB 글꼴 미리보기용 등록된 fontFamily
   bool get _pickable => widget.category != 'doc';
 
   FontsTr get _t => widget.t;
@@ -45,10 +46,12 @@ class _UserFontsScreenState extends State<UserFontsScreen> {
     final all = await UserFonts.listOf(widget.category);
     all.sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
     final active = _pickable ? await UserFonts.activeLabel(widget.category) : '';
+    final previewFamily = widget.category == 'epub' ? await UserFonts.loadEpubPreviewFont() : null;
     if (mounted) {
       setState(() {
         _fonts = all;
         _active = active;
+        _epubPreviewFamily = previewFamily;
       });
     }
   }
@@ -225,6 +228,54 @@ class _UserFontsScreenState extends State<UserFontsScreen> {
         child: Text(text, style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: cs.onSurfaceVariant)),
       );
 
+  /// EPUB 글꼴 미리보기 (기본 글꼴 상단): 한글·영어 샘플 문장에 선택한 글꼴 즉시 반영
+  Widget _buildEpubPreview(ColorScheme cs) {
+    final bool isDefault = _active.isEmpty || _epubPreviewFamily == null;
+    final TextStyle sampleStyle = TextStyle(
+      fontFamily: isDefault ? 'sans-serif' : _epubPreviewFamily,
+      fontFamilyFallback: const ['sans-serif'],
+      fontSize: 16,
+      height: 1.55,
+      color: cs.onSurface,
+    );
+    return Container(
+      margin: const EdgeInsets.fromLTRB(24, 8, 24, 14),
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.45)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                _t('미리보기', 'Preview', '预览', 'プレビュー'),
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: cs.onSurfaceVariant),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _active.isEmpty ? _t('기본 글꼴', 'Default font', '默认字体', '既定のフォント') : _active,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.end,
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cs.onSurfaceVariant),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text('다람쥐 헌 쳇바퀴에 타고파', style: sampleStyle),
+          const SizedBox(height: 6),
+          Text('The quick brown fox jumps over the lazy dog', style: sampleStyle),
+        ],
+      ),
+    );
+  }
+
   /// 앱·EPUB 글꼴 한 줄: 누르면 그 글꼴로 바꿈 (지금 쓰는 글꼴은 체크 표시)
   Widget _fontChoice(ColorScheme cs, String family, String title, String subtitle, {VoidCallback? onDelete}) {
     final bool on = _active == family;
@@ -261,10 +312,10 @@ class _UserFontsScreenState extends State<UserFontsScreen> {
           Flexible(child: Text(_title, overflow: TextOverflow.ellipsis)),
         ]),
         actions: [
-          // 초기화: 넣어 둔 글꼴을 모두 빼고 기본 글꼴로
+          // 초기화: 넣어 둔 글꼴을 모두 빼고 기본 글꼴로 (초기화할 글꼴이 없으면 비활성화)
           TextButton.icon(
             style: TextButton.styleFrom(foregroundColor: cs.onSurface),
-            onPressed: _busy ? null : _resetAll,
+            onPressed: (_busy || (_fonts.isEmpty && _active.isEmpty)) ? null : _resetAll,
             icon: const Icon(Icons.restart_alt_rounded, size: 20),
             label: Text(_t('초기화', 'Reset', '重置', 'リセット'), style: const TextStyle(fontWeight: FontWeight.w600)),
           ),
@@ -322,6 +373,7 @@ class _UserFontsScreenState extends State<UserFontsScreen> {
             _sectionLabel(cs, _t('내가 넣은 글꼴', 'Fonts you added', '我添加的字体', '追加したフォント')),
           ],
           if (_pickable) ...[
+            if (widget.category == 'epub') _buildEpubPreview(cs),
             // 앱·EPUB: 눌러서 바로 그 글꼴로
             _fontChoice(cs, '', _t('기본 글꼴', 'Default font', '默认字体', '既定のフォント'),
                 widget.category == 'epub'

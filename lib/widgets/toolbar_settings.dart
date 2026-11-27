@@ -37,6 +37,19 @@ class ToolbarLayout {
 
   ToolbarLayout copy() => ToolbarLayout(top: List.of(top), bar: List.of(bar), hidden: Set.of(hidden));
 
+  /// 기본 배치·숨김 상태인지 여부
+  bool get isDefault {
+    if (hidden.isNotEmpty) return false;
+    if (top.length != defaultTop.length || bar.length != defaultBar.length) return false;
+    for (int i = 0; i < top.length; i++) {
+      if (top[i] != defaultTop[i]) return false;
+    }
+    for (int i = 0; i < bar.length; i++) {
+      if (bar[i] != defaultBar[i]) return false;
+    }
+    return true;
+  }
+
   /// 저장해 둔 배치를 읽음 (나중에 새로 생긴 아이콘은 도구 모음 끝에 붙임)
   static Future<void> load() async {
     try {
@@ -153,6 +166,7 @@ Future<void> showToolbarSettingsDialog(
   required bool progressHidden,
   required ValueChanged<bool> onProgressHidden,
   required Future<void> Function() onReset,
+  bool Function()? isOtherDefault,
   Map<String, String> modeReasons = const {},
   Widget Function(StateSetter setDlg)? extra,
 }) async {
@@ -166,6 +180,7 @@ Future<void> showToolbarSettingsDialog(
       progressHidden: progressHidden,
       onProgressHidden: onProgressHidden,
       onReset: onReset,
+      isOtherDefault: isOtherDefault,
       modeReasons: modeReasons,
       extra: extra,
       onChanged: (l) => result = l,
@@ -182,6 +197,7 @@ class _ToolbarSettings extends StatefulWidget {
     required this.onProgressHidden,
     required this.onReset,
     required this.onChanged,
+    this.isOtherDefault,
     this.modeReasons = const {},
     this.extra,
   });
@@ -191,6 +207,7 @@ class _ToolbarSettings extends StatefulWidget {
   final bool progressHidden;
   final ValueChanged<bool> onProgressHidden;
   final Future<void> Function() onReset;
+  final bool Function()? isOtherDefault;
   final ValueChanged<ToolbarLayout> onChanged;
   final Widget Function(StateSetter setDlg)? extra;
 
@@ -439,7 +456,7 @@ class _ToolbarSettingsState extends State<_ToolbarSettings> {
                         child: Text(tr('도구 모음 설정', 'Toolbar Settings', '工具栏设置', 'ツールバー設定'),
                             style: TextStyle(color: cs.onSurface, fontSize: 19, fontWeight: FontWeight.w800)),
                       ),
-                      // 초기화: 아이콘 배치·숨김, 진행바 보이기, 옮긴 도구 모음·메모 도구 모음·진행바·스크롤 막대 자리
+                      // 초기화: 아이콘 배치·숨김, 진행바 보이기, 옮긴 도구 모음·메모 도구 모음·진행바·스크롤 막대 자리 (기본값이면 비활성화)
                       TextButton.icon(
                         style: TextButton.styleFrom(
                           foregroundColor: cs.onSurface,
@@ -447,24 +464,26 @@ class _ToolbarSettingsState extends State<_ToolbarSettings> {
                           minimumSize: const Size(0, 36),
                         ),
                         icon: const Icon(Icons.restart_alt_rounded, size: 20),
-                        onPressed: () async {
-                          final ok = await confirmResetDialog(
-                            context,
-                            title: tr('설정 초기화', 'Reset Settings', '重置设置', '設定をリセット'),
-                            message: tr('현재 설정을 기본값으로 되돌릴까요?', 'Reset the current settings to default?', '要将当前设置恢复为默认值吗？', '現在の設定を初期値に戻しますか？'),
-                            cancelLabel: tr('취소', 'Cancel', '取消', 'キャンセル'),
-                            resetLabel: tr('초기화', 'Reset', '重置', 'リセット'),
-                          );
-                          if (!ok || !mounted) return;
-                          await widget.onReset();
-                          if (!mounted) return;
-                          setState(() {
-                            _l = ToolbarLayout.defaults();
-                            _progressHidden = false;
-                            _warn = null;
-                          });
-                          widget.onChanged(_l);
-                        },
+                        onPressed: (_l.isDefault && !_progressHidden && (widget.isOtherDefault?.call() ?? true))
+                            ? null
+                            : () async {
+                                final ok = await confirmResetDialog(
+                                  context,
+                                  title: tr('설정 초기화', 'Reset Settings', '重置设置', '設定をリセット'),
+                                  message: tr('현재 설정을 기본값으로 되돌릴까요?', 'Reset the current settings to default?', '要将当前设置恢复为默认值吗？', '現在の設定を初期値に戻しますか？'),
+                                  cancelLabel: tr('취소', 'Cancel', '取消', 'キャンセル'),
+                                  resetLabel: tr('초기화', 'Reset', '重置', 'リセット'),
+                                );
+                                if (!ok || !mounted) return;
+                                await widget.onReset();
+                                if (!mounted) return;
+                                setState(() {
+                                  _l = ToolbarLayout.defaults();
+                                  _progressHidden = false;
+                                  _warn = null;
+                                });
+                                widget.onChanged(_l);
+                              },
                         label: Text(tr('초기화', 'Reset', '重置', 'リセット'), style: const TextStyle(fontWeight: FontWeight.bold)),
                       ),
                     ],

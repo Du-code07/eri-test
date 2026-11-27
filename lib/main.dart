@@ -896,21 +896,23 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
                 if (basic) const SheetGrip(),
                 Row(children: [
                   Expanded(child: Text(_tr('정렬', 'Sort', '排序', '並べ替え'), style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800))),
-                  // 초기화는 오른쪽 위 (바탕 없이 아이콘과 글자만)
+                  // 초기화는 오른쪽 위 (바탕 없이 아이콘과 글자만, 기본값이면 비활성화)
                   TextButton.icon(
                       style: TextButton.styleFrom(foregroundColor: cs.onSurface, padding: const EdgeInsets.symmetric(horizontal: 10)),
                       icon: const Icon(Icons.restart_alt_rounded, size: 20),
-                      onPressed: () async {
-                        final ok = await confirmResetDialog(
-                          ctx,
-                          title: _tr('설정 초기화', 'Reset Settings', '重置设置', '設定をリセット'),
-                          message: _tr('현재 설정을 기본값으로 되돌릴까요?', 'Reset the current settings to default?', '要将当前设置恢复为默认值吗？', '現在の設定を初期値に戻しますか？'),
-                          cancelLabel: _tr('취소', 'Cancel', '取消', 'キャンセル'),
-                          resetLabel: _tr('초기화', 'Reset', '重置', 'リセット'),
-                        );
-                        if (!ok) return;
-                        reset(setSheet);
-                      },
+                      onPressed: (_sortBy == 'name' && _sortAsc && _sortRemember)
+                          ? null
+                          : () async {
+                              final ok = await confirmResetDialog(
+                                ctx,
+                                title: _tr('설정 초기화', 'Reset Settings', '重置设置', '設定をリセット'),
+                                message: _tr('현재 설정을 기본값으로 되돌릴까요?', 'Reset the current settings to default?', '要将当前设置恢复为默认值吗？', '現在の設定を初期値に戻しますか？'),
+                                cancelLabel: _tr('취소', 'Cancel', '取消', 'キャンセル'),
+                                resetLabel: _tr('초기화', 'Reset', '重置', 'リセット'),
+                              );
+                              if (!ok) return;
+                              reset(setSheet);
+                            },
                       label: Text(_tr('초기화', 'Reset', '重置', 'リセット'), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
                     ),
                 ]),

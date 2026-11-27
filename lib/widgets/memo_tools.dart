@@ -440,6 +440,16 @@ class MemoToolSettings {
     }
   }
 
+  /// 도구별 설정이 기본값인지 여부
+  bool isToolDefault(String kind) => switch (kind) {
+        'hl' => hlColor.toARGB32() == kMemoHighlighterColors.first.toARGB32() && (hlWidth - 16.0).abs() < 0.01 && hlOpacity == 45 && !hlStraight,
+        'tape' => tapeColor.toARGB32() == kMemoTapeColors.first.toARGB32() && (tapeWidth - 22.0).abs() < 0.01 && !tapeStraight && !tapeHidden,
+        _ => penColor.toARGB32() == kMemoPenColors.first.toARGB32() && (penWidth - 2.0).abs() < 0.01 && !penStraight,
+      };
+
+  /// 지우개 설정이 기본값인지 여부
+  bool get isEraserDefault => eraserType == 'area' && !eraseOnlyHl && !eraseOnlyTape;
+
   /// 지우개 설정 기본값으로 초기화
   void resetEraser() {
     eraserType = 'area';
@@ -977,23 +987,26 @@ class _MemoToolPanelState extends State<_MemoToolPanel> {
                   TextButton.icon(
                     style: TextButton.styleFrom(
                       foregroundColor: _fg(context),
+                      disabledForegroundColor: _fg(context).withValues(alpha: 0.35),
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                       minimumSize: const Size(0, 34),
                     ),
                     icon: const Icon(Icons.restart_alt_rounded, size: 19),
                     label: Text(tr('초기화', 'Reset', '重置', 'リセット'), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
-                    onPressed: () async {
-                      final ok = await confirmResetDialog(
-                        context,
-                        title: tr('설정 초기화', 'Reset Settings', '重置设置', '設定をリセット'),
-                        message: tr('현재 설정을 기본값으로 되돌릴까요?', 'Reset the current settings to default?', '要将当前设置恢复为默认值吗？', '現在の設定を初期値に戻しますか？'),
-                        cancelLabel: tr('취소', 'Cancel', '取消', 'キャンセル'),
-                        resetLabel: tr('초기화', 'Reset', '重置', 'リセット'),
-                      );
-                      if (!ok || !mounted) return;
-                      setState(() => _s.resetTool(widget.kind));
-                      MemoTools.save();
-                    },
+                    onPressed: _s.isToolDefault(widget.kind)
+                        ? null
+                        : () async {
+                            final ok = await confirmResetDialog(
+                              context,
+                              title: tr('설정 초기화', 'Reset Settings', '重置设置', '設定をリセット'),
+                              message: tr('현재 설정을 기본값으로 되돌릴까요?', 'Reset the current settings to default?', '要将当前设置恢复为默认值吗？', '現在の設定を初期値に戻しますか？'),
+                              cancelLabel: tr('취소', 'Cancel', '取消', 'キャンセル'),
+                              resetLabel: tr('초기화', 'Reset', '重置', 'リセット'),
+                            );
+                            if (!ok || !mounted) return;
+                            setState(() => _s.resetTool(widget.kind));
+                            MemoTools.save();
+                          },
                   ),
                 ],
               ),
@@ -1181,23 +1194,26 @@ class _EraserPanelState extends State<_EraserPanel> {
                   TextButton.icon(
                     style: TextButton.styleFrom(
                       foregroundColor: _fg(context),
+                      disabledForegroundColor: _fg(context).withValues(alpha: 0.35),
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                       minimumSize: const Size(0, 34),
                     ),
                     icon: const Icon(Icons.restart_alt_rounded, size: 19),
                     label: Text(tr('초기화', 'Reset', '重置', 'リセット'), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
-                    onPressed: () async {
-                      final ok = await confirmResetDialog(
-                        context,
-                        title: tr('설정 초기화', 'Reset Settings', '重置设置', '設定をリセット'),
-                        message: tr('현재 설정을 기본값으로 되돌릴까요?', 'Reset the current settings to default?', '要将当前设置恢复为默认值吗？', '現在の設定を初期値に戻しますか？'),
-                        cancelLabel: tr('취소', 'Cancel', '取消', 'キャンセル'),
-                        resetLabel: tr('초기화', 'Reset', '重置', 'リセット'),
-                      );
-                      if (!ok || !mounted) return;
-                      setState(() => _s.resetEraser());
-                      MemoTools.save();
-                    },
+                    onPressed: _s.isEraserDefault
+                        ? null
+                        : () async {
+                            final ok = await confirmResetDialog(
+                              context,
+                              title: tr('설정 초기화', 'Reset Settings', '重置设置', '設定をリセット'),
+                              message: tr('현재 설정을 기본값으로 되돌릴까요?', 'Reset the current settings to default?', '要将当前设置恢复为默认值吗？', '現在の設定を初期値に戻しますか？'),
+                              cancelLabel: tr('취소', 'Cancel', '取消', 'キャンセル'),
+                              resetLabel: tr('초기화', 'Reset', '重置', 'リセット'),
+                            );
+                            if (!ok || !mounted) return;
+                            setState(() => _s.resetEraser());
+                            MemoTools.save();
+                          },
                   ),
                 ],
               ),

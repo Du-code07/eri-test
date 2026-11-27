@@ -165,6 +165,15 @@ class _ChoiceSheetState<T> extends State<_ChoiceSheet<T>> {
   late bool _toggle = widget.toggleValue;
   late final List<bool> _more = [for (final t in widget.moreToggles) t.value];
 
+  bool get _isDefault {
+    if (widget.resetTo != null && _selected != widget.resetTo) return false;
+    if (widget.toggleLabel != null && _toggle != false) return false;
+    for (int i = 0; i < widget.moreToggles.length; i++) {
+      if (_more[i] != widget.moreToggles[i].defaultValue) return false;
+    }
+    return true;
+  }
+
   Future<void> _confirmAndReset() async {
     final lang = StorageService.appLangNotifier.value;
     String tr(String ko, String en, String zh, String ja) => AppI18n.t(lang, ko: ko, en: en, zh: zh, ja: ja);
@@ -250,7 +259,7 @@ class _ChoiceSheetState<T> extends State<_ChoiceSheet<T>> {
                   TextButton.icon(
                     style: TextButton.styleFrom(foregroundColor: cs.onSurface, padding: const EdgeInsets.symmetric(horizontal: 10)),
                     icon: const Icon(Icons.restart_alt_rounded, size: 20),
-                    onPressed: _confirmAndReset,
+                    onPressed: _isDefault ? null : _confirmAndReset,
                     label: Text(widget.resetLabel!, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
                   ),
               ],

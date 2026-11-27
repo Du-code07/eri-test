@@ -137,6 +137,28 @@ class UserFonts {
     return faces.isEmpty ? null : faces.first;
   }
 
+  /// EPUB 글꼴 미리보기용 Flutter 글꼴 이름
+  static String epubPreviewFontFamily(UserFontEntry e) => 'FReaderEpubPreview_${familyOf(e).hashCode.toUnsigned(32)}_${e.file.split('.').first}';
+
+  /// EPUB 글꼴 미리보기용으로 현재 선택된 글꼴을 Flutter에 등록하고 fontFamily 이름 반환 (기본 글꼴이면 null)
+  static Future<String?> loadEpubPreviewFont() async {
+    try {
+      final faces = await activeFaces('epub');
+      if (faces.isEmpty) return null;
+      final e = faces.first;
+      final family = epubPreviewFontFamily(e);
+      final loader = FontLoader(family);
+      final d = (await dir()).path;
+      for (final f in faces) {
+        loader.addFont(File('$d/${f.file}').readAsBytes().then((b) => ByteData.sublistView(b)));
+      }
+      await loader.load();
+      return family;
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<List<UserFontEntry>> list() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_key);

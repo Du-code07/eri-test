@@ -1582,6 +1582,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
         setState(() => _progressBarHidden = val);
       },
       onReset: _resetViewerSettings,
+      isOtherDefault: () => !_useVolumeTurn && _progressBarPosSetting == 'bottom' && _memoToolbarPos == 'bottom' && _toolbarPos == 'bottom' && !ScrollThumbBar.leftHanded.value,
     );
   }
 
