@@ -1,4 +1,4 @@
-import { applyDocxLayout, finalizeDocxLayout, fitDocxContent, settleDocxPageBreaks } from './docx_layout.js';
+import { applyDocxLayout, docxHeaderFooter, finalizeDocxLayout, fitDocxContent, settleDocxPageBreaks } from './docx_layout.js';
 // Read-only adapter for OpenDocument.core. All assets and documents stay local.
 const host = document.getElementById('pages');
 const measure = document.getElementById('measure');
@@ -325,6 +325,7 @@ async function preparePages(html, current) {
     }
   }
   const result = [];
+  let sectionOrder = 0;
   for (const source of measure.children) {
     const inner = source.querySelector(':scope > .odr-page-inner');
     if (!inner) throw new Error('Word 문서 본문 구조가 올바르지 않아요');
@@ -364,6 +365,13 @@ async function preparePages(html, current) {
       }
     }
 
+    // FReader: 머리말·꼬리말 (쪽 여백 자리에 그림)
+    if (options.docxLayout?.sections?.length) {
+      const secs = options.docxLayout.sections;
+      const si = Math.min(secs.length - 1, Number(source.dataset.docxSection ?? sectionOrder));
+      docxHeaderFooter(source, secs[si], options.docxLayout.theme || {}, { width, height, margin });
+    }
+    sectionOrder++;
     const clip = document.createElement('div'); clip.className = 'freader-content';
     Object.assign(clip.style, { left: `${margin[3]}px`, top: `${margin[0]}px`, width: `${bodyWidth}px`, height: `${bodyHeight}px` });
     inner.replaceWith(clip); clip.appendChild(inner);
@@ -475,6 +483,12 @@ function missingImage(img, reason) {
 }
 function preparePageSource(source, entry, index) {
     source.querySelector('.freader-columns').style.transform = `translateX(${-entry.column * entry.columnStride}px)`;
+    // FReader: 머리말·꼬리말 쪽 번호와 첫 쪽 다른 머리말
+    for (const field of source.querySelectorAll(':scope > .docx-hf [data-docx-field]')) {
+      field.textContent = String(field.dataset.docxField === 'NUMPAGES' ? pages.length : index + 1);
+    }
+    const firstPage = entry.column === 0 && source.dataset.docxTitlePg === '1';
+    for (const box of source.querySelectorAll(':scope > .docx-hf')) box.style.display = (box.dataset.hfType === 'first') === firstPage ? '' : 'none';
     if (source.classList.contains('rtf-paper')) {
       const start = Number(source.dataset.rtfStart), number = start > 0 ? start + entry.column : index + 1;
       for (const field of source.querySelectorAll('[data-rtf-field]')) {
@@ -695,13 +709,16 @@ function applyBackdrop() {
   if (backdrop) root.setProperty('--backdrop', backdrop); else root.removeProperty('--backdrop');
 }
 function configure(next = {}) {
-  const oldSpread = options.spread; options = { ...options, ...next };
+  const oldSpread = options.spread, oldTrim = options.trimMargins; options = { ...options, ...next };
   document.body.dataset.theme = ['white', 'sepia', 'dark'].includes(options.theme) ? options.theme : 'white';
   applyBackdrop();
   host.classList.toggle('rtl', !!options.rtl);
   if (docReady && pages.length && 'vertical' in next && !!next.vertical !== vertical) return setVertical(!!next.vertical);
   if (!docReady) return;
-  if (vertical) return;
+  if (vertical) {
+    if (oldTrim !== options.trimMargins && vhost) { vLayout(true); vReportMetrics(); }
+    return;
+  }
   if (oldSpread !== options.spread) return render();
   fitPages();
 }
@@ -861,7 +878,7 @@ function setScrollMarks(pages) { vMarks = new Set((pages || []).map(Number)); vA
 let vMemos = {}; // 쪽 번호 → [{ x: [..], y: [..], c: ARGB, w: 쪽 너비 대비 굵기 }]
 function vArgb(c) { c = Number(c) >>> 0; return `rgba(${(c >>> 16) & 255},${(c >>> 8) & 255},${c & 255},${((c >>> 24) & 255) / 255})`; }
 function vDrawMemo(i) {
-  const slot = vSlots[i]; if (!slot) return;
+  const slot = vFull(i); if (!slot) return;
   let svg = slot.querySelector(':scope > svg.vmemo');
   const list = vMemos[i];
   if (!list || !list.length) { svg?.remove(); return; }
@@ -974,9 +991,11 @@ function vVisibleSlots() {
   const W = window.innerWidth || 1, H = window.innerHeight || 1, st = vhost.scrollTop, VH = vhost.clientHeight || H;
   const out = [];
   for (let i = Math.max(0, vIndexAt(st) - 1); i < vSlots.length && vTops[i] < st + VH; i++) {
-    const q = vSlots[i].getBoundingClientRect();
-    if (q.bottom < 0 || q.top > H) continue;
-    out.push({ page: i, left: q.left / W, top: q.top / H, width: q.width / W, height: q.height / H });
+    const v = vSlots[i].getBoundingClientRect();
+    if (v.bottom < 0 || v.top > H) continue;
+    const q = vFull(i).getBoundingClientRect(); // 쪽 전체(여백 줄이기로 가린 여백까지) — 메모는 늘 쪽 전체 기준
+    out.push({ page: i, left: q.left / W, top: q.top / H, width: q.width / W, height: q.height / H,
+      vleft: v.left / W, vtop: v.top / H, vwidth: v.width / W, vheight: v.height / H });
   }
   return out;
 }
@@ -1027,8 +1046,36 @@ let vRatios = [];
 function vSetRatio(i, r) {
   if (vRatios[i] === r) return;
   vRatios[i] = r;
-  vSlots[i].style.height = `calc(var(--vw) * ${r})`;
+  vSlots[i].style.height = `calc(var(--vw) * ${vVisRatio(i)})`;
   if (vMemos[i]) vDrawMemo(i);
+}
+// ── FReader: 여백 줄이기 (스크롤 보기) — 쪽 칸은 보이는 자리(여백을 잘라 낸 본문)만큼, 쪽 전체(.vfull)는 그 안에서 여백만큼 밀려 놓임
+// 메모·고른 글 바탕·화면 좌표는 모두 쪽 전체 기준이라 여백 줄이기를 켜고 꺼도 자리가 그대로임
+let vTrim = [];
+function vFull(i) { return vSlots[i]?.firstElementChild || vSlots[i] || null; }
+function vTrimFor(i) {
+  const e = pages[i];
+  if (options.trimMargins !== true || !e || !e.box) return null;
+  const W = Number(e.width), H = Number(e.height), b = e.box;
+  if (!(W > 0 && H > 0 && b.w > 16 && b.h > 16)) return null;
+  const x0 = b.x * (1 - TRIM_KEEP_X), x1 = W - Math.max(0, W - b.x - b.w) * (1 - TRIM_KEEP_X);
+  const y0 = b.y * (1 - TRIM_KEEP_Y), y1 = H - Math.max(0, H - b.y - b.h) * (1 - TRIM_KEEP_Y);
+  return { x: x0 / W, y: y0 / H, w: Math.max(0.1, (x1 - x0) / W), h: Math.max(0.1, (y1 - y0) / H) };
+}
+function vVisRatio(i) { const t = vTrim[i], r = vRatios[i] || 1.414; return t ? r * t.h / t.w : r; }
+/** 쪽 전체가 화면에서 쓰는 너비 (여백 줄이기면 본문이 화면 너비를 채우도록 더 넓음) */
+function vFullWidth(i) { const t = vTrim[i]; return vPageWidth() / (t ? t.w : 1); }
+function vApplyTrim() {
+  vTrim = pages.map((_, i) => vTrimFor(i));
+  vSlots.forEach((slot, i) => {
+    let full = slot.firstElementChild;
+    if (!full || !full.classList.contains('vfull')) { full = document.createElement('div'); full.className = 'vfull'; slot.prepend(full); }
+    const t = vTrim[i];
+    Object.assign(full.style, t
+      ? { left: `${-t.x / t.w * 100}%`, top: `${-t.y / t.h * 100}%`, width: `${100 / t.w}%`, height: `${100 / t.h}%` }
+      : { left: '0', top: '0', width: '100%', height: '100%' });
+    if (vRatios[i]) slot.style.height = `calc(var(--vw) * ${vVisRatio(i)})`;
+  });
 }
 /** 지금 배율로 쪽 너비·자리를 다시 셈 (쪽을 다시 그리지 않음) */
 function vSize() {
@@ -1037,7 +1084,7 @@ function vSize() {
   vhost.style.setProperty('--vml', `${vLeft()}px`);
   vhost.style.overflowX = vZoom > 1.001 ? 'auto' : 'hidden';
   vTops = []; let y = 0;
-  for (let i = 0; i < vRatios.length; i++) { vTops.push(y); y += W * vRatios[i] + V_GAP; }
+  for (let i = 0; i < vRatios.length; i++) { vTops.push(y); y += W * vVisRatio(i) + V_GAP; }
   vTops.push(y);
   // 쪽이 화면보다 짧으면(1쪽뿐인 문서 등) 위에 붙이지 않고 화면 가운데에
   const total = y - V_GAP, viewH = innerHeight || vhost.clientHeight;
@@ -1047,7 +1094,7 @@ function vSize() {
     vSlots[vSlots.length - 1].style.marginBottom = pad ? '0px' : '';
   }
   if (pad) for (let i = 0; i < vTops.length; i++) vTops[i] += pad;
-  for (const m of vMounted.values()) m.source.style.transform = `scale(${W / m.entry.width})`;
+  for (const [i, m] of vMounted) m.source.style.transform = `scale(${vFullWidth(i) / m.entry.width})`;
   if (docxEditMode) { if (docxSelRange && !docxSelRange.collapsed) docxRenderSelection(); else if (docxCursor) docxRenderCaret(); }
 }
 // 길게 눌러 고른 글 바탕 (스크롤 보기): 앱이 [쪽, 왼쪽, 위, 너비, 높이](쪽 크기 대비 0~1)로 보내 주면
@@ -1058,7 +1105,7 @@ function vApplyCopyMarks() {
   const bySlot = new Map();
   if (vertical) {
     for (const q of copyMarks) {
-      const slot = vSlots[q[0]];
+      const slot = vFull(q[0]);
       if (!slot) continue;
       if (!bySlot.has(slot)) bySlot.set(slot, []);
       bySlot.get(slot).push(q);
@@ -1103,6 +1150,9 @@ function vLayout(keep) {
       vinner.appendChild(slot); vSlots.push(slot);
     }
   }
+  vRatios.length = 0;
+  pages.forEach((entry, i) => { vRatios[i] = entry.width > 0 ? entry.height / entry.width : 1.414; });
+  vApplyTrim();
   vApplyMarks();
   vApplyCopyMarks();
   pages.forEach((entry, i) => vSetRatio(i, entry.width > 0 ? entry.height / entry.width : 1.414));
@@ -1148,9 +1198,9 @@ function vSlotGeom() {
   const W = innerWidth || 1, H = innerHeight || 1, out = [];
   const at = vIndexAt(vhost.scrollTop + (vhost.clientHeight || H) / 2);
   const push = (i) => {
-    const q = vSlots[i].getBoundingClientRect();
+    const q = vFull(i).getBoundingClientRect();
     out.push([i, q.left / W, q.top / H, q.width / W, q.height / H]);
-    return q;
+    return vSlots[i].getBoundingClientRect();
   };
   push(at);
   // 화면 밖으로 한 쪽 더 나갈 때까지 위·아래로 (줄이는 중이면 여러 쪽이 보임)
@@ -1168,7 +1218,7 @@ function vMount(index) {
   const source = original ? entry.source : entry.source.cloneNode(true);
   if (original) vOwner.set(entry.source, index);
   preparePageSource(source, entry, index);
-  const slot = vSlots[index], scale = vPageWidth() / entry.width;
+  const slot = vFull(index), scale = vFullWidth(index) / entry.width;
   const frame = document.createElement('section');
   frame.className = 'page'; frame.dataset.page = String(index);
   frame.dataset.width = String(entry.width); frame.dataset.height = String(entry.height);
@@ -1192,6 +1242,43 @@ function vEnsureOriginal(index) {
   if (owner != null) vUnmount(owner);
   vUnmount(index); vMount(index);
   if (owner != null) vMount(owner);
+}
+/**
+ * 편집용: 이 쪽이 원래 글 덩어리를 쓰게 함 (스크롤 보기에서 같은 구역의 다른 쪽은 복사본이라 거기에 고친 글은 저장되지 않음).
+ * 다시 그리지 않고 원래 덩어리와 복사본 자리만 맞바꿔서 그림이 깜빡이지 않게 함
+ */
+function vAdoptOriginal(index) {
+  const m = vMounted.get(index); if (!m || m.original) return false;
+  const orig = m.entry.source, clone = m.source;
+  const ownerIdx = vOwner.get(orig);
+  const o = ownerIdx != null ? vMounted.get(ownerIdx) : null;
+  if (o && o.source === orig) {
+    const mark = document.createComment('');
+    orig.replaceWith(mark); clone.replaceWith(orig); mark.replaceWith(clone);
+    o.source = clone; o.original = false;
+  } else {
+    clone.replaceWith(orig);
+  }
+  m.source = orig; m.original = true; vOwner.set(orig, index);
+  for (const [i, mm] of [[index, m], [ownerIdx, o]]) {
+    if (!mm) continue;
+    preparePageSource(mm.source, mm.entry, i);
+    mm.source.style.transform = `scale(${vFullWidth(i) / mm.entry.width})`;
+  }
+  return true;
+}
+/** 편집으로 원래 글이 바뀐 뒤: 같은 구역을 보여 주는 복사본 쪽을 새로 복사 (넘친 줄이 다음 쪽에 바로 보이게) */
+function vRefreshClones() {
+  if (!vertical || !vhost) return;
+  for (const [i, m] of vMounted) {
+    if (m.original || !vOwner.has(m.entry.source)) continue;
+    const fresh = m.entry.source.cloneNode(true);
+    for (const el of fresh.querySelectorAll('.eri-docx-caret, .eri-caret-handle, .eri-sel-handle, .eri-docx-sel-rect')) el.remove();
+    preparePageSource(fresh, m.entry, i);
+    fresh.style.transform = `scale(${vFullWidth(i) / m.entry.width})`;
+    m.source.replaceWith(fresh); m.source = fresh;
+    void vLoadImages(m.frame, vSerial);
+  }
 }
 async function vLoadImages(frame, serial) {
   const imgs = [...frame.querySelectorAll('img[data-resource]')].filter(img => {
@@ -1409,7 +1496,7 @@ function visibleTextBoxes() {
     // 스크롤 보기: 낱말이 몇째 쪽 어디에 있는지도 알려 줌 (앱이 고른 글 바탕을 쪽에 붙여 그림)
     const slot = inV ? pg.closest('.vslot') : null;
     if (inV && !slot) continue;
-    const sq = slot ? slot.getBoundingClientRect() : null;
+    const sq = slot ? (slot.querySelector(':scope > .vfull') || slot).getBoundingClientRect() : null;
     // 본문 상자 밖(다른 쪽 몫으로 옆에 밀려나 가려진 글)은 고를 수 없게
     const clipEl = pg.querySelector('.freader-content');
     const cq = clipEl ? clipEl.getBoundingClientRect() : null;
@@ -1582,6 +1669,15 @@ function docxApplySnapshot(snap) {
   const srcs = docxUniqueSources();
   for (let i = 0; i < Math.min(srcs.length, snap.length); i++) {
     srcs[i].innerHTML = snap[i];
+  }
+  // 되살린 글 덩어리에는 찍어 둘 때의 쪽 자리(가로 위치)가 들어 있으므로 지금 보이는 쪽 자리로 맞춤
+  if (vertical && vhost) {
+    for (const [i, m] of vMounted) if (m.original) preparePageSource(m.source, m.entry, i);
+  } else {
+    for (const frame of host.querySelectorAll(':scope > .page')) {
+      const idx = Number(frame.dataset.page), src = frame.firstElementChild;
+      if (pages[idx] && src && pages[idx].source === src) preparePageSource(src, pages[idx], idx);
+    }
   }
 }
 
@@ -1930,9 +2026,10 @@ function docxMountCaretHandle(pageEl, leftPct, topPct) {
   const cx = Math.max(1, Math.min(99, Number(leftPct) || 0));
   const cy = Math.max(1, Math.min(99, Number(topPct) || 0));
   if (vertical && vinner) {
-    const slot = pageEl.closest?.('.vslot') || pageEl;
-    const lx = slot.offsetLeft + (cx / 100) * slot.offsetWidth;
-    const ly = slot.offsetTop + (cy / 100) * slot.offsetHeight;
+    const full = pageEl.closest?.('.vfull'), slot = pageEl.closest?.('.vslot') || pageEl;
+    const box = full || slot, ox = full ? slot.offsetLeft + full.offsetLeft : slot.offsetLeft, oy = full ? slot.offsetTop + full.offsetTop : slot.offsetTop;
+    const lx = ox + (cx / 100) * box.offsetWidth;
+    const ly = oy + (cy / 100) * box.offsetHeight;
     docxCaretHandleEl.style.left = `${lx}px`;
     docxCaretHandleEl.style.top = `${ly}px`;
     if (docxCaretHandleEl.parentNode !== vinner) vinner.appendChild(docxCaretHandleEl);
@@ -2346,9 +2443,10 @@ function docxMountSelHandle(pageEl, side, relX, relY) {
   const cx = Math.max(1, Math.min(99, Number(relX) || 0));
   const cy = Math.max(1, Math.min(99, Number(relY) || 0));
   if (vertical && vinner) {
-    const slot = pageEl.closest?.('.vslot') || pageEl;
-    const lx = slot.offsetLeft + (cx / 100) * slot.offsetWidth;
-    const ly = slot.offsetTop + (cy / 100) * slot.offsetHeight;
+    const full = pageEl.closest?.('.vfull'), slot = pageEl.closest?.('.vslot') || pageEl;
+    const box = full || slot, ox = full ? slot.offsetLeft + full.offsetLeft : slot.offsetLeft, oy = full ? slot.offsetTop + full.offsetTop : slot.offsetTop;
+    const lx = ox + (cx / 100) * box.offsetWidth;
+    const ly = oy + (cy / 100) * box.offsetHeight;
     h.style.left = `${lx}px`;
     h.style.top = `${ly}px`;
     if (h.parentNode !== vinner) vinner.appendChild(h);
@@ -2557,7 +2655,61 @@ function docxEmitEditState(typed = false) {
   });
 }
 
+let docxReflowTimer = 0;
+/** 고친 뒤 글이 늘거나 줄면 쪽 수와 쪽마다 보이는 자리를 다시 셈 (넘친 줄이 다음 쪽에 실제로 이어지게) */
+function docxScheduleReflow() {
+  if (docxReflowTimer) clearTimeout(docxReflowTimer);
+  docxReflowTimer = setTimeout(() => {
+    docxReflowTimer = 0;
+    if (disposed) return;
+    docxRecountPages();
+    vRefreshClones();
+  }, 250);
+}
+
+function docxRecountPages() {
+  if (!pages.length) return;
+  const sources = [];
+  for (const e of pages) if (!sources.includes(e.source)) sources.push(e.source);
+  const result = [];
+  for (const source of sources) {
+    const first = pages.find(e => e.source === source);
+    const inner = source.querySelector('.freader-columns');
+    if (!inner || !first) { for (const e of pages) if (e.source === source) result.push(e); continue; }
+    const columnGap = first.columnStride - first.bodyWidth;
+    const columns = Math.max(1, Math.ceil((inner.scrollWidth + columnGap - 1) / first.columnStride));
+    for (let column = 0; column < columns; column++) {
+      const old = pages.find(e => e.source === source && e.column === column);
+      result.push({ ...first, column, sectionPageCount: columns, images: old ? old.images : [] });
+    }
+  }
+  if (result.length === pages.length) { pages = result; return; }
+  const curEntry = pages[page];
+  pages = result; outlineBlockCache = null;
+  if (curEntry) {
+    const at = pages.findIndex(e => e.source === curEntry.source && e.column === curEntry.column);
+    if (at >= 0) page = at;
+  }
+  page = clampPage(page);
+  if (vertical && vhost) {
+    vLayout(true);
+    if (docxEditMode && docxEditPage != null) {
+      vAdoptOriginal(Math.min(docxEditPage, pages.length - 1));
+      if (docxSelRange && !docxSelRange.collapsed) docxRenderSelection();
+      else if (docxCursor) docxRenderCaret();
+    }
+  } else {
+    // 지금 보이는 쪽 번호표만 맞춤 (원래 글 덩어리는 그대로 두어 커서가 끊기지 않게)
+    for (const frame of host.querySelectorAll(':scope > .page')) {
+      const idx = Number(frame.dataset.page);
+      if (Number.isFinite(idx)) frame.setAttribute('aria-label', `${idx + 1} / ${pages.length}`);
+    }
+  }
+  reportLocation();
+}
+
 function docxPushUndo() {
+  docxScheduleReflow();
   const cur = docxSnapshotPages();
   if (docxLastSnap) {
     docxUndoStack.push(docxLastSnap);
@@ -2602,6 +2754,7 @@ function docxOnTouchStart(e) {
   const t = e.touches[0];
   docxSelDownX = t.clientX;
   docxSelDownY = t.clientY;
+  docxAdoptAt(t.clientX, t.clientY);
   if (docxSelTimer) { clearTimeout(docxSelTimer); docxSelTimer = 0; }
   // 한 단어를 길게 누르면 단어 전체 하이라이트 + 양쪽 손잡이 표시 (영역 확장은 손잡이로만)
   docxSelTimer = setTimeout(() => {
@@ -2640,12 +2793,31 @@ function docxOnTouchEnd() {
   }
 }
 
+let docxEditPage = null; // 스크롤 보기에서 지금 고치고 있는 쪽 (원래 글 덩어리를 쓰는 쪽)
+/** 스크롤 보기: 손가락이 닿은 쪽이 복사본이면 원래 글 덩어리로 바꿔 둠 (고친 글이 저장되게) */
+function docxAdoptAt(x, y) {
+  if (!vertical || !vhost) return;
+  const slot = document.elementFromPoint(x, y)?.closest?.('.vslot');
+  if (!slot) return;
+  const index = Number(slot.dataset.page);
+  if (!Number.isFinite(index)) return;
+  const m = vMounted.get(index);
+  docxEditPage = index;
+  if (!m || m.original) return;
+  // 다른 쪽에 잡혀 있는 커서·선택은 원래 덩어리를 따라 옮겨 가므로 비움
+  docxSelRange = null;
+  docxClearSelectionOverlays();
+  docxRemoveCaret();
+  vAdoptOriginal(index);
+}
+
 function docxOnClick(e) {
   if (!docxEditMode || disposed) return;
   if (e.target && e.target.closest && e.target.closest('.eri-sel-handle, .eri-caret-handle')) return;
   if (Date.now() - docxSelJustEndedAt < 650) return;
   // 더블탭 기본 선택 완전 차단 + 단일 커서만 깔끔하게 배치 (손잡이 없음)
   try { window.getSelection()?.removeAllRanges(); } catch (_) {}
+  docxAdoptAt(e.clientX, e.clientY);
   const pt = docxCaretPointAt(e.clientX, e.clientY);
   if (!pt) return;
   docxSelRange = null;
@@ -2877,6 +3049,7 @@ function editUndo() {
   if (docxLastSnap) docxRedoStack.push(docxLastSnap);
   docxLastSnap = prev;
   docxApplySnapshot(prev);
+  docxScheduleReflow();
   docxSelRange = null;
   docxCursor = null;
   docxRemoveCaret();
@@ -2892,6 +3065,7 @@ function editRedo() {
   if (docxLastSnap) docxUndoStack.push(docxLastSnap);
   docxLastSnap = next;
   docxApplySnapshot(next);
+  docxScheduleReflow();
   docxSelRange = null;
   docxCursor = null;
   docxRemoveCaret();
@@ -2904,6 +3078,7 @@ function editRedo() {
 function cancelEditSession() {
   if (docxEditOrigHtml.length > 0) {
     docxApplySnapshot(docxEditOrigHtml);
+    docxScheduleReflow();
   }
   docxEditDirty = false;
   setEditMode(false);

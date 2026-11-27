@@ -1323,7 +1323,11 @@ class ContinuousPageList extends StatefulWidget {
     this.gap = 0,
     this.markedPages = const {},
     this.onViewportChanged,
+    this.topLine,
   });
+
+  /// 스크롤 보기 맨 위(쪽이 시작하는 자리)에 긋는 가는 선 (한글·워드 스크롤 보기와 같게)
+  final Color? topLine;
 
   /// 확대·이동으로 보이는 영역이 바뀔 때마다 알림 (PDF 스크롤 확대 선명도 렌더링용)
   final VoidCallback? onViewportChanged;
@@ -1706,8 +1710,11 @@ class _ContinuousPageListState extends State<ContinuousPageList> with SingleTick
           ),
             ),
           );
-          if (bar == null) return list;
-          return Stack(fit: StackFit.expand, children: [list, bar]);
+          final Widget? line = widget.topLine == null
+              ? null
+              : Positioned(left: 0, right: 0, top: 0, height: 1, child: IgnorePointer(child: ColoredBox(color: widget.topLine!)));
+          if (bar == null && line == null) return list;
+          return Stack(fit: StackFit.expand, children: [list, ?line, ?bar]);
         },
       ),
     );

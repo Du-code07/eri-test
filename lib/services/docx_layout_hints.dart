@@ -231,11 +231,94 @@ class DocxLayoutHints {
         final effective = _child(override, 'lvl') ?? base;
         if (effective == null) return {};
         return {
+          'numId': id,
+          'ilvl': int.tryParse(level) ?? 0,
           'props': _merge(_props(_child(base, 'pPr')), _props(_child(effective, 'pPr'))),
           'run': _merge(_props(_child(base, 'rPr')), _props(_child(effective, 'rPr'))),
           'suffix': _val(effective, 'suff') ?? _val(base, 'suff') ?? 'tab',
           'alignment': _val(effective, 'lvlJc') ?? _val(base, 'lvlJc') ?? 'left',
         };
+      }
+      String roman(int n) {
+        const vals = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1];
+        const syms = ['m', 'cm', 'd', 'cd', 'c', 'xc', 'l', 'xl', 'x', 'ix', 'v', 'iv', 'i'];
+        final out = StringBuffer();
+        for (int i = 0; i < vals.length; i++) {
+          while (n >= vals[i]) {
+            out.write(syms[i]);
+            n -= vals[i];
+          }
+        }
+        return out.toString();
+      }
+      // 목록 번호 글자 (변환 엔진이 스타일에 들어 있는 번호 목록은 번호·글머리 기호를 빠뜨리므로 직접 셈)
+      XmlElement? lvlOf(String numId, int ilvl) {
+        final num = numbers[numId];
+        final abstract = abstractNumbers[_val(num, 'abstractNumId')];
+        final l = '$ilvl';
+        final override = num?.findElements('lvlOverride', namespace: _w).where((e) => _attr(e, 'ilvl') == l).firstOrNull;
+        return _child(override, 'lvl') ??
+            abstract?.findElements('lvl', namespace: _w).where((e) => _attr(e, 'ilvl') == l).firstOrNull;
+      }
+      final counters = <String, List<int>>{};
+      String fmtNumber(int n, String fmt) {
+        switch (fmt) {
+          case 'none':
+            return '';
+          case 'decimalZero':
+            return n < 10 ? '0$n' : '$n';
+          case 'upperRoman':
+            return roman(n).toUpperCase();
+          case 'lowerRoman':
+            return roman(n);
+          case 'upperLetter':
+          case 'lowerLetter':
+            final letter = String.fromCharCode(65 + (n - 1) % 26) * ((n - 1) ~/ 26 + 1);
+            return fmt == 'upperLetter' ? letter : letter.toLowerCase();
+          case 'ganada':
+            const g = '가나다라마바사아자차카타파하';
+            return n >= 1 && n <= g.length ? g[n - 1] : '$n';
+          case 'chosung':
+            const c = 'ㄱㄴㄷㄹㅁㅂㅅㅇㅈㅊㅋㅌㅍㅎ';
+            return n >= 1 && n <= c.length ? c[n - 1] : '$n';
+          case 'decimalEnclosedCircle':
+          case 'decimalEnclosedCircleChinese':
+            return n >= 1 && n <= 20 ? String.fromCharCode(0x2460 + n - 1) : '$n';
+          default:
+            return '$n';
+        }
+      }
+      String bulletChar(String t) {
+        // Symbol·Wingdings 글꼴의 사설 영역 글자를 보통 글자로
+        const map = {
+          '\uF0B7': '•', '\uF0A7': '▪', '\uF0D8': '➢', '\uF076': '❖', '\uF0FC': '✓', '\uF0A8': '□',
+          '\uF06E': '■', '\uF0E8': '➔', '\uF0D7': '▸', '\uF0B2': '◇', '\uF075': '◆', '\uF06C': '●',
+        };
+        return t.split('').map((ch) => map[ch] ?? ch).join();
+      }
+      String? listMarker(Map<String, Object> list) {
+        final numId = list['numId']?.toString();
+        final ilvl = list['ilvl'] as int? ?? 0;
+        if (numId == null) return null;
+        final lvl = lvlOf(numId, ilvl);
+        if (lvl == null) return null;
+        final key = _val(numbers[numId], 'abstractNumId') ?? numId;
+        final c = counters.putIfAbsent(key, () => List<int>.filled(9, 0));
+        if (ilvl < 0 || ilvl > 8) return null;
+        int startOf(int level) => int.tryParse(_val(lvlOf(numId, level), 'start') ?? '') ?? 1;
+        c[ilvl] = c[ilvl] == 0 ? startOf(ilvl) : c[ilvl] + 1;
+        for (int k = ilvl + 1; k < 9; k++) {
+          c[k] = 0;
+        }
+        final fmt = _val(lvl, 'numFmt') ?? 'decimal';
+        final text = _val(lvl, 'lvlText') ?? '';
+        if (fmt == 'bullet') return bulletChar(text);
+        return text.replaceAllMapped(RegExp(r'%([1-9])'), (m) {
+          final k = int.parse(m.group(1)!) - 1;
+          if (k > ilvl) return '';
+          final n = c[k] == 0 ? startOf(k) : c[k];
+          return fmtNumber(n, _val(lvlOf(numId, k), 'numFmt') ?? 'decimal');
+        });
       }
       final styleMap = <String, XmlElement>{};
       String? normal;
@@ -317,18 +400,6 @@ class DocxLayoutHints {
         }
       }
       var footnoteNumber = 0, endnoteNumber = 0;
-      String roman(int n) {
-        const vals = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1];
-        const syms = ['m', 'cm', 'd', 'cd', 'c', 'xc', 'l', 'xl', 'x', 'ix', 'v', 'iv', 'i'];
-        final out = StringBuffer();
-        for (int i = 0; i < vals.length; i++) {
-          while (n >= vals[i]) {
-            out.write(syms[i]);
-            n -= vals[i];
-          }
-        }
-        return out.toString();
-      }
       final body = doc.findAllElements('body', namespace: _w).first;
       final paragraphs = <Map<String, Object>>[];
       final indices = <XmlElement, int>{};
@@ -486,7 +557,7 @@ class DocxLayoutHints {
           'index': index,
           'text': text.toString(),
           'props': props,
-          if (list.isNotEmpty) 'numbering': list,
+          if (list.isNotEmpty) 'numbering': {...list, 'marker': ?listMarker(list)},
           'mark': _merge(baseRun, _props(_child(pp, 'rPr'))),
           'runs': runs,
           'breaks': breaks,
@@ -535,17 +606,113 @@ class DocxLayoutHints {
           'rows': rows,
         });
       }
+      // 머리말·꼬리말 (변환 엔진이 그리지 않으므로 글자·정렬·쪽 번호 칸만 읽어 넘김)
+      final relTargets = <String, String>{};
+      for (final rel in part('word/_rels/document.xml.rels')?.rootElement.childElements ?? <XmlElement>[]) {
+        final id = rel.getAttribute('Id'), target = rel.getAttribute('Target');
+        if (id == null || target == null || rel.getAttribute('TargetMode') == 'External') continue;
+        final resolved = Uri.parse('word/document.xml').resolve(target);
+        if (resolved.hasScheme || resolved.hasAuthority) continue;
+        relTargets[id] = Uri.decodeComponent(resolved.path).replaceFirst(RegExp(r'^/'), '');
+      }
+      final hfCache = <String, List<Map<String, Object>>>{};
+      List<Map<String, Object>> headerFooter(String rid) {
+        final name = relTargets[rid];
+        if (name == null) return const [];
+        return hfCache.putIfAbsent(name, () {
+          final x = part(name);
+          if (x == null) return const [];
+          final out = <Map<String, Object>>[];
+          for (final hp in x.rootElement.findAllElements('p', namespace: _w)) {
+            final pp = _child(hp, 'pPr');
+            final sid = _val(pp, 'pStyle');
+            final pprops = _merge(_merge(dp, style(sid, 'pPr')), _props(pp));
+            final baseRun = _merge(dr, style(sid, 'rPr'));
+            final runs = <Map<String, Object>>[];
+            var inField = 0; // 0 밖, 1 명령, 2 결과
+            String instr = '';
+            void addText(String t, XmlElement? rp) {
+              if (t.isEmpty) return;
+              runs.add({'text': t, 'props': _merge(_merge(baseRun, style(_val(rp, 'rStyle'), 'rPr')), _props(rp))});
+            }
+            void addField(String code, XmlElement? rp) {
+              final c = code.trim().split(RegExp(r'\s+')).firstOrNull?.toUpperCase() ?? '';
+              final field = c == 'PAGE' ? 'PAGE' : (c == 'NUMPAGES' || c == 'SECTIONPAGES') ? 'NUMPAGES' : null;
+              if (field == null) return;
+              runs.add({'field': field, 'text': '', 'props': _merge(_merge(baseRun, style(_val(rp, 'rStyle'), 'rPr')), _props(rp))});
+            }
+            void walk(XmlElement e) {
+              for (final c in e.childElements) {
+                if (c.name.namespaceUri != _w) continue;
+                if (c.name.local == 'fldSimple') {
+                  final firstRun = c.findElements('r', namespace: _w).firstOrNull;
+                  final before = runs.length;
+                  addField(_attr(c, 'instr') ?? '', _child(firstRun, 'rPr'));
+                  if (runs.length == before) walk(c); // 쪽 번호가 아닌 필드는 저장된 결과 글자
+                  continue;
+                }
+                if (c.name.local == 'r') {
+                  final rp = _child(c, 'rPr');
+                  for (final n in c.childElements) {
+                    if (n.name.namespaceUri != _w) continue;
+                    switch (n.name.local) {
+                      case 'fldChar':
+                        final type = _attr(n, 'fldCharType');
+                        if (type == 'begin') {
+                          inField = 1;
+                          instr = '';
+                        } else if (type == 'separate') {
+                          final before = runs.length;
+                          addField(instr, rp);
+                          inField = runs.length > before ? 2 : 3; // 3: 쪽 번호가 아닌 필드 → 결과 글자를 그대로 보임
+                        } else if (type == 'end') {
+                          if (inField == 1) addField(instr, rp);
+                          inField = 0;
+                        }
+                      case 'instrText':
+                        if (inField == 1) instr += n.innerText;
+                      case 't':
+                        if (inField == 0 || inField == 3) addText(n.innerText, rp);
+                      case 'tab':
+                        if (inField == 0 || inField == 3) addText('\t', rp);
+                      case 'br':
+                        if (inField == 0 || inField == 3) addText('\n', rp);
+                    }
+                  }
+                  continue;
+                }
+                if (const {'hyperlink', 'ins', 'smartTag', 'sdt', 'sdtContent', 'customXml'}.contains(c.name.local)) walk(c);
+              }
+            }
+            walk(hp);
+            out.add({'props': pprops, 'mark': _merge(baseRun, _props(_child(pp, 'rPr'))), 'runs': runs});
+          }
+          // 내용이 전혀 없는 머리말은 넘기지 않음
+          return out.any((p) => (p['runs'] as List).isNotEmpty) ? out : const [];
+        });
+      }
       final sections = <Map<String, Object>>[];
       for (final s in body.findAllElements('sectPr', namespace: _w)) {
         final p = s.ancestors
             .whereType<XmlElement>()
             .where((e) => e.name.local == 'p' && e.name.namespaceUri == _w)
             .firstOrNull;
+        final hf = <String, Object>{};
+        for (final kind in ['header', 'footer']) {
+          for (final ref in s.findElements('${kind}Reference', namespace: _w)) {
+            final rid = ref.getAttribute('id', namespace: _r);
+            if (rid == null) continue;
+            final content = headerFooter(rid);
+            if (content.isNotEmpty) hf['$kind:${_attr(ref, 'type') ?? 'default'}'] = content;
+          }
+        }
         sections.add({
           'end': p == null
               ? paragraphs.length - 1
               : indices[p] ?? paragraphs.length - 1,
           'props': _props(s),
+          if (hf.isNotEmpty) 'headerFooter': hf,
+          if (_child(s, 'titlePg') != null && _attr(_child(s, 'titlePg'), 'val') != '0' && _attr(_child(s, 'titlePg'), 'val') != 'false') 'titlePg': true,
         });
       }
       // 문서 자체 쪽 배경색 (Word '페이지 색'). 앱 테마보다 먼저 씀

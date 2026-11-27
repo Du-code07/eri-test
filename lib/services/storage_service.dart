@@ -662,6 +662,10 @@ class StorageService {
     await prefs.setBool('doc_comfort_theme', on);
   }
 
+  /// 한글·워드 여백 줄이기 (쪽 여백을 잘라 내고 본문을 크게). 기본은 끔
+  static Future<bool> getTrimMargins() async => (await SharedPreferences.getInstance()).getBool('doc_trim_margins_v198') ?? false;
+  static Future<void> setTrimMargins(bool on) async => (await SharedPreferences.getInstance()).setBool('doc_trim_margins_v198', on);
+
   static Future<bool> getDocComfort() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool('doc_comfort_theme') ?? false;

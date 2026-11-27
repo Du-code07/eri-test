@@ -329,19 +329,30 @@ extension on _TxtPagedViewerState {
       // 쪽 뒤 바탕은 뷰어 배경 설정(라이트=흰색, 다크=검은색), 쪽 사이 간격 줄은 밝은 회색 고정
       background: viewerThemeBackdrop(widget.theme),
       gapColor: kViewerGapColor,
+      // 한글·워드 스크롤 보기처럼 맨 위에 선 (쪽이 이 선에서 시작)
+      topLine: const Color(0xFFC4C4CA),
       // 두 손가락으로 벌려 확대
       zoomable: true,
       onPageChanged: (p) {
         _page = p;
         widget.onLocation(p, doc.pageCount, 'txt:$p', doc.pageCount <= 1 ? 0 : p / (doc.pageCount - 1));
       },
-      pageBuilder: (ctx, i) => ColoredBox(
-        color: background,
-        child: FutureBuilder<String>(
-          future: _scrollText(i),
-          builder: (ctx, snap) => snap.hasData ? paper(snap.data!, i) : const SizedBox.expand(),
-        ),
-      ),
+      pageBuilder: (ctx, i) {
+        final Widget page = ColoredBox(
+          color: background,
+          child: FutureBuilder<String>(
+            future: _scrollText(i),
+            builder: (ctx, snap) => snap.hasData ? paper(snap.data!, i) : const SizedBox.expand(),
+          ),
+        );
+        // 밝은 종이: 한글·워드·PDF처럼 쪽마다 옅은 회색 테두리
+        if (background.computeLuminance() < 0.5) return page;
+        return DecoratedBox(
+          position: DecorationPosition.foreground,
+          decoration: const BoxDecoration(border: Border.fromBorderSide(BorderSide(color: Color(0xFFC4C4CA), width: 1))),
+          child: page,
+        );
+      },
     );
   }
 

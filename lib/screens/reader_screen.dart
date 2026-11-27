@@ -202,6 +202,8 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   bool get _docComfortAllowed => !_isPresentation && !_isSpreadsheet;
   // 페이지 표시: 'one' / 'two' / 'auto'(화면이 넓으면 두 페이지)
   String _pageDisplay = 'one';
+  // 한글·워드 여백 줄이기 (도구 모음에서 켜고 끔, 기본 끔)
+  bool _trimMargins = false;
   // 사용자가 고른 EPUB 본문 글꼴 (없으면 책의 글꼴)
   UserFontEntry? _epubFont;
   // 페이지 모드: 탭(누른 자리로 넘김) / 스크롤(세로로 이어 보기) / 슬라이드(= _useSwipeTurn)
@@ -620,6 +622,27 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   }
 
   /// 페이지 표시 고르기 (한 페이지 / 두 페이지 / 자동)
+  /// 여백 줄이기 켜고 끄기 (한글·워드, 쪽 넘김·스크롤 보기 모두). 메모는 쪽 기준이라 비율에 맞춰 따라감
+  Future<void> _toggleTrimMargins() async {
+    HapticFeedback.selectionClick();
+    final bool on = !_trimMargins;
+    _snapCaptureSerial++;
+    _snapHide();
+    _dropIdleShot();
+    _dropBackShots();
+    setState(() => _trimMargins = on);
+    await StorageService.setTrimMargins(on);
+    // 쪽 자리가 바뀌므로 메모를 붙일 쪽 자리를 다시 받음
+    await Future<void>.delayed(const Duration(milliseconds: 160));
+    if (!mounted) return;
+    if (_docVertical) {
+      unawaited(_pushScrollMemos());
+    } else {
+      await _refreshPageFrames();
+    }
+    if (mounted) setState(() {});
+  }
+
   Future<void> _pickPageDisplay() async {
     await showPageDisplayDialog(
       context,
@@ -722,6 +745,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     // 페이지 기억하기를 끄면 처음부터
     final savedProg = StorageService.rememberPage ? await StorageService.getProgress(widget.filePath) : 0.0;
     final pageDisplay = await StorageService.getPageDisplay();
+    final trimMargins = await StorageService.getTrimMargins();
     UserFontEntry? epubFont;
     try {
       epubFont = await UserFonts.epubFont();
@@ -760,6 +784,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       _memoBase = initLocKey;
       _bookmarks = initBookmarks;
       _pageDisplay = pageDisplay;
+      _trimMargins = trimMargins;
       _epubFont = epubFont;
       _pageModeScroll = pageModeScroll && !_isSpreadsheet && !_isPresentation; // 엑셀은 뷰어 설정 없이 끌어서 이동, PPT는 스크롤 없음
       _storedPageModeScroll = pageModeScroll;
@@ -1263,6 +1288,8 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           theme: _epubBgTheme,
           spread: _spreadFor(isLandscape),
           rtl: _isMangaRtlMode,
+          // 여백 줄이기: 끄면 쪽 넘김 보기도 스크롤 보기처럼 원본 비율 그대로
+          trimMargins: _trimMargins,
           // 한글·워드 스크롤 보기: 쪽을 세로로 늘어놓음 (내보내는 동안은 쪽 넘김 화면으로)
           vertical: _docVertical,
           onScrollMetrics: (top, height, client) {
@@ -1415,7 +1442,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       height: box.height.round(),
       spread: _snapSpread,
       rtl: _isMangaRtlMode,
-      theme: _epubBgTheme,
+      theme: _trimMargins ? '${_epubBgTheme}_trim' : _epubBgTheme,
     );
     return File('${dir.path}/$name');
   }
@@ -1617,14 +1644,21 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       for (final e in f.entries)
         e.key: Rect.fromLTWH(e.value.left * z.width, e.value.top * z.height, e.value.width * z.width, e.value.height * z.height).shift(shift),
     };
+    _scrollSlotViews = {
+      for (final e in _hwpController.visibleSlotViews.entries)
+        e.key: Rect.fromLTWH(e.value.left * z.width, e.value.top * z.height, e.value.width * z.width, e.value.height * z.height).shift(shift),
+    };
   }
+
+  // 쪽마다 화면에 보이는 자리 (여백 줄이기로 가린 여백은 빠짐) — 획이 어느 쪽에서 시작했는지 고를 때 씀
+  Map<int, Rect> _scrollSlotViews = {};
 
   /// 획이 시작한 쪽 (그 쪽 안이 아니면 가장 가까운 쪽)
   MapEntry<int, Rect>? _scrollSlotAt(Offset p) {
     MapEntry<int, Rect>? best;
     double bestD = double.infinity;
     for (final e in _scrollSlots.entries) {
-      final r = e.value;
+      final r = _scrollSlotViews[e.key] ?? e.value;
       final double dx = p.dx < r.left ? r.left - p.dx : (p.dx > r.right ? p.dx - r.right : 0.0);
       final double dy = p.dy < r.top ? r.top - p.dy : (p.dy > r.bottom ? p.dy - r.bottom : 0.0);
       final double d = dx * dx + dy * dy;
@@ -4541,6 +4575,15 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
         onTap: _pickPageDisplay,
         closeAfterTap: true,
       ),
+      // 한글·워드: 여백 줄이기 (켜면 시그니처 색)
+      if (_isWordOrHwp)
+        QuickToolItem(
+          id: 'trim',
+          icon: Icon(Icons.fit_screen_rounded, color: _trimMargins ? AppColors.signature : Colors.white, size: 19),
+          tooltip: _tr('여백 줄이기', 'Trim Margins', '缩小页边距', '余白を減らす'),
+          onTap: _toggleTrimMargins,
+          closeAfterTap: false,
+        ),
       // 페이지 모드 (탭 / 슬라이드 / 스크롤): 지금 모드 아이콘
       QuickToolItem(
         id: 'mode',
@@ -5336,7 +5379,8 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                     : EdgeInsets.only(
                         // EPUB·TXT: 글이 상단바에 가리지 않도록 상단바 높이보다 살짝 아래에서 시작
                         // 쪽이 있는 문서(워드·한글·PPT): 쪽 위아래 빈 곳이 같도록 위 여백을 아래와 같게
-                        top: (_isEpub || _isTxt)
+                        // TXT 스크롤 보기는 한글·워드 스크롤 보기처럼 위를 띄우고 선에서 쪽이 시작
+                        top: (_isEpub || (_isTxt && !_pageModeScroll))
                             ? _readerTextTop
                             : (_isSpreadsheet ? 12.0 : (bottomPadding > 0 ? bottomPadding : 8.0) + 20.0),
                         bottom: (bottomPadding > 0 ? bottomPadding : 8.0) + 20.0,

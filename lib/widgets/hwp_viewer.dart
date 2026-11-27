@@ -56,11 +56,19 @@ class HwpReaderController {
     final r = await _query?.call('visibleSlots', []);
     if (r is! List) return const {};
     double v(Object? x) => (x as num?)?.toDouble() ?? 0;
+    // 여백 줄이기: 쪽 전체 자리(메모 좌표 기준)와 화면에 보이는 자리(가린 여백 뺀 곳)가 다름
+    visibleSlotViews = {
+      for (final f in r)
+        if (f is Map && f['vwidth'] != null) (f['page'] as num).toInt(): Rect.fromLTWH(v(f['vleft']), v(f['vtop']), v(f['vwidth']), v(f['vheight'])),
+    };
     return {
       for (final f in r)
         if (f is Map) (f['page'] as num).toInt(): Rect.fromLTWH(v(f['left']), v(f['top']), v(f['width']), v(f['height'])),
     };
   }
+
+  /// 마지막으로 받은 쪽마다 화면에 보이는 자리 (화면 크기 대비 0~1)
+  Map<int, Rect> visibleSlotViews = const {};
 
   /// 한글·워드 스크롤 보기: 화면에 가장 많이 보이는 쪽 (모르면 null)
   Future<int?> mostVisiblePage() async {

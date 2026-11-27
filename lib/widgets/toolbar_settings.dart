@@ -28,7 +28,7 @@ class ToolbarLayout {
   static const String _key = 'toolbar_layout_v1';
 
   static const List<String> defaultTop = ['find', 'slideshow', 'theme', 'toc'];
-  static const List<String> defaultBar = ['prevChapter', 'nextChapter', 'prev', 'next', 'rotate', 'display', 'mode', 'direction', 'fontsize', 'memo', 'edit', 'bookmark'];
+  static const List<String> defaultBar = ['prevChapter', 'nextChapter', 'prev', 'next', 'rotate', 'display', 'trim', 'mode', 'direction', 'fontsize', 'memo', 'edit', 'bookmark'];
 
   /// 지금 쓰는 배치 (뷰어들이 함께 보고, 바뀌면 다시 그림)
   static final ValueNotifier<ToolbarLayout> current = ValueNotifier<ToolbarLayout>(ToolbarLayout.defaults());
@@ -95,6 +95,7 @@ Widget toolbarCatalogIcon(String id, Color color, {double size = 20}) => switch 
       'next' => Icon(Icons.skip_next_rounded, color: color, size: size + 1),
       'rotate' => rotationGlyph('auto', size: size, color: color),
       'display' => pageDisplayGlyph('auto', size: size, color: color),
+      'trim' => Icon(Icons.fit_screen_rounded, color: color, size: size),
       'mode' => PageModeIcon(mode: 'tap', size: size, color: color),
       'direction' => Icon(Icons.swap_horiz_rounded, color: color, size: size + 1),
       'fontsize' => Icon(Icons.format_size_rounded, color: color, size: size),
@@ -115,6 +116,7 @@ String toolbarCatalogLabel(String id, String Function(String ko, String en, Stri
       'next' => tr('다음 파일로 이동', 'Next File', '下一个文件', '次のファイル'),
       'rotate' => tr('화면 회전', 'Rotate Screen', '旋转屏幕', '画面回転'),
       'display' => tr('페이지 표시', 'Page Display', '页面显示', 'ページ表示'),
+      'trim' => tr('여백 줄이기', 'Trim Margins', '缩小页边距', '余白を減らす'),
       'mode' => tr('페이지 이동', 'Page Turning', '翻页', 'ページ移動'),
       'direction' => tr('읽기 방향', 'Reading Direction', '阅读方向', '読む方向'),
       'fontsize' => tr('글자 크기', 'Font Size', '字体大小', '文字サイズ'),

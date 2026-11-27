@@ -1,7 +1,7 @@
 name: my_ebook_reader
 description: Fast, lightweight Android eBook, PDF, Word, PowerPoint, Excel, HWP, TXT, and Comic Reader.
 publish_to: 'none'
-version: 1.0.4+404
+version: 1.0.5+405
 
 environment:
   sdk: '>=3.8.0 <4.0.0'

@@ -167,7 +167,7 @@ function installFontMeasurement() {
 }
 let docReady = false;
 function configure(next = {}) {
-  const previousSpread = options.spread;
+  const previousSpread = options.spread, previousTrim = options.trimMargins;
   options = { ...options, ...next };
   document.body.dataset.theme = ['white', 'sepia', 'dark'].includes(options.theme) ? options.theme : 'white';
   // FReader: 쪽 뒤 바탕 = 앱 테마 색 (흰색/검은색). 쪽 사이 간격 줄은 고정 색
@@ -177,7 +177,10 @@ function configure(next = {}) {
   // FReader: 문서를 다 연 뒤에만 스크롤 보기를 켜고 끔 (여는 도중이면 열 때 한 번에 맞춤)
   if (!docReady) return;
   if (doc && 'vertical' in next && !!next.vertical !== vertical) return setVertical(!!next.vertical);
-  if (vertical) return;
+  if (vertical) {
+    if (previousTrim !== options.trimMargins && vhost) { vLayout(true); vReportMetrics(); }
+    return;
+  }
   if (doc && previousSpread !== options.spread) return render();
   fitPages();
 }
@@ -209,6 +212,7 @@ async function openDocument(password = null) {
     doc = candidate; candidate = null;
     count = doc.pageCount();
     if (count < 1) throw new Error('표시할 페이지가 없는 문서예요');
+    fixOverflowedCells();
     const saved = /^hwp:(\d+)$/.exec(options.position || '');
     page = clampPage(saved ? Number(saved[1]) : Math.round(Number(options.progress || 0) * (count - 1)));
     incoming.fill(0); incoming = null; received = 0;
@@ -229,6 +233,64 @@ async function openDocument(password = null) {
     if (/DRM/.test(message)) return fail('DRM으로 보호된 문서는 이 뷰어에서 열 수 없어요');
     return fail(error);
   } finally { password = null; }
+}
+/**
+ * 표 칸 글자가 칸 밖으로 넘쳐 잘려 보이는 문제 바로잡기.
+ * 한글은 칸 높이를 '최소 높이'로 보고 글이 길면 행을 늘리는데, 줄 배치 정보가 없는 파일(다른 프로그램으로 만든 HWPX 등)은
+ * 엔진이 행 높이를 글보다 낮게 잡아 아래 줄이 잘린다 → 넘친 칸만 모자란 만큼 늘림 (넘친 칸이 없으면 아무것도 하지 않음)
+ */
+function fixOverflowedCells(budgetMs = 500) {
+  if (!doc || typeof doc.getPageControlLayout !== 'function' || typeof doc.resizeTableCells !== 'function') return;
+  const started = performance.now();
+  const HU_PER_PX = 75; // 7200 HWPUNIT = 1인치 = 96px
+  const fixes = new Map(); // 표 열쇠 → { sec, para, ctrl, cells: Map(칸 번호 → 모자란 높이 px) }
+  for (let p = 0; p < count; p++) {
+    if (performance.now() - started > budgetMs) break;
+    let controls, runs;
+    try { controls = JSON.parse(doc.getPageControlLayout(p)).controls || []; } catch (_) { continue; }
+    const tables = controls.filter(c => c.type === 'table' && Array.isArray(c.cells));
+    if (!tables.length) continue;
+    try { runs = JSON.parse(doc.getPageTextLayout(p)).runs || []; } catch (_) { continue; }
+    // 칸마다 글자가 차지한 맨 위·맨 아래
+    const ink = new Map();
+    for (const r of runs) {
+      if (r == null || r.cellIdx == null || !Array.isArray(r.cellPath) || r.cellPath.length !== 1) continue;
+      const k = `${r.secIdx}:${r.parentParaIdx}:${r.controlIdx}:${r.cellIdx}`;
+      const v = ink.get(k);
+      if (v) { v.top = Math.min(v.top, r.y); v.bottom = Math.max(v.bottom, r.y + r.h); }
+      else ink.set(k, { top: r.y, bottom: r.y + r.h });
+    }
+    for (const t of tables) {
+      for (const cell of t.cells) {
+        const v = ink.get(`${t.secIdx}:${t.paraIdx}:${t.controlIdx}:${cell.cellIdx}`);
+        if (!v || (v.bottom <= cell.y + cell.h + 0.5 && v.top >= cell.y - 0.5)) continue;
+        const key = `${t.secIdx}:${t.paraIdx}:${t.controlIdx}`;
+        let f = fixes.get(key);
+        if (!f) fixes.set(key, f = { sec: t.secIdx, para: t.paraIdx, ctrl: t.controlIdx, cells: new Map() });
+        // 칸 안 그림·글상자 글자는 칸 밖에 놓일 수 있으므로, 칸 본문 글의 끝 자리가 정말 넘쳤는지 엔진에 다시 확인
+        let deficit = 0;
+        try {
+          const sec = t.secIdx, para = t.paraIdx, ctrl = t.controlIdx, ci = cell.cellIdx;
+          const n = doc.getCellParagraphCount(sec, para, ctrl, ci);
+          if (!(n > 0)) continue;
+          const last = JSON.parse(doc.getCursorRectInCell(sec, para, ctrl, ci, n - 1, doc.getCellParagraphLength(sec, para, ctrl, ci, n - 1)));
+          if (!last || !last.cellOverflowed || !last.cellBounds) continue;
+          const first = JSON.parse(doc.getCursorRectInCell(sec, para, ctrl, ci, 0, 0));
+          const props = JSON.parse(doc.getCellProperties(sec, para, ctrl, ci));
+          const pad = ((props.paddingTop || 0) + (props.paddingBottom || 0)) / HU_PER_PX;
+          deficit = (last.y + last.height) - Math.min(first.y, last.y) + pad - last.cellBounds.h;
+        } catch (_) { continue; }
+        if (deficit > 0.5) f.cells.set(cell.cellIdx, Math.max(f.cells.get(cell.cellIdx) || 0, deficit));
+      }
+    }
+  }
+  let changed = false;
+  for (const f of fixes.values()) {
+    if (!f.cells.size) continue;
+    const updates = [...f.cells].map(([cellIdx, px]) => ({ cellIdx, heightDelta: Math.ceil(px * HU_PER_PX) + 20 }));
+    try { doc.resizeTableCells(f.sec, f.para, f.ctrl, JSON.stringify(updates)); changed = true; } catch (_) {}
+  }
+  if (changed) count = Math.max(1, doc.pageCount());
 }
 function clampPage(value) { return Math.max(0, Math.min(count - 1, Number.isFinite(value) ? Math.trunc(value) : 0)); }
 function reportLocation() { emit('location', { page, pageCount: count, position: `hwp:${page}`, progress: count > 1 ? page / (count - 1) : 1 }); }
@@ -608,7 +670,7 @@ function setScrollMarks(pages) { vMarks = new Set((pages || []).map(Number)); vA
 let vMemos = {}; // 쪽 번호 → [{ x: [..], y: [..], c: ARGB, w: 쪽 너비 대비 굵기 }]
 function vArgb(c) { c = Number(c) >>> 0; return `rgba(${(c >>> 16) & 255},${(c >>> 8) & 255},${c & 255},${((c >>> 24) & 255) / 255})`; }
 function vDrawMemo(i) {
-  const slot = vSlots[i]; if (!slot) return;
+  const slot = vFull(i); if (!slot) return;
   let svg = slot.querySelector(':scope > svg.vmemo');
   const list = vMemos[i];
   if (!list || !list.length) { svg?.remove(); return; }
@@ -721,9 +783,11 @@ function vVisibleSlots() {
   const W = window.innerWidth || 1, H = window.innerHeight || 1, st = vhost.scrollTop, VH = vhost.clientHeight || H;
   const out = [];
   for (let i = Math.max(0, vIndexAt(st) - 1); i < vSlots.length && vTops[i] < st + VH; i++) {
-    const q = vSlots[i].getBoundingClientRect();
-    if (q.bottom < 0 || q.top > H) continue;
-    out.push({ page: i, left: q.left / W, top: q.top / H, width: q.width / W, height: q.height / H });
+    const v = vSlots[i].getBoundingClientRect();
+    if (v.bottom < 0 || v.top > H) continue;
+    const q = vFull(i).getBoundingClientRect(); // 쪽 전체(여백 줄이기로 가린 여백까지) — 메모는 늘 쪽 전체 기준
+    out.push({ page: i, left: q.left / W, top: q.top / H, width: q.width / W, height: q.height / H,
+      vleft: v.left / W, vtop: v.top / H, vwidth: v.width / W, vheight: v.height / H });
   }
   return out;
 }
@@ -774,8 +838,34 @@ let vRatios = [];
 function vSetRatio(i, r) {
   if (vRatios[i] === r) return;
   vRatios[i] = r;
-  vSlots[i].style.height = `calc(var(--vw) * ${r})`;
+  vSlots[i].style.height = `calc(var(--vw) * ${vVisRatio(i)})`;
   if (vMemos[i]) vDrawMemo(i);
+}
+// ── FReader: 여백 줄이기 (스크롤 보기) — 쪽 칸은 보이는 자리(여백을 잘라 낸 본문)만큼, 쪽 전체(.vfull)는 그 안에서 여백만큼 밀려 놓임
+// 메모·고른 글 바탕·화면 좌표는 모두 쪽 전체 기준이라 여백 줄이기를 켜고 꺼도 자리가 그대로임
+let vTrim = [];
+function vFull(i) { return vSlots[i]?.firstElementChild || vSlots[i] || null; }
+function vTrimFor(i, w, h) {
+  if (options.trimMargins !== true || !(w > 0 && h > 0)) return null;
+  const b = pageBox(i, w, h);
+  if (!b) return null;
+  const x0 = b.x * (1 - TRIM_KEEP_X), x1 = w - Math.max(0, w - b.x - b.w) * (1 - TRIM_KEEP_X);
+  const y0 = Math.max(0, b.y), y1 = Math.min(h, b.y + b.h);
+  if (!(x1 - x0 > 16 && y1 - y0 > 16)) return null;
+  return { x: x0 / w, y: y0 / h, w: (x1 - x0) / w, h: (y1 - y0) / h };
+}
+function vVisRatio(i) { const t = vTrim[i], r = vRatios[i] || 1.414; return t ? r * t.h / t.w : r; }
+function vApplyTrim(sizes) {
+  vTrim = vSlots.map((_, i) => { const [w, h] = sizes[i] || [0, 0]; return vTrimFor(i, w, h); });
+  vSlots.forEach((slot, i) => {
+    let full = slot.firstElementChild;
+    if (!full || !full.classList.contains('vfull')) { full = document.createElement('div'); full.className = 'vfull'; slot.prepend(full); }
+    const t = vTrim[i];
+    Object.assign(full.style, t
+      ? { left: `${-t.x / t.w * 100}%`, top: `${-t.y / t.h * 100}%`, width: `${100 / t.w}%`, height: `${100 / t.h}%` }
+      : { left: '0', top: '0', width: '100%', height: '100%' });
+    if (vRatios[i]) slot.style.height = `calc(var(--vw) * ${vVisRatio(i)})`;
+  });
 }
 /** 지금 배율로 쪽 너비·자리를 다시 셈 (쪽을 다시 그리지 않음) */
 function vSize() {
@@ -784,7 +874,7 @@ function vSize() {
   vhost.style.setProperty('--vml', `${vLeft()}px`);
   vhost.style.overflowX = vZoom > 1.001 ? 'auto' : 'hidden';
   vTops = []; let y = 0;
-  for (let i = 0; i < vRatios.length; i++) { vTops.push(y); y += W * vRatios[i] + V_GAP; }
+  for (let i = 0; i < vRatios.length; i++) { vTops.push(y); y += W * vVisRatio(i) + V_GAP; }
   vTops.push(y);
   // 쪽이 화면보다 짧으면(1쪽뿐인 문서 등) 위에 붙이지 않고 화면 가운데에
   const total = y - V_GAP, viewH = innerHeight || vhost.clientHeight;
@@ -804,7 +894,7 @@ function vApplyCopyMarks() {
   const bySlot = new Map();
   if (vertical) {
     for (const q of copyMarks) {
-      const slot = vSlots[q[0]];
+      const slot = vFull(q[0]);
       if (!slot) continue;
       if (!bySlot.has(slot)) bySlot.set(slot, []);
       bySlot.get(slot).push(q);
@@ -849,9 +939,12 @@ function vLayout(keep) {
       vinner.appendChild(slot); vSlots.push(slot);
     }
   }
+  const sizes = pageSizes();
+  vRatios.length = 0;
+  for (let i = 0; i < count; i++) { const [w, h] = sizes[i] || [0, 0]; vRatios[i] = w > 0 && h > 0 ? h / w : 1.414; }
+  vApplyTrim(sizes);
   vApplyMarks();
   vApplyCopyMarks();
-  const sizes = pageSizes();
   for (let i = 0; i < count; i++) {
     const [w, h] = sizes[i] || [0, 0];
     vSetRatio(i, w > 0 && h > 0 ? h / w : 1.414);
@@ -903,9 +996,9 @@ function vSlotGeom() {
   const W = innerWidth || 1, H = innerHeight || 1, out = [];
   const at = vIndexAt(vhost.scrollTop + (vhost.clientHeight || H) / 2);
   const push = (i) => {
-    const q = vSlots[i].getBoundingClientRect();
+    const q = vFull(i).getBoundingClientRect();
     out.push([i, q.left / W, q.top / H, q.width / W, q.height / H]);
-    return q;
+    return vSlots[i].getBoundingClientRect();
   };
   push(at);
   // 화면 밖으로 한 쪽 더 나갈 때까지 위·아래로 (줄이는 중이면 여러 쪽이 보임)
@@ -927,7 +1020,7 @@ function vMount(index) {
   frame.dataset.width = String(box?.[2] || parseFloat(svg.getAttribute('width')) || 1);
   frame.dataset.height = String(box?.[3] || parseFloat(svg.getAttribute('height')) || 1);
   frame.appendChild(svg);
-  vSlots[index].appendChild(frame);
+  vFull(index).appendChild(frame);
   activeEntries.add(entry);
   vMounted.set(index, { frame, entry });
 }
@@ -1045,7 +1138,7 @@ function visibleTextBoxes() {
     const s = vw > 0 ? r.width / vw : 1;
     // 스크롤 보기: 낱말이 몇째 쪽 어디에 있는지도 알려 줌 (앱이 고른 글 바탕을 쪽에 붙여 그림)
     const slot = vertical ? frame.closest('.vslot') : null;
-    const sq = slot ? slot.getBoundingClientRect() : null;
+    const sq = slot ? (slot.querySelector(':scope > .vfull') || slot).getBoundingClientRect() : null;
     for (const run of pageRuns(index)) {
       if (!run.text || !run.text.trim() || !(run.w > 0 && run.h > 0)) continue;
       const left = r.left + run.x * s, top = r.top + run.y * s, w = run.w * s, h = run.h * s;
@@ -1770,9 +1863,10 @@ function mountCaretHandle(frame, leftPct, topPct) {
   const cx = Math.max(1, Math.min(99, Number(leftPct) || 0));
   const cy = Math.max(1, Math.min(99, Number(topPct) || 0));
   if (vertical && vinner) {
-    const slot = frame.closest?.('.vslot') || frame;
-    const lx = slot.offsetLeft + (cx / 100) * slot.offsetWidth;
-    const ly = slot.offsetTop + (cy / 100) * slot.offsetHeight;
+    const full = frame.closest?.('.vfull'), slot = frame.closest?.('.vslot') || frame;
+    const box = full || slot, ox = full ? slot.offsetLeft + full.offsetLeft : slot.offsetLeft, oy = full ? slot.offsetTop + full.offsetTop : slot.offsetTop;
+    const lx = ox + (cx / 100) * box.offsetWidth;
+    const ly = oy + (cy / 100) * box.offsetHeight;
     caretHandleEl.style.left = `${lx}px`;
     caretHandleEl.style.top = `${ly}px`;
     if (caretHandleEl.parentNode !== vinner) vinner.appendChild(caretHandleEl);
@@ -2271,9 +2365,10 @@ function mountSelHandle(frame, kind, leftPx, topPx) {
   const cx = Math.max(1, Math.min(99, Number(leftPx) || 0));
   const cy = Math.max(1, Math.min(99, Number(topPx) || 0));
   if (vertical && vinner) {
-    const slot = frame.closest?.('.vslot') || frame;
-    const lx = slot.offsetLeft + (cx / 100) * slot.offsetWidth;
-    const ly = slot.offsetTop + (cy / 100) * slot.offsetHeight;
+    const full = frame.closest?.('.vfull'), slot = frame.closest?.('.vslot') || frame;
+    const box = full || slot, ox = full ? slot.offsetLeft + full.offsetLeft : slot.offsetLeft, oy = full ? slot.offsetTop + full.offsetTop : slot.offsetTop;
+    const lx = ox + (cx / 100) * box.offsetWidth;
+    const ly = oy + (cy / 100) * box.offsetHeight;
     h.style.left = `${lx}px`;
     h.style.top = `${ly}px`;
     if (h.parentNode !== vinner) vinner.appendChild(h);

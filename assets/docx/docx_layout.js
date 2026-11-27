@@ -24,6 +24,15 @@ function families(r, theme) {
 function runStyle(span, r, theme, text) {
   const size = r.sz?.val ?? r.szCs?.val;
   if (number(size) > 0) span.style.fontSize = `${number(size) / 2}pt`;
+  // FReader: 위첨자·아래첨자, 글자 올림·내림, 대문자
+  const va = r.vertAlign?.val;
+  if (va === 'superscript' || va === 'subscript') {
+    span.style.verticalAlign = va === 'superscript' ? 'super' : 'sub';
+    span.style.fontSize = number(size) > 0 ? `${number(size) / 2 * 0.65}pt` : '0.65em';
+    span.style.lineHeight = '0';
+  } else if (number(r.position?.val)) span.style.verticalAlign = `${number(r.position.val) / 2}pt`;
+  if (on(r.caps)) span.style.textTransform = 'uppercase';
+  else if (on(r.smallCaps)) span.style.fontVariant = 'small-caps';
   if (r.spacing?.val != null) span.style.letterSpacing = pt(r.spacing.val);
   const f = families(r, theme);
   // Word selects a font per script. A single CJK fallback gives Latin punctuation
@@ -61,6 +70,13 @@ function paragraphStyle(p, hint, theme, tab) {
   if (ind.left != null || ind.start != null) p.style.marginLeft = pt(ind.start ?? ind.left);
   if (ind.right != null || ind.end != null) p.style.marginRight = pt(ind.end ?? ind.right);
   const hanging = number(ind.hanging), first = number(ind.firstLine);
+  // FReader: 스타일에 들어 있는 번호 목록은 변환 엔진이 번호·글머리 기호를 빠뜨림 → 앱이 센 번호를 붙임
+  if (!p.querySelector('.odr-list-marker') && hint.numbering?.marker) {
+    const made = p.ownerDocument.createElement('x-s');
+    made.className = 'odr-list-marker';
+    made.textContent = hint.numbering.marker + (hint.numbering.suffix === 'nothing' ? '' : '\t');
+    p.prepend(made);
+  }
   const marker = p.querySelector('.odr-list-marker');
   if (marker && hint.numbering && hanging > 0) {
     // Core supplies generic 2em list padding and a literal suffix tab. OOXML
@@ -85,6 +101,7 @@ function paragraphStyle(p, hint, theme, tab) {
     Object.assign(marker.style, { marginLeft: pt(-hanging), minWidth: pt(hanging), textIndent: '0' });
     p.style.textIndent = '0';
   } else if (ind.firstLine != null || ind.hanging != null) p.style.textIndent = pt(first - hanging);
+  paragraphBorders(p, props);
   if (props.keepNext) p.style.breakAfter = on(props.keepNext) ? 'avoid' : 'auto';
   if (props.keepLines) p.style.breakInside = on(props.keepLines) ? 'avoid' : 'auto';
   if (props.widowControl) p.style.orphans = p.style.widows = on(props.widowControl) ? '2' : '1';
@@ -107,6 +124,77 @@ function paragraphStyle(p, hint, theme, tab) {
   if (props.tabs?.stops?.length) p.dataset.docxTabs = JSON.stringify(props.tabs.stops);
   p.dataset.docxParagraph = hint.index;
   applyRuns(p, hint, theme);
+}
+// FReader: 문단 테두리(제목 아래 선 등)·문단 음영
+const BORDER_STYLES = { single: 'solid', thick: 'solid', double: 'double', dotted: 'dotted', dashed: 'dashed', dashSmallGap: 'dashed', dotDash: 'dashed', dotDotDash: 'dotted', triple: 'double', wave: 'solid', thinThickSmallGap: 'double', thickThinSmallGap: 'double' };
+function borderCss(b) {
+  if (!b || !b.val || b.val === 'nil' || b.val === 'none') return null;
+  const color = !b.color || b.color === 'auto' ? '#000000' : `#${b.color}`;
+  const kind = BORDER_STYLES[b.val] || 'solid';
+  const width = Math.max(0.5, number(b.sz, 4) / 8) * (kind === 'double' ? 3 : 1);
+  return { css: `${width}pt ${kind} ${color}`, space: number(b.space) };
+}
+function paragraphBorders(p, props) {
+  const b = props.pBdr?.children;
+  if (b) {
+    for (const [side, keys] of [['Top', ['top']], ['Bottom', ['bottom']], ['Left', ['left', 'start']], ['Right', ['right', 'end']]]) {
+      const c = borderCss(keys.map(k => b[k]).find(Boolean));
+      if (!c) continue;
+      p.style['border' + side] = c.css;
+      p.style['padding' + side] = `${c.space}pt`;
+    }
+  }
+  const fill = props.shd?.fill;
+  if (fill && fill !== 'auto' && /^[0-9a-fA-F]{6}$/.test(fill) && !p.style.backgroundColor) p.style.backgroundColor = `#${fill}`;
+}
+// FReader: 머리말·꼬리말 (쪽 번호는 쪽마다 preparePageSource가 채움)
+function hfRunStyle(span, r, theme, text) {
+  runStyle(span, r, theme, text);
+  if (on(r.b)) span.style.fontWeight = 'bold';
+  if (on(r.i)) span.style.fontStyle = 'italic';
+  const deco = [];
+  if (r.u?.val && r.u.val !== 'none') deco.push('underline');
+  if (on(r.strike)) deco.push('line-through');
+  if (deco.length) span.style.textDecoration = deco.join(' ');
+  if (r.color?.val && r.color.val !== 'auto' && /^[0-9a-fA-F]{6}$/.test(r.color.val)) span.style.color = `#${r.color.val}`;
+}
+export function docxHeaderFooter(source, section, theme, geom) {
+  for (const old of source.querySelectorAll(':scope > .docx-hf')) old.remove();
+  const hf = section?.headerFooter;
+  if (!hf) return;
+  if (section.titlePg) source.dataset.docxTitlePg = '1';
+  const pgMar = section.props?.pgMar || {};
+  const twPx = v => number(v) / 15; // 1440 twips = 96px
+  for (const [key, paras] of Object.entries(hf)) {
+    const [kind, type] = key.split(':');
+    if (type === 'even') continue;
+    const box = source.ownerDocument.createElement('div');
+    box.className = `docx-hf docx-${kind}`;
+    box.dataset.hfType = type;
+    Object.assign(box.style, { position: 'absolute', left: `${geom.margin[3]}px`, width: `${Math.max(32, geom.width - geom.margin[1] - geom.margin[3])}px`,
+      pointerEvents: 'none', userSelect: 'none', webkitUserSelect: 'none', zIndex: '1' });
+    if (kind === 'header') box.style.top = `${twPx(pgMar.header ?? 720)}px`;
+    else box.style.bottom = `${twPx(pgMar.footer ?? 720)}px`;
+    for (const para of paras) {
+      const d = source.ownerDocument.createElement('div');
+      const jc = para.props?.jc?.val;
+      d.style.textAlign = jc === 'center' ? 'center' : (jc === 'right' || jc === 'end') ? 'right' : jc === 'both' ? 'justify' : 'left';
+      const size = para.mark?.sz?.val;
+      d.style.fontSize = number(size) > 0 ? `${number(size) / 2}pt` : '11pt';
+      Object.assign(d.style, { lineHeight: '1.2', whiteSpace: 'pre-wrap', minHeight: '1em' });
+      const f = families(para.mark, theme);
+      if (f.east || f.latin) d.style.fontFamily = `${JSON.stringify(f.east || f.latin)}, FReaderSans, sans-serif`;
+      for (const run of para.runs || []) {
+        const span = source.ownerDocument.createElement('span');
+        if (run.field) span.dataset.docxField = run.field;
+        else span.textContent = run.text;
+        hfRunStyle(span, run.props || {}, theme, run.text || '0');
+        d.append(span);
+      }
+      box.append(d);
+    }
+    source.append(box);
+  }
 }
 function literalLeaders(p, hint) {
   // Some Word-generated TOCs store a run of literal dots followed by a tab and
@@ -242,6 +330,7 @@ function sections(root, hints, matches) {
       for (const side of ['Top', 'Right', 'Bottom', 'Left']) if (margins[side.toLowerCase()] != null) body.style['margin' + side] = pt(margins[side.toLowerCase()]);
     }
     for (; cursor <= endIndex; cursor++) body.append(blocks[cursor]);
+    if (outer.dataset.docxSection == null) outer.dataset.docxSection = String(i);
     previous = { outer, body, geometry };
   }
   if (previous && cursor === blocks.length) source.remove();

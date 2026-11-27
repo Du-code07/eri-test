@@ -1110,7 +1110,13 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
     if (_scrollSizes.length < _imagePages.length) _prepareScrollSizes(retry: false);
     final double dpr = MediaQuery.devicePixelRatioOf(context);
     final double w = MediaQuery.sizeOf(context).width;
-    return ContinuousPageList(
+    // 한글·워드 스크롤 보기처럼: 위아래를 띄우고 맨 위에 선을 그어 쪽이 그 선에서 시작하게
+    final double bp = MediaQuery.viewPaddingOf(context).bottom;
+    final double band = (bp > 0 ? bp : 8.0) + 20.0;
+    return Padding(
+      padding: EdgeInsets.only(top: band, bottom: band),
+      child: ContinuousPageList(
+      topLine: const Color(0xFFC4C4CA),
       controller: _scrollCtrl,
       count: _imagePages.length,
       aspectOf: _scrollAspect,
@@ -1211,6 +1217,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
         }
         return content;
       },
+    ),
     );
   }
 
