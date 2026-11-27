@@ -4614,7 +4614,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           onTap: _toggleHwpEditMode,
           closeAfterTap: true,
         ),
-      if (_isWordOrHwp || _isTxt)
+      if (_isWordOrHwp)
         QuickToolItem(
           id: 'toPdf',
           icon: const Icon(Icons.picture_as_pdf_outlined, color: Colors.white, size: 18),
@@ -4723,9 +4723,10 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
 
   bool _pdfExporting = false;
 
-  /// 한글·워드·TXT 파일을 원본 서식·글꼴·크기 그대로 선명한 PDF 사본으로 앱 내부 서재에 저장하고 공유 지원
+  /// 한글·워드 파일을 A4(21x29.7cm) 벡터 텍스트 PDF 사본으로 앱 내부 서재에 저장하고 공유 지원
+  /// (크로미움 내장 벡터 PDF 출력 우선, 미지원 기기에서는 A4 고화질 캡처로 자동 폴백)
   Future<void> _exportToPdf() async {
-    if (_pdfExporting || (!_isWordOrHwp && !_isTxt)) return;
+    if (_pdfExporting || !_isWordOrHwp) return;
     if (_isHwpEditMode) await _cancelHwpEditMode();
     if (_isMemoMode) await _cancelMemoSession();
     _docSel.clear();
@@ -4736,7 +4737,6 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     final tmpBase = await getTemporaryDirectory();
     final tmpDir = await tmpBase.createTemp('eri_export_pdf_');
 
-    // 앱 내부 서재 사본 파일명 생성 (중복 시 '(2)', '(3)' 자동 부여)
     final String rawName = widget.filePath.split(Platform.pathSeparator).last;
     final int dot = rawName.lastIndexOf('.');
     final String stem = dot > 0 ? rawName.substring(0, dot) : rawName;
@@ -4747,7 +4747,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       seq++;
     }
 
-    final progress = ValueNotifier<String>(_tr('준비 중…', 'Preparing…', '准备中…', '準備中…'));
+    final progress = ValueNotifier<String>(_tr('벡터 PDF 변환 중…', 'Creating vector PDF…', '正在生成矢量 PDF…', 'ベクターPDF変換中…'));
     bool cancelled = false;
     bool dialogOpen = true;
 
@@ -4783,7 +4783,6 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       ).whenComplete(() => dialogOpen = false));
     }
 
-    // 한글·워드 변환 전 상태 백업
     final int savedPage = _docPage;
     final bool savedScroll = _pageModeScroll;
     final String savedDisplay = _pageDisplay;
@@ -4792,46 +4791,29 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     String? savedPath;
 
     try {
-      final List<Map<String, Object?>> pageItems = [];
-
-      if (_isTxt) {
-        // TXT: Flutter TxtPageDocument와 동일한 글꼴·크기·여백·줄바꿈으로 2.5배 고해상도(1488x2105) 렌더링
-        final doc = await TxtPageDocument.open(File(widget.filePath), tmpDir, cancelled: () => cancelled);
+      // 1차 시도: 크로미움 내장 벡터 PDF 출력 (정확한 A4 21x29.7cm, 무한 확대 선명, 텍스트 복사·편집 가능)
+      final bool prepared = await _hwpController.preparePrintAllPages().timeout(
+            const Duration(seconds: 25),
+            onTimeout: () => false,
+          );
+      if (prepared && !cancelled && mounted) {
+        await Future<void>.delayed(const Duration(milliseconds: 220));
         try {
-          final int total = doc.pageCount;
-          const double scale = 2.5;
-          final int pw = (TxtPageDocument.paperSize.width * scale).round();
-          final int ph = (TxtPageDocument.paperSize.height * scale).round();
-          for (int i = 0; i < total; i++) {
-            if (cancelled) break;
-            progress.value = _tr('페이지 변환 중 (${i + 1} / $total)', 'Converting (${i + 1} / $total)', '正在转换 (${i + 1} / $total)', '変換中 (${i + 1} / $total)');
-            final String pageText = await doc.readPage(i);
-            final recorder = ui.PictureRecorder();
-            final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, pw.toDouble(), ph.toDouble()));
-            canvas.drawRect(Rect.fromLTWH(0, 0, pw.toDouble(), ph.toDouble()), Paint()..color = const Color(0xFFFFFFFF));
-            canvas.scale(scale, scale);
-            final tp = TxtPageDocument.painter(pageText, color: const Color(0xFF000000));
-            try {
-              tp.paint(canvas, const Offset(TxtPageDocument.margin, TxtPageDocument.margin));
-            } finally {
-              tp.dispose();
-            }
-            final pic = recorder.endRecording();
-            final img = await pic.toImage(pw, ph);
-            pic.dispose();
-            final bd = await img.toByteData(format: ui.ImageByteFormat.png);
-            img.dispose();
-            if (bd != null) {
-              final pngFile = File('${tmpDir.path}/p_${i.toString().padLeft(4, '0')}.png');
-              await pngFile.writeAsBytes(bd.buffer.asUint8List(), flush: true);
-              pageItems.add({'path': pngFile.path, 'cropL': 0.0, 'cropT': 0.0, 'cropW': 1.0, 'cropH': 1.0});
-            }
-          }
+          savedPath = await _pdfChannel.invokeMethod<String>('printWebViewToPdf', {
+            'outputPath': outFile.path,
+          }).timeout(const Duration(seconds: 40), onTimeout: () => null);
+        } catch (_) {
+          savedPath = null;
         } finally {
-          await doc.dispose();
+          unawaited(_hwpController.cleanupPrintAllPages());
         }
       } else {
-        // 한글·워드: 원본 서식·글꼴·표·이미지가 그대로 렌더링된 WebView를 한 쪽씩 무손실 PNG 캡처 후 종이 영역만 정밀 크롭
+        unawaited(_hwpController.cleanupPrintAllPages());
+      }
+
+      // 2차 폴백: 기기 제약으로 벡터 출력이 실패한 경우에만 A4(595x842pt) 고화질 캡처로 자동 전환
+      if (!cancelled && (savedPath == null || !File(savedPath).existsSync())) {
+        final List<Map<String, Object?>> pageItems = [];
         final int total = math.max(1, _docPageCount);
         if (savedScroll || savedDisplay != 'one' || savedTheme != 'white' || _epubZoomScale != 1.0) {
           changedView = true;
@@ -4885,19 +4867,18 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
             'cropH': crop.height,
           });
         }
-      }
 
-      if (!cancelled && pageItems.isNotEmpty) {
-        progress.value = _tr('PDF 파일 만드는 중…', 'Building PDF…', '正在生成 PDF…', 'PDFを作成中…');
-        savedPath = await _pdfChannel.invokeMethod<String>('buildPdfFromImages', {
-          'outputPath': outFile.path,
-          'pages': pageItems,
-        });
+        if (!cancelled && pageItems.isNotEmpty) {
+          progress.value = _tr('PDF 파일 만드는 중…', 'Building PDF…', '正在生成 PDF…', 'PDFを作成中…');
+          savedPath = await _pdfChannel.invokeMethod<String>('buildPdfFromImages', {
+            'outputPath': outFile.path,
+            'pages': pageItems,
+          });
+        }
       }
     } catch (_) {
       savedPath = null;
     } finally {
-      // 원래 보던 화면·페이지·테마 복구
       if (changedView && mounted) {
         setState(() {
           _pageModeScroll = savedScroll;
@@ -4905,8 +4886,6 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           _epubBgTheme = savedTheme;
         });
         await Future<void>.delayed(const Duration(milliseconds: 160));
-      }
-      if (!_isTxt && mounted) {
         _docPage = savedPage;
         unawaited(_hwpController.display('$_documentPositionPrefix:$savedPage'));
       }
@@ -4929,10 +4908,10 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
         builder: (ctx) => AlertDialog(
           title: Text(_tr('PDF 변환 완료', 'PDF Created', 'PDF 转换完成', 'PDF変換完了'), style: const TextStyle(fontWeight: FontWeight.w800)),
           content: Text(_tr(
-            '앱 서재에 사본으로 저장했어요\\n$createdName',
-            'Saved as a copy in your app library\\n$createdName',
-            '已作为副本保存到应用书架\\n$createdName',
-            'アプリの本棚にコピーとして保存しました\\n$createdName',
+            '앱 서재에 사본으로 저장했어요\n$createdName',
+            'Saved as a copy in your app library\n$createdName',
+            '已作为副本保存到应用书架\n$createdName',
+            'アプリの本棚にコピーとして保存しました\n$createdName',
           )),
           actions: [
             TextButton(

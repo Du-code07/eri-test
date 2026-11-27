@@ -3005,7 +3005,52 @@ function exportEditedBytes(preferHwpx) {
   }
 }
 
-window.freaderHwp = { setView, resetScrollZoom: vResetZoom, setScrollMarks, setCopyMarks, setScrollMemos, setScrollMemo, visibleSlots: vVisibleSlots, mostVisiblePage: vMostVisible, highlightBoxes: withoutZoom(highlightBoxes), beginDocument, pageSizes, setVertical, scrollToRatio: vScrollToRatio, scrollByPx: (dy) => { if (!vhost) return false; vhost.scrollTop = Math.max(0, Math.min(vhost.scrollHeight - vhost.clientHeight, vhost.scrollTop + (Number(dy) || 0))); vUpdate(); vReportMetrics(); return true; }, appendChunk, openDocument, configure, display, next, previous, progress, highlightSelection: withoutZoom(highlightSelection), destroy,
+
+async function preparePrintAllPages() {
+  cleanupPrintAllPages();
+  if (!doc || !doc.pageCount) return false;
+  const style = document.createElement('style');
+  style.id = 'eri-print-style';
+  style.textContent = `
+    @page { size: A4; margin: 0; }
+    @media print {
+      html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; width: auto !important; height: auto !important; overflow: visible !important; filter: none !important; }
+      body > *:not(#eri-print-root) { display: none !important; }
+      #eri-print-root { display: block !important; position: static !important; width: 210mm !important; background: #fff !important; }
+      .eri-print-page { width: 210mm; height: 297mm; page-break-after: always; break-after: page; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #fff; box-sizing: border-box; }
+      .eri-print-page:last-child { page-break-after: auto; break-after: auto; }
+      .eri-print-page svg { width: 100%; height: 100%; display: block; }
+    }
+    #eri-print-root { display: none; }
+  `;
+  document.head.appendChild(style);
+  const root = document.createElement('div');
+  root.id = 'eri-print-root';
+  const total = doc.pageCount;
+  for (let i = 0; i < total; i++) {
+    const entry = svgForPage(i);
+    const svg = entry.template.cloneNode(true);
+    const box = svg.getAttribute('viewBox')?.trim().split(/[\s,]+/).map(Number);
+    if (box && box.length === 4 && box[2] > 0 && box[3] > 0) {
+      svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    }
+    const wrap = document.createElement('div');
+    wrap.className = 'eri-print-page';
+    wrap.appendChild(svg);
+    root.appendChild(wrap);
+  }
+  document.body.appendChild(root);
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  return true;
+}
+
+function cleanupPrintAllPages() {
+  document.getElementById('eri-print-root')?.remove();
+  document.getElementById('eri-print-style')?.remove();
+  return true;
+}
+
+window.freaderHwp = { preparePrintAllPages, cleanupPrintAllPages, setView, resetScrollZoom: vResetZoom, setScrollMarks, setCopyMarks, setScrollMemos, setScrollMemo, visibleSlots: vVisibleSlots, mostVisiblePage: vMostVisible, highlightBoxes: withoutZoom(highlightBoxes), beginDocument, pageSizes, setVertical, scrollToRatio: vScrollToRatio, scrollByPx: (dy) => { if (!vhost) return false; vhost.scrollTop = Math.max(0, Math.min(vhost.scrollHeight - vhost.clientHeight, vhost.scrollTop + (Number(dy) || 0))); vUpdate(); vReportMetrics(); return true; }, appendChunk, openDocument, configure, display, next, previous, progress, highlightSelection: withoutZoom(highlightSelection), destroy,
   search, showSearchResult, clearSearch, headingCandidates, pageText, visibleTextBoxes: withoutZoom(visibleTextBoxes), pageRect: withoutZoom(pageRect), setEditMode, setKeyboardInset, exportEditedBytes, editApplyFormat, editUndo, editRedo, cancelEditSession,
   getState: () => ({ ready: readyReported, page, count, cachedPages: cache.size, cachedBytes, received, spread: options.spread, maxBytes: MAX_BYTES }) };
 window.addEventListener('pagehide', destroy, { once: true });

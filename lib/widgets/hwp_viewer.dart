@@ -131,6 +131,10 @@ class HwpReaderController {
   /// 현재 화면에 그려진 페이지를 무손실 PNG 바이트로 캡처 (PDF 변환용)
   Future<Uint8List?> capturePagePng() async => _capturePng?.call();
 
+  /// 벡터 PDF 출력용: 전체 페이지를 A4 인쇄 레이아웃으로 마운트/정리
+  Future<bool> preparePrintAllPages() async => (await _query?.call('preparePrintAllPages', [])) == true;
+  Future<void> cleanupPrintAllPages() async => _invoke?.call('cleanupPrintAllPages', []);
+
 
   /// PPT: 슬라이드 전체 그림(JPEG base64) — 글자가 그림으로만 된 슬라이드의 글자를 읽는 데 씀
   Future<String?> slideImage(int index, {int width = 1800}) async {

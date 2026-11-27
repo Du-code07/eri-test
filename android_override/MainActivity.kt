@@ -882,6 +882,50 @@ class MainActivity : FlutterActivity() {
                     val res = made
                     runOnUiThread { result.success(res) }
                 }
+            } else if (call.method == "printWebViewToPdf") {
+                val outPath = call.argument<String>("outputPath")
+                if (outPath == null) {
+                    result.error("INVALID_ARGS", "Missing outputPath", null)
+                    return@setMethodCallHandler
+                }
+                runOnUiThread {
+                    var target: WebView? = null
+                    fun findVisibleWebView(v: View) {
+                        if (v is WebView && v.visibility == View.VISIBLE && v.width > 50 && v.height > 50) {
+                            target = v
+                        }
+                        if (v is ViewGroup) {
+                            for (i in 0 until v.childCount) findVisibleWebView(v.getChildAt(i))
+                        }
+                    }
+                    findVisibleWebView(window.decorView)
+                    val wv = target
+                    if (wv == null) {
+                        result.success(null)
+                        return@runOnUiThread
+                    }
+                    val outFile = File(outPath)
+                    val tmpFile = File("${outPath}.eri_tmp")
+                    android.print.WebViewPdfPrinter.printToPdf(wv, tmpFile) { ok, _ ->
+                        runOnUiThread {
+                            if (ok && tmpFile.exists() && tmpFile.length() > 512L) {
+                                try {
+                                    outFile.parentFile?.mkdirs()
+                                    if (!tmpFile.renameTo(outFile)) {
+                                        tmpFile.copyTo(outFile, overwrite = true)
+                                        tmpFile.delete()
+                                    }
+                                    result.success(outFile.absolutePath)
+                                } catch (_: Throwable) {
+                                    result.success(null)
+                                }
+                            } else {
+                                try { tmpFile.delete() } catch (_: Throwable) {}
+                                result.success(null)
+                            }
+                        }
+                    }
+                }
             } else if (call.method == "buildPdfFromImages") {
                 val outPath = call.argument<String>("outputPath")
                 @Suppress("UNCHECKED_CAST")
@@ -917,11 +961,20 @@ class MainActivity : FlutterActivity() {
                             val srcW = (cw * rw).toInt().coerceIn(1, rw - srcLeft)
                             val srcH = (ch * rh).toInt().coerceIn(1, rh - srcTop)
 
-                            val pageInfo = PdfDocument.PageInfo.Builder(srcW, srcH, pageNum++).create()
+                            // 폴백 이미지 PDF도 정확한 A4 규격(595 x 842 pt = 21 x 29.7 cm)으로 맞춤
+                            val landscape = srcW > srcH
+                            val ptW = if (landscape) 842 else 595
+                            val ptH = if (landscape) 595 else 842
+                            val pageInfo = PdfDocument.PageInfo.Builder(ptW, ptH, pageNum++).create()
                             val page = outPdf.startPage(pageInfo)
                             page.canvas.drawColor(Color.WHITE)
                             val srcRect = android.graphics.Rect(srcLeft, srcTop, srcLeft + srcW, srcTop + srcH)
-                            val dstRect = android.graphics.Rect(0, 0, srcW, srcH)
+                            val fitScale = minOf(ptW.toFloat() / srcW.toFloat(), ptH.toFloat() / srcH.toFloat())
+                            val drawW = srcW * fitScale
+                            val drawH = srcH * fitScale
+                            val dx = (ptW - drawW) / 2f
+                            val dy = (ptH - drawH) / 2f
+                            val dstRect = android.graphics.RectF(dx, dy, dx + drawW, dy + drawH)
                             page.canvas.drawBitmap(raw, srcRect, dstRect, drawPaint)
                             outPdf.finishPage(page)
                             raw.recycle()
