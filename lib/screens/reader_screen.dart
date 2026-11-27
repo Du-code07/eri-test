@@ -1369,6 +1369,26 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   int _snapCaptureSerial = 0;
   int get _snapStep => _snapSpread ? 2 : 1;
 
+  /// 쪽 화면 그림을 모두 버림 (편집 저장 뒤): 쓰던 폴더·메모리에 풀어 둔 그림까지 지우고, 바뀐 파일 기준 새 폴더로
+  Future<void> _purgePageSnaps() async {
+    _snapCaptureSerial++;
+    _snapHide();
+    _dropIdleShot();
+    _dropBackShots(); // 되돌아올 때 쓰려고 찍어 둔 지나온 쪽 그림도 옛 내용
+    final Directory? old = _snapDir;
+    _snapDir = null;
+    try {
+      if (old != null && old.existsSync()) old.deleteSync(recursive: true);
+    } catch (_) {}
+    // 같은 이름으로 다시 찍어도 옛 그림이 보이지 않게 풀어 둔 그림도 비움
+    PaintingBinding.instance.imageCache
+      ..clear()
+      ..clearLiveImages();
+    if (!mounted || !_snapEligible) return;
+    final Directory? dir = await PageSnapshotService.documentDir(widget.filePath);
+    if (mounted && dir != null) _snapDir = dir;
+  }
+
   Future<void> _snapInit() async {
     if (await StorageService.isProtectedDoc(widget.filePath)) {
       if (mounted) setState(() => _docProtected = true);
@@ -4731,12 +4751,8 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
             savedFile = true;
           }
         }
-        if (savedFile) {
-          try {
-            final dir = await PageSnapshotService.documentDir(widget.filePath);
-            if (dir != null && dir.existsSync()) dir.deleteSync(recursive: true);
-          } catch (_) {}
-        }
+        // 저장하면 파일이 바뀌어 저장해 둔 쪽 화면이 옛 내용이 됨 → 쓰던 쪽 화면을 모두 지우고 새로 찍게 함
+        if (savedFile) await _purgePageSnaps();
       }
       FocusManager.instance.primaryFocus?.unfocus();
       await _hwpController.setKeyboardInset(0);
@@ -4745,14 +4761,9 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       if (!mounted) return;
       _hwpEditExitedAt = DateTime.now();
       _dropIdleShot();
+      _dropBackShots();
       _snapHide();
       _resetTouchAfterEdit();
-      unawaited(() async {
-        try {
-          final dir = await PageSnapshotService.documentDir(widget.filePath);
-          if (dir != null && dir.existsSync()) dir.deleteSync(recursive: true);
-        } catch (_) {}
-      }());
       setState(() {
         _isHwpEditMode = false;
         _hwpHasEdits = false;
@@ -4773,6 +4784,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     if (!_isHwpEditMode) return;
     _hwpEditExitedAt = DateTime.now();
     _dropIdleShot();
+    _dropBackShots();
     _snapHide();
     _resetTouchAfterEdit();
     unawaited(() async {
@@ -4816,6 +4828,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     _snapCaptureSerial++;
     _snapHide();
     _dropIdleShot();
+    _dropBackShots();
     if (_docVertical) unawaited(_hwpController.setScrollMemos(const {}));
     _hwpController.setEditMode(true);
   }

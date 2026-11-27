@@ -100,7 +100,21 @@ Future<({List<String> files, List<String> trash, List<String> thumbs})> _listLib
       }
     }
 
-    return (files: filesIn(docs), trash: filesIn(trash), thumbs: filesIn(thumbs, create: true));
+    // 휴지통: 버릴 때마다 따로 만든 칸(폴더) 안에 파일이 들어 있음 (같은 이름 파일을 여러 번 버려도 서로 다른 파일)
+    List<String> trashFiles() {
+      final d = Directory(trash);
+      try {
+        if (!d.existsSync()) return const [];
+        return [
+          for (final e in d.listSync())
+            if (e is File) e.path else if (e is Directory) ...filesIn(e.path),
+        ];
+      } catch (_) {
+        return const [];
+      }
+    }
+
+    return (files: filesIn(docs), trash: trashFiles(), thumbs: filesIn(thumbs, create: true));
   });
 }
 
@@ -3875,17 +3889,92 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
     return false;
   }
 
+  /// 휴지통으로: 버릴 때마다 새 칸에 넣고, 메모·책갈피·읽던 자리·표지도 휴지통 파일 쪽으로 옮김
+  /// → 같은 이름 파일을 다시 추가해도 새 파일로 따로 다루고, 휴지통에서 지워도 새로 추가한 파일은 그대로
   Future<void> _moveFileToTrash(File file, {bool reloadAfter = true}) async {
     final fileName = file.path.split(Platform.pathSeparator).last;
     final trashDir = await _getTrashDirectory();
-    final targetPath = '${trashDir.path}/$fileName';
     if (await file.exists()) {
+      Directory slot = Directory('${trashDir.path}/${DateTime.now().microsecondsSinceEpoch}');
+      while (slot.existsSync()) {
+        slot = Directory('${slot.path}_');
+      }
+      await slot.create(recursive: true);
+      final targetPath = '${slot.path}/$fileName';
       await file.copy(targetPath);
       await file.delete();
+      await _moveBookIdentity(file.path, targetPath);
     }
     if (reloadAfter) {
       await _loadLibrary();
     }
+  }
+
+  /// 휴지통 파일을 서재로 되돌림 (같은 이름 파일이 서재에 있으면 '이름 (2)'처럼 새 이름으로)
+  Future<void> _restoreFromTrash(File tf) async {
+    if (!await tf.exists()) return;
+    final appDir = await getApplicationDocumentsDirectory();
+    final fileName = tf.path.split(Platform.pathSeparator).last;
+    final restoredPath = _freeLibraryPath(appDir.path, fileName);
+    await tf.copy(restoredPath);
+    await tf.delete();
+    await _moveBookIdentity(tf.path, restoredPath);
+    _dropTrashSlot(tf);
+  }
+
+  /// 휴지통 파일을 영구 삭제 (그 파일의 메모·표지 등도 함께)
+  Future<void> _deleteFromTrash(File tf) async {
+    await StorageService.removeBookMetadata(tf.path);
+    await _moveThumbs(tf.path, null);
+    if (await tf.exists()) await tf.delete();
+    _dropTrashSlot(tf);
+  }
+
+  void _dropTrashSlot(File tf) {
+    try {
+      final slot = tf.parent;
+      if (slot.path.endsWith('.trash_bin')) return;
+      if (slot.existsSync() && slot.listSync().isEmpty) slot.deleteSync();
+    } catch (_) {}
+  }
+
+  static String _freeLibraryPath(String dir, String fileName) {
+    String candidate = '$dir/$fileName';
+    if (!File(candidate).existsSync()) return candidate;
+    final dot = fileName.lastIndexOf('.');
+    final base = dot > 0 ? fileName.substring(0, dot) : fileName;
+    final ext = dot > 0 ? fileName.substring(dot) : '';
+    for (int n = 2;; n++) {
+      candidate = '$dir/$base ($n)$ext';
+      if (!File(candidate).existsSync()) return candidate;
+    }
+  }
+
+  /// 파일 경로에 묶인 정보(메모·책갈피·읽던 자리·그룹·즐겨찾기·추가 날짜·표지)를 새 경로로 옮김
+  Future<void> _moveBookIdentity(String from, String to) async {
+    await StorageService.migrateBookMetadata(from, to);
+    await _moveThumbs(from, to);
+    _customCovers = await StorageService.getCustomCovers();
+  }
+
+  /// 표지 그림 파일을 새 경로 이름으로 옮김 (to가 null이면 지움). 메모리에 올려 둔 표지도 비움
+  Future<void> _moveThumbs(String from, String? to) async {
+    final dir = '${(await getApplicationDocumentsDirectory()).path}/.thumbnails';
+    final a = from.hashCode.toUnsigned(32).toString();
+    final b = to?.hashCode.toUnsigned(32).toString();
+    for (final pre in const ['thumb_v36_', 'thumb_d2_', 'thumb_d3_', 'thumb_s3_', 'thumb_e1_']) {
+      final f = File('$dir/$pre$a.jpg');
+      try {
+        if (!f.existsSync()) continue;
+        if (b == null) {
+          f.deleteSync();
+        } else {
+          f.renameSync('$dir/$pre$b.jpg');
+        }
+      } catch (_) {}
+    }
+    _globalThumbMemoryCache.remove(from);
+    _thumbNotifiers.remove(from);
   }
 
   Future<void> _moveSelectedFilesBatch() async {
@@ -4033,13 +4122,8 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
                           icon: const Icon(Icons.restore_from_trash, size: 16),
                           label: Text(_tr('모두 복원', 'Restore All', '全部恢复', 'すべて復元')),
                           onPressed: () async {
-                            final appDir = await getApplicationDocumentsDirectory();
                             for (final tf in List<File>.of(_trashedBooks)) {
-                              final fileName = tf.path.split(Platform.pathSeparator).last;
-                              if (await tf.exists()) {
-                                await tf.copy('${appDir.path}/$fileName');
-                                await tf.delete();
-                              }
+                              await _restoreFromTrash(tf);
                             }
                             await _loadLibrary();
                             setModalState(() {});
@@ -4069,11 +4153,8 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
                               ),
                             );
                             if (confirmEmpty == true) {
-                              final appDir = await getApplicationDocumentsDirectory();
-                              for (final tf in _trashedBooks) {
-                                final fileName = tf.path.split(Platform.pathSeparator).last;
-                                await StorageService.removeBookMetadata('${appDir.path}/$fileName');
-                                if (await tf.exists()) await tf.delete();
+                              for (final tf in List<File>.of(_trashedBooks)) {
+                                await _deleteFromTrash(tf);
                               }
                               await _loadLibrary();
                               setModalState(() {});
@@ -4122,12 +4203,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
                                     icon: const Icon(Icons.restore_from_trash, size: 16),
                                     label: Text(_tr('복원', 'Restore', '恢复', '復元')),
                                     onPressed: () async {
-                                      final appDir = await getApplicationDocumentsDirectory();
-                                      final restoredPath = '${appDir.path}/$fileName';
-                                      if (await tf.exists()) {
-                                        await tf.copy(restoredPath);
-                                        await tf.delete();
-                                      }
+                                      await _restoreFromTrash(tf);
                                       await _loadLibrary();
                                       setModalState(() {});
                                     },
@@ -4158,11 +4234,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
                                         ),
                                       );
                                       if (confirmDelete == true) {
-                                        final appDir = await getApplicationDocumentsDirectory();
-                                        await StorageService.removeBookMetadata('${appDir.path}/$fileName');
-                                        if (await tf.exists()) {
-                                          await tf.delete();
-                                        }
+                                        await _deleteFromTrash(tf);
                                         await _loadLibrary();
                                         setModalState(() {});
                                       }

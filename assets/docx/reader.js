@@ -281,6 +281,8 @@ function applyPageBreaks(parsed) {
 async function preparePages(html, current) {
   const parsed = new DOMParser().parseFromString(html, 'text/html');
   sanitize(parsed);
+  // 편집 저장용: 원본 문단 순서(word/document.xml의 <w:p> 순서)를 쪽 나눔 전에 새겨 둠 (나뉜 문단 조각도 같은 번호를 물려받음)
+  if (detectedFormat === 'docx') { let pi = 0; for (const p of parsed.querySelectorAll('.odr-pages x-p')) p.dataset.eriPi = String(pi++); }
   if (detectedFormat !== 'docx' || !applyDocxLayout(parsed, options.docxLayout)) applyPageBreaks(parsed);
   const sources = [...parsed.querySelectorAll('.odr-pages > .odr-page-outer')];
   if (!sources.length) throw new Error('Word 문서에서 표시할 본문을 찾지 못했어요');
@@ -1532,7 +1534,7 @@ function withoutZoom(fn) {
 let docxEditMode = false;
 let docxEditDirty = false;
 let docxEditOrigHtml = [];
-let docxOrigParaTexts = [];
+let docxOrigParas = new Map(); // 원본 문단 번호 → 편집 시작 때 상태 { text, fmt, imgs }
 let docxUndoStack = [];
 let docxRedoStack = [];
 let docxLastSnap = null;
@@ -1788,6 +1790,7 @@ function docxPrepareStyledInsertNode() {
   const off = Math.max(0, Math.min(node.nodeValue.length, docxCursor.offset));
   const afterNode = node.splitText(off);
   const span = document.createElement('span');
+  span.dataset.eriFmt = '1';
   if (docxPendingFmt.bold !== undefined) span.style.fontWeight = docxPendingFmt.bold ? 'bold' : 'normal';
   if (docxPendingFmt.italic !== undefined) span.style.fontStyle = docxPendingFmt.italic ? 'italic' : 'normal';
   if (docxPendingFmt.underline !== undefined) span.style.textDecoration = docxPendingFmt.underline ? 'underline' : 'none';
@@ -2685,12 +2688,8 @@ function setEditMode(enabled) {
     lastHostW = host ? host.clientWidth : 0;
     lastVHostW = vhost ? vhost.clientWidth : 0;
     docxEditOrigHtml = docxSnapshotPages();
-    docxOrigParaTexts = [];
-    for (const src of docxUniqueSources()) {
-      for (const el of src.querySelectorAll('x-p, p')) {
-        docxOrigParaTexts.push((el.textContent || '').replace(/\s+/g, ' ').trim());
-      }
-    }
+    docxOrigParas = new Map();
+    for (const [idx, els] of docxParaGroups()) docxOrigParas.set(idx, docxParaState(els));
     docxUndoStack = [];
     docxRedoStack = [];
     docxLastSnap = docxSnapshotPages();
@@ -2805,6 +2804,7 @@ function docxApplyStyleToRange(range, opts) {
       span = target.parentElement;
     } else {
       span = document.createElement('span');
+      span.dataset.eriFmt = '1';
       target.parentNode.insertBefore(span, target);
       span.appendChild(target);
     }
@@ -2910,54 +2910,112 @@ function cancelEditSession() {
   return true;
 }
 
-function docxCollectRuns(el) {
-  const runs = [];
-  const walk = (node) => {
+/** 원본 문단 번호별로 지금 화면의 문단 조각들을 모음 (쪽 나눔으로 나뉜 조각은 같은 번호) */
+function docxParaGroups() {
+  const groups = new Map();
+  for (const src of docxUniqueSources()) {
+    for (const el of src.querySelectorAll('x-p[data-eri-pi]')) {
+      if (el.closest('.docx-note-area')) continue;
+      const idx = Number(el.dataset.eriPi);
+      if (!Number.isFinite(idx)) continue;
+      let g = groups.get(idx);
+      if (!g) groups.set(idx, g = []);
+      g.push(el);
+    }
+  }
+  return groups;
+}
+
+/** 문단에 들어 있는 글자를 차례로 훑음 (목록 번호·안쪽 문단·편집 표시는 뺌) */
+function docxWalkPara(els, onText, onBreak) {
+  const walk = (node, root) => {
     if (node.nodeType === 3) {
       const text = node.nodeValue || '';
-      if (!text) return;
-      const parent = node.parentElement || el;
-      const cs = getComputedStyle(parent);
-      const fw = parseInt(cs.fontWeight, 10);
-      const bold = cs.fontWeight === 'bold' || (Number.isFinite(fw) && fw >= 600);
-      const italic = cs.fontStyle === 'italic' || cs.fontStyle === 'oblique';
-      const td = (cs.textDecorationLine || cs.textDecoration || '').toLowerCase();
-      const underline = td.includes('underline');
-      const px = parseFloat(cs.fontSize);
-      const fontSizePt = Number.isFinite(px) && px > 0 ? Math.round(px * 0.75 * 10) / 10 : null;
-      const colorHex = docxRgbToHex(cs.color);
-      const prev = runs.length > 0 ? runs[runs.length - 1] : null;
-      if (prev && prev.bold === bold && prev.italic === italic && prev.underline === underline && prev.fontSizePt === fontSizePt && prev.colorHex === colorHex) {
-        prev.text += text;
-      } else {
-        runs.push({ text, bold, italic, underline, fontSizePt, colorHex });
-      }
-    } else if (node.nodeType === 1) {
-      if (node.tagName === 'BR') {
-        if (runs.length > 0) runs[runs.length - 1].text += '\n';
-        else runs.push({ text: '\n', bold: false, italic: false, underline: false, fontSizePt: null, colorHex: '#000000' });
-        return;
-      }
-      for (const child of node.childNodes) walk(child);
+      if (text) onText(text, node);
+      return;
     }
+    if (node.nodeType !== 1) return;
+    if (node !== root && node.matches && node.matches('x-p[data-eri-pi], .odr-list-marker, .docx-note-area, .eri-docx-caret, .eri-caret-handle, .eri-sel-handle, .eri-docx-sel-rect, .eri-copy-mark')) return;
+    if (node.tagName === 'BR') {
+      // 빈 문단 자리를 지키려고 넣은 끝 줄바꿈은 글자가 아님
+      if (node.parentElement === root && !docxHasTextAfter(node)) return;
+      onBreak();
+      return;
+    }
+    for (const child of node.childNodes) walk(child, root);
   };
-  walk(el);
+  for (const el of els) walk(el, el);
+}
+
+function docxHasTextAfter(node) {
+  for (let n = node.nextSibling; n; n = n.nextSibling) {
+    if ((n.textContent || '').length > 0) return true;
+    if (n.nodeType === 1 && n.tagName === 'BR') return true;
+  }
+  return false;
+}
+
+function docxParaState(els) {
+  let text = '';
+  docxWalkPara(els, (t) => { text += t; }, () => { text += '\n'; });
+  let fmt = '', imgs = 0;
+  for (const el of els) {
+    for (const sp of el.querySelectorAll('span[data-eri-fmt]')) fmt += sp.getAttribute('style') || '';
+    imgs += el.querySelectorAll('img').length;
+  }
+  return { text: text.replace(/​/g, ''), fmt, imgs };
+}
+
+function docxCollectRuns(els) {
+  const runs = [];
+  docxWalkPara(els, (rawText, node) => {
+    const text = rawText.replace(/​/g, '');
+    if (!text) return;
+    const parent = node.parentElement || els[0];
+    const cs = getComputedStyle(parent);
+    const fw = parseInt(cs.fontWeight, 10);
+    const bold = cs.fontWeight === 'bold' || (Number.isFinite(fw) && fw >= 600);
+    const italic = cs.fontStyle === 'italic' || cs.fontStyle === 'oblique';
+    const td = (cs.textDecorationLine || cs.textDecoration || '').toLowerCase();
+    const underline = td.includes('underline');
+    const px = parseFloat(cs.fontSize);
+    const fontSizePt = Number.isFinite(px) && px > 0 ? Math.round(px * 0.75 * 10) / 10 : null;
+    const colorHex = docxRgbToHex(cs.color);
+    const prev = runs.length > 0 ? runs[runs.length - 1] : null;
+    if (prev && prev.bold === bold && prev.italic === italic && prev.underline === underline && prev.fontSizePt === fontSizePt && prev.colorHex === colorHex) {
+      prev.text += text;
+    } else {
+      runs.push({ text, bold, italic, underline, fontSizePt, colorHex });
+    }
+  }, () => {
+    if (runs.length > 0) runs[runs.length - 1].text += '\n';
+    else runs.push({ text: '\n', bold: false, italic: false, underline: false, fontSizePt: null, colorHex: '#000000' });
+  });
   return runs;
 }
 
+/**
+ * 바뀐 문단만 원본 문단 번호와 함께 넘김
+ * - 지워진 문단: deleted
+ * - 글자만 바뀐 문단: 원래 글자(origText)와 새 글자(text) → 원본 서식을 살린 채 바뀐 부분만 고침
+ * - 글자 서식을 바꾼 문단: runs(글자 덩어리별 서식)까지 넘김
+ */
 function exportEditedBytes() {
   if (!docxEditDirty) return { ok: true, dirty: false };
+  const groups = docxParaGroups();
   const edits = [];
-  let idx = 0;
-  for (const src of docxUniqueSources()) {
-    for (const el of src.querySelectorAll('x-p, p')) {
-      const origText = idx < docxOrigParaTexts.length ? docxOrigParaTexts[idx] : '';
-      const runs = docxCollectRuns(el);
-      edits.push({ index: idx, origText, runs });
-      idx++;
+  for (const [idx, orig] of docxOrigParas) {
+    const els = groups.get(idx);
+    if (!els || els.length === 0) {
+      edits.push({ index: idx, origText: orig.text, deleted: true });
+      continue;
     }
+    const cur = docxParaState(els);
+    if (cur.text === orig.text && cur.fmt === orig.fmt) continue;
+    const fmt = cur.fmt !== orig.fmt && cur.fmt.length > 0;
+    edits.push({ index: idx, origText: orig.text, text: cur.text, fmt, runs: fmt ? docxCollectRuns(els) : [] });
   }
-  return { ok: true, dirty: true, kind: 'docx_edits', edits };
+  return { ok: true, dirty: edits.length > 0, kind: 'docx_edits', edits };
 }
 
 window.freaderDocx = { setView, resetScrollZoom: vResetZoom, setScrollMarks, setCopyMarks, setScrollMemos, setScrollMemo, visibleSlots: vVisibleSlots, mostVisiblePage: vMostVisible, highlightBoxes: withoutZoom(highlightBoxes), beginDocument, appendChunk, openDocument, configure, display, next, previous, progress, highlightSelection: withoutZoom(highlightSelection), destroy, setVertical, scrollToRatio: vScrollToRatio, scrollByPx: (dy) => { if (!vhost) return false; vhost.scrollTop = Math.max(0, Math.min(vhost.scrollHeight - vhost.clientHeight, vhost.scrollTop + (Number(dy) || 0))); vUpdate(); vReportMetrics(); return true; }, setEditMode, editApplyFormat, editUndo, editRedo, cancelEditSession, setKeyboardInset, exportEditedBytes,

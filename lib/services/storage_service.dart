@@ -999,6 +999,20 @@ class StorageService {
       favs.add(newPath);
       await prefs.setStringList('favorite_book_paths', favs.toList());
     }
+    final dates = await getAddedDates();
+    final date = dates.remove(oldPath);
+    if (date != null) {
+      dates[newPath] = date;
+      await setAddedDates(dates);
+    }
+    final protectedDocs = prefs.getStringList('protected_docs_v115') ?? const <String>[];
+    if (protectedDocs.contains(oldPath)) {
+      await prefs.setStringList('protected_docs_v115', [
+        for (final d in protectedDocs)
+          if (d != oldPath && d != newPath) d,
+        newPath,
+      ]);
+    }
     for (final key in prefs.getKeys().toList()) {
       for (final prefix in [
         'bubbles_v5_',
@@ -1031,6 +1045,21 @@ class StorageService {
     final favs = (prefs.getStringList('favorite_book_paths') ?? []).toSet();
     if (favs.remove(bookPath)) {
       await prefs.setStringList('favorite_book_paths', favs.toList());
+    }
+    final dates = await getAddedDates();
+    if (dates.remove(bookPath) != null) await setAddedDates(dates);
+    final protectedDocs = prefs.getStringList('protected_docs_v115') ?? const <String>[];
+    if (protectedDocs.contains(bookPath)) {
+      await prefs.setStringList('protected_docs_v115', [for (final d in protectedDocs) if (d != bookPath) d]);
+    }
+    final covers = await getCustomCovers();
+    final cover = covers.remove(bookPath);
+    if (cover != null) {
+      await prefs.setString('custom_covers', jsonEncode(covers));
+      try {
+        final f = File(cover);
+        if (f.existsSync()) f.deleteSync();
+      } catch (_) {}
     }
     for (final key in prefs.getKeys().toList()) {
       if (key.startsWith('bubbles_v5_${bookPath}_') ||

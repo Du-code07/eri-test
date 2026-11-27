@@ -1242,6 +1242,7 @@ function clearPageCache() {
 }
 
 function evictSinglePageCache(pIdx) {
+  layoutCache.delete(pIdx); inkCache.delete(pIdx);
   const e = cache.get(pIdx);
   if (e) {
     cache.delete(pIdx);
@@ -1437,6 +1438,8 @@ function redrawSinglePage(pIdx) {
 function redrawAllVisiblePages() {
   if (!doc || disposed) return;
   clearPageCache();
+  // 고친 뒤에는 글 배치가 바뀌므로 쪽별 글자 자리·여백 계산도 새로
+  layoutCache.clear(); pageBoxCache.clear(); inkCache.clear();
   const newCount = Math.max(1, doc.pageCount ? doc.pageCount() : count);
   const countChanged = newCount !== count;
   if (countChanged) pageEngineSizeCache.clear();
