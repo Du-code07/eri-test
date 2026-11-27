@@ -28,7 +28,7 @@ class ToolbarLayout {
   static const String _key = 'toolbar_layout_v1';
 
   static const List<String> defaultTop = ['find', 'slideshow', 'theme', 'toc'];
-  static const List<String> defaultBar = ['prevChapter', 'nextChapter', 'prev', 'next', 'rotate', 'display', 'mode', 'direction', 'fontsize', 'memo', 'edit', 'bookmark'];
+  static const List<String> defaultBar = ['prevChapter', 'nextChapter', 'prev', 'next', 'rotate', 'display', 'mode', 'direction', 'fontsize', 'memo', 'edit', 'toPdf', 'bookmark'];
 
   /// 지금 쓰는 배치 (뷰어들이 함께 보고, 바뀌면 다시 그림)
   static final ValueNotifier<ToolbarLayout> current = ValueNotifier<ToolbarLayout>(ToolbarLayout.defaults());
@@ -87,6 +87,7 @@ Widget toolbarCatalogIcon(String id, Color color, {double size = 20}) => switch 
       'fontsize' => Icon(Icons.format_size_rounded, color: color, size: size),
       'memo' => MemoToolIcon(kind: 'memo', color: color, size: size + 2),
       'edit' => Icon(Icons.edit_note_rounded, color: color, size: size + 2),
+      'toPdf' => Icon(Icons.picture_as_pdf_outlined, color: color, size: size),
       _ => Icon(Icons.bookmarks_outlined, color: color, size: size),
     };
 
@@ -107,6 +108,7 @@ String toolbarCatalogLabel(String id, String Function(String ko, String en, Stri
       'fontsize' => tr('글자 크기', 'Font Size', '字体大小', '文字サイズ'),
       'memo' => tr('메모', 'Memo', '笔记', 'メモ'),
       'edit' => tr('문서 편집', 'Edit Document', '编辑文档', '文書編集'),
+      'toPdf' => tr('PDF 변환', 'Export PDF', '转为 PDF', 'PDF変換'),
       _ => tr('북마크', 'Bookmarks', '书签', 'ブックマーク'),
     };
 

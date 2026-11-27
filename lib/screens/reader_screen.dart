@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:typed_data';
+import '../services/file_share.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -4612,6 +4614,14 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
           onTap: _toggleHwpEditMode,
           closeAfterTap: true,
         ),
+      if (_isWordOrHwp || _isTxt)
+        QuickToolItem(
+          id: 'toPdf',
+          icon: const Icon(Icons.picture_as_pdf_outlined, color: Colors.white, size: 18),
+          tooltip: _tr('PDF 변환', 'Export PDF', '转为 PDF', 'PDF変換'),
+          onTap: () => unawaited(_exportToPdf()),
+          closeAfterTap: true,
+        ),
       if (_bookmarksOn)
       QuickToolItem(
         id: 'bookmark',
@@ -4708,6 +4718,241 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     _hwpHasSelection = false;
     _snapCaptureSerial++;
     _syncDocScrollLock();
+  }
+
+
+  bool _pdfExporting = false;
+
+  /// 한글·워드·TXT 파일을 원본 서식·글꼴·크기 그대로 선명한 PDF 사본으로 앱 내부 서재에 저장하고 공유 지원
+  Future<void> _exportToPdf() async {
+    if (_pdfExporting || (!_isWordOrHwp && !_isTxt)) return;
+    if (_isHwpEditMode) await _cancelHwpEditMode();
+    if (_isMemoMode) await _cancelMemoSession();
+    _docSel.clear();
+    WordSelectionLayer.clearAll();
+    _pdfExporting = true;
+
+    final appDir = await getApplicationDocumentsDirectory();
+    final tmpBase = await getTemporaryDirectory();
+    final tmpDir = await tmpBase.createTemp('eri_export_pdf_');
+
+    // 앱 내부 서재 사본 파일명 생성 (중복 시 '(2)', '(3)' 자동 부여)
+    final String rawName = widget.filePath.split(Platform.pathSeparator).last;
+    final int dot = rawName.lastIndexOf('.');
+    final String stem = dot > 0 ? rawName.substring(0, dot) : rawName;
+    File outFile = File('${appDir.path}/$stem.pdf');
+    int seq = 2;
+    while (await outFile.exists()) {
+      outFile = File('${appDir.path}/$stem ($seq).pdf');
+      seq++;
+    }
+
+    final progress = ValueNotifier<String>(_tr('준비 중…', 'Preparing…', '准备中…', '準備中…'));
+    bool cancelled = false;
+    bool dialogOpen = true;
+
+    if (mounted) {
+      unawaited(showPopDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => PopScope(
+          canPop: false,
+          child: AlertDialog(
+            title: Text(_tr('PDF 변환', 'Export PDF', '转为 PDF', 'PDF変換'), style: const TextStyle(fontWeight: FontWeight.w800)),
+            content: ValueListenableBuilder<String>(
+              valueListenable: progress,
+              builder: (_, msg, __) => Row(
+                children: [
+                  const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.4)),
+                  const SizedBox(width: 14),
+                  Expanded(child: Text(msg, style: const TextStyle(fontSize: 14.5))),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  cancelled = true;
+                  progress.value = _tr('취소 중…', 'Cancelling…', '正在取消…', 'キャンセル中…');
+                },
+                child: Text(_tr('취소', 'Cancel', '取消', 'キャンセル')),
+              ),
+            ],
+          ),
+        ),
+      ).whenComplete(() => dialogOpen = false));
+    }
+
+    // 한글·워드 변환 전 상태 백업
+    final int savedPage = _docPage;
+    final bool savedScroll = _pageModeScroll;
+    final String savedDisplay = _pageDisplay;
+    final String savedTheme = _epubBgTheme;
+    bool changedView = false;
+    String? savedPath;
+
+    try {
+      final List<Map<String, Object?>> pageItems = [];
+
+      if (_isTxt) {
+        // TXT: Flutter TxtPageDocument와 동일한 글꼴·크기·여백·줄바꿈으로 2.5배 고해상도(1488x2105) 렌더링
+        final doc = await TxtPageDocument.open(File(widget.filePath), tmpDir, cancelled: () => cancelled);
+        try {
+          final int total = doc.pageCount;
+          const double scale = 2.5;
+          final int pw = (TxtPageDocument.paperSize.width * scale).round();
+          final int ph = (TxtPageDocument.paperSize.height * scale).round();
+          for (int i = 0; i < total; i++) {
+            if (cancelled) break;
+            progress.value = _tr('페이지 변환 중 (${i + 1} / $total)', 'Converting (${i + 1} / $total)', '正在转换 (${i + 1} / $total)', '変換中 (${i + 1} / $total)');
+            final String pageText = await doc.readPage(i);
+            final recorder = ui.PictureRecorder();
+            final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, pw.toDouble(), ph.toDouble()));
+            canvas.drawRect(Rect.fromLTWH(0, 0, pw.toDouble(), ph.toDouble()), Paint()..color = const Color(0xFFFFFFFF));
+            canvas.scale(scale, scale);
+            final tp = TxtPageDocument.painter(pageText, color: const Color(0xFF000000));
+            try {
+              tp.paint(canvas, const Offset(TxtPageDocument.margin, TxtPageDocument.margin));
+            } finally {
+              tp.dispose();
+            }
+            final pic = recorder.endRecording();
+            final img = await pic.toImage(pw, ph);
+            pic.dispose();
+            final bd = await img.toByteData(format: ui.ImageByteFormat.png);
+            img.dispose();
+            if (bd != null) {
+              final pngFile = File('${tmpDir.path}/p_${i.toString().padLeft(4, '0')}.png');
+              await pngFile.writeAsBytes(bd.buffer.asUint8List(), flush: true);
+              pageItems.add({'path': pngFile.path, 'cropL': 0.0, 'cropT': 0.0, 'cropW': 1.0, 'cropH': 1.0});
+            }
+          }
+        } finally {
+          await doc.dispose();
+        }
+      } else {
+        // 한글·워드: 원본 서식·글꼴·표·이미지가 그대로 렌더링된 WebView를 한 쪽씩 무손실 PNG 캡처 후 종이 영역만 정밀 크롭
+        final int total = math.max(1, _docPageCount);
+        if (savedScroll || savedDisplay != 'one' || savedTheme != 'white' || _epubZoomScale != 1.0) {
+          changedView = true;
+          if (mounted) {
+            setState(() {
+              _pageModeScroll = false;
+              _pageDisplay = 'one';
+              _epubBgTheme = 'white';
+              _showControls = false;
+              _epubZoomScale = 1.0;
+              _epubZoomController.value = Matrix4.identity();
+            });
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 260));
+        } else if (_showControls && mounted) {
+          setState(() => _showControls = false);
+        }
+
+        for (int i = 0; i < total; i++) {
+          if (cancelled || !mounted) break;
+          progress.value = _tr('페이지 변환 중 (${i + 1} / $total)', 'Converting (${i + 1} / $total)', '正在转换 (${i + 1} / $total)', '変換中 (${i + 1} / $total)');
+          _docPage = i;
+          await _hwpController.display('$_documentPositionPrefix:$i');
+          await _waitTurnedPageReady();
+          await Future<void>.delayed(const Duration(milliseconds: 110));
+          if (cancelled || !mounted) break;
+
+          final frames = await _hwpController.pageFrames().timeout(const Duration(milliseconds: 500), onTimeout: () => const <Rect>[]);
+          final Uint8List? pngBytes = await _hwpController.capturePagePng();
+          if (pngBytes == null || pngBytes.isEmpty) continue;
+          final pngFile = File('${tmpDir.path}/p_${i.toString().padLeft(4, '0')}.png');
+          await pngFile.writeAsBytes(pngBytes, flush: true);
+
+          Rect crop = const Rect.fromLTWH(0, 0, 1, 1);
+          if (frames.isNotEmpty) {
+            final f = frames.first;
+            if (f.width > 0.1 && f.height > 0.1) {
+              crop = Rect.fromLTWH(
+                f.left.clamp(0.0, 0.9),
+                f.top.clamp(0.0, 0.9),
+                f.width.clamp(0.1, 1.0 - f.left.clamp(0.0, 0.9)),
+                f.height.clamp(0.1, 1.0 - f.top.clamp(0.0, 0.9)),
+              );
+            }
+          }
+          pageItems.add({
+            'path': pngFile.path,
+            'cropL': crop.left,
+            'cropT': crop.top,
+            'cropW': crop.width,
+            'cropH': crop.height,
+          });
+        }
+      }
+
+      if (!cancelled && pageItems.isNotEmpty) {
+        progress.value = _tr('PDF 파일 만드는 중…', 'Building PDF…', '正在生成 PDF…', 'PDFを作成中…');
+        savedPath = await _pdfChannel.invokeMethod<String>('buildPdfFromImages', {
+          'outputPath': outFile.path,
+          'pages': pageItems,
+        });
+      }
+    } catch (_) {
+      savedPath = null;
+    } finally {
+      // 원래 보던 화면·페이지·테마 복구
+      if (changedView && mounted) {
+        setState(() {
+          _pageModeScroll = savedScroll;
+          _pageDisplay = savedDisplay;
+          _epubBgTheme = savedTheme;
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 160));
+      }
+      if (!_isTxt && mounted) {
+        _docPage = savedPage;
+        unawaited(_hwpController.display('$_documentPositionPrefix:$savedPage'));
+      }
+      if (dialogOpen && mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      progress.dispose();
+      try {
+        if (await tmpDir.exists()) await tmpDir.delete(recursive: true);
+      } catch (_) {}
+      _pdfExporting = false;
+    }
+
+    if (!mounted || cancelled) return;
+    if (savedPath != null && savedPath.isNotEmpty && File(savedPath).existsSync()) {
+      final String createdName = savedPath.split(Platform.pathSeparator).last;
+      final String finalPath = savedPath;
+      await showPopDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(_tr('PDF 변환 완료', 'PDF Created', 'PDF 转换完成', 'PDF変換完了'), style: const TextStyle(fontWeight: FontWeight.w800)),
+          content: Text(_tr(
+            '앱 서재에 사본으로 저장했어요\\n$createdName',
+            'Saved as a copy in your app library\\n$createdName',
+            '已作为副本保存到应用书架\\n$createdName',
+            'アプリの本棚にコピーとして保存しました\\n$createdName',
+          )),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(_tr('닫기', 'Close', '关闭', '閉じる')),
+            ),
+            FilledButton.icon(
+              onPressed: () {
+                Navigator.pop(ctx);
+                unawaited(shareFile(context, finalPath, title: createdName));
+              },
+              icon: const Icon(Icons.share_outlined, size: 18),
+              label: Text(_tr('공유', 'Share', '分享', '共有')),
+            ),
+          ],
+        ),
+      );
+    } else {
+      showAppToast(context, _tr('PDF로 변환하지 못했어요', 'Could not convert to PDF', '无法转换为 PDF', 'PDFに変換できませんでした'), fromTop: true);
+    }
   }
 
   /// 저장 단추를 눌렀을 때만 파일에 수정 내용을 기록하고 편집 종료
