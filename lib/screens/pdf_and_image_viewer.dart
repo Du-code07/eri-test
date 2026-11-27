@@ -1110,23 +1110,17 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
     if (_scrollSizes.length < _imagePages.length) _prepareScrollSizes(retry: false);
     final double dpr = MediaQuery.devicePixelRatioOf(context);
     final double w = MediaQuery.sizeOf(context).width;
-    // 한글·워드 스크롤 보기처럼: 위아래를 띄우고 맨 위에 선을 그어 쪽이 그 선에서 시작하게
-    final double bp = MediaQuery.viewPaddingOf(context).bottom;
-    final double band = (bp > 0 ? bp : 8.0) + 20.0;
-    return Padding(
-      padding: EdgeInsets.only(top: band, bottom: band),
-      child: ContinuousPageList(
-      topLine: const Color(0xFFC4C4CA),
+    // 상단·하단 카메라/내비게이션 영역까지 페이지가 보이도록 바깥쪽 여백(10px) + 간격 색(kViewerGapColor) 통일
+    return ContinuousPageList(
       controller: _scrollCtrl,
       count: _imagePages.length,
       aspectOf: _scrollAspect,
       initialPage: _currentPage,
-      // 쪽 그대로 세로로 늘어놓고 쪽 사이는 살짝 띄움 (슬라이드 보기의 쪽을 세로로, 간격 줄은 예전 12의 절반)
-      gap: 6,
+      gap: 10,
+      outerMargin: 10,
       markedPages: _scrollMarkPages,
       onViewportChanged: _isPdfFile ? _onScrollZoomMoved : null,
-      // 쪽 뒤 바탕은 앱 테마(또는 PDF 자체 배경색), 쪽 사이 간격 줄은 고정 색
-      background: _backdrop(context),
+      background: kViewerGapColor,
       gapColor: kViewerGapColor,
       onPageChanged: (p) {
         setState(() => _currentPage = p);
@@ -1217,7 +1211,6 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
         }
         return content;
       },
-    ),
     );
   }
 
@@ -2937,11 +2930,19 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
       drawerEnableOpenDragGesture: false,
       // 페이지 이동 창의 키보드가 올라와도 뒤의 책 화면은 줄이지 않는다 (줄어드는 동안 버벅임)
       resizeToAvoidBottomInset: false,
-      backgroundColor: _backdrop(context),
+      backgroundColor: _pageModeScroll ? kViewerGapColor : _backdrop(context),
       body: Stack(
         fit: StackFit.expand,
         children: [
-          Positioned.fill(
+          AnimatedPositioned(
+            duration: Anim.ms(220),
+            curve: Curves.easeOutCubic,
+            top: (_showControls || _findOpen)
+                ? ((MediaQuery.paddingOf(context).top > 0 ? MediaQuery.paddingOf(context).top : SystemBars.stableTop(context)) + 48.0)
+                : 0.0,
+            left: 0,
+            right: 0,
+            bottom: 0,
             child: Listener(
                 behavior: HitTestBehavior.translucent,
                 onPointerDown: (event) {

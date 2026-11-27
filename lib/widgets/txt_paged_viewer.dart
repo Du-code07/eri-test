@@ -324,13 +324,11 @@ extension on _TxtPagedViewerState {
       count: doc.pageCount,
       aspectOf: (_) => aspect,
       initialPage: _page,
-      // 쪽 그대로 세로로 늘어놓고 쪽 사이는 살짝 띄움 (슬라이드 보기의 쪽을 세로로, 간격 줄은 예전 12의 절반)
-      gap: 6,
-      // 쪽 뒤 바탕은 뷰어 배경 설정(라이트=흰색, 다크=검은색), 쪽 사이 간격 줄은 밝은 회색 고정
-      background: viewerThemeBackdrop(widget.theme),
+      // 바깥쪽 여백(10px) 및 페이지 간격(10px), 배경색을 간격 색(kViewerGapColor)으로 통일
+      gap: 10,
+      outerMargin: 10,
+      background: kViewerGapColor,
       gapColor: kViewerGapColor,
-      // 한글·워드 스크롤 보기처럼 맨 위에 선 (쪽이 이 선에서 시작)
-      topLine: const Color(0xFFC4C4CA),
       // 두 손가락으로 벌려 확대
       zoomable: true,
       onPageChanged: (p) {

@@ -5305,7 +5305,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       // 페이지 이동 창의 키보드가 올라와도 뒤의 책 화면은 줄이지 않는다 (줄어드는 동안 버벅임)
       resizeToAvoidBottomInset: false,
       key: _scaffoldKey,
-      backgroundColor: _slideShow ? Colors.black : bgColor,
+      backgroundColor: _slideShow ? Colors.black : ((_pageModeScroll && !_isEpub && !_isSpreadsheet) ? kViewerGapColor : bgColor),
       onDrawerChanged: (open) {
         if (!open && _tocFreeze != null) {
           // 닫히는 움직임이 끝난 뒤 실제 화면으로
@@ -5385,21 +5385,26 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
                   child: Image(image: AssetImage('assets/textures/paper.jpg'), fit: BoxFit.cover, gaplessPlayback: true),
                 ),
               ),
-            // EPUB 뷰어 본문 (Listener는 EpubViewer에만)
+            // 뷰어 본문 (EPUB 제외: 상단·하단 카메라/내비게이션 영역까지 페이지 표시 + 상단바 내려올 때 페이지도 함께 내려옴)
             Positioned.fill(
-              child: Padding(
-                padding: _slideShow
-                    ? EdgeInsets.zero
-                    : EdgeInsets.only(
-                        // EPUB·TXT: 글이 상단바에 가리지 않도록 상단바 높이보다 살짝 아래에서 시작
-                        // 쪽이 있는 문서(워드·한글·PPT): 쪽 위아래 빈 곳이 같도록 위 여백을 아래와 같게
-                        // TXT 스크롤 보기는 한글·워드 스크롤 보기처럼 위를 띄우고 선에서 쪽이 시작
-                        top: (_isEpub || (_isTxt && !_pageModeScroll))
-                            ? _readerTextTop
-                            : (_isSpreadsheet ? 12.0 : (bottomPadding > 0 ? bottomPadding : 8.0) + 20.0),
-                        bottom: (bottomPadding > 0 ? bottomPadding : 8.0) + 20.0,
-                      ),
-                child: IgnorePointer(
+              child: TweenAnimationBuilder<double>(
+                tween: Tween<double>(
+                  end: (!_slideShow && !_isEpub && !_isSpreadsheet && (_showControls || _findOpen))
+                      ? ((MediaQuery.paddingOf(context).top > 0 ? MediaQuery.paddingOf(context).top : SystemBars.stableTop(context)) + 48.0)
+                      : 0.0,
+                ),
+                duration: Anim.ms(220),
+                curve: Curves.easeOutCubic,
+                builder: (_, dy, child) => dy == 0.0 ? child! : Transform.translate(offset: Offset(0, dy), child: child),
+                child: Padding(
+                  padding: _slideShow
+                      ? EdgeInsets.zero
+                      : (_isEpub
+                          ? EdgeInsets.only(top: _readerTextTop, bottom: (bottomPadding > 0 ? bottomPadding : 8.0) + 20.0)
+                          : (_isSpreadsheet
+                              ? EdgeInsets.only(top: 12.0, bottom: (bottomPadding > 0 ? bottomPadding : 8.0) + 20.0)
+                              : EdgeInsets.zero)),
+                  child: IgnorePointer(
                   key: _epubViewRectKey,
                   ignoring: (_isMemoMode && (_isStylusDown || _allowFingerDrawing)),
                   child: Listener(
@@ -5698,6 +5703,7 @@ Offstage(offstage: _tocFreeze != null, child: EpubViewer(
                     ),
                   ),
                 ),
+              ),
               ),
             ),
 

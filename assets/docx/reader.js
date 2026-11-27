@@ -855,7 +855,8 @@ function vMakeCloneRaw(entry, index) {
   }
   return fresh;
 }
-const V_GAP = 6; // 스크롤 보기 쪽 사이 간격 (예전 12의 절반)
+const V_GAP = 10; // 스크롤 보기 쪽 사이 간격
+const V_PAD = 10; // 스크롤 보기 바깥쪽 여백 (좌·우·상·하 통일)
 function pageFrames() { return vertical ? [...vMounted.values()].map(m => m.frame) : realFrames(); }
 let lastVHostW = 0;
 const vResize = new ResizeObserver(() => {
@@ -1122,12 +1123,12 @@ function vZoomListen(el) {
   el.addEventListener('touchend', vPinchEnd);
   el.addEventListener('touchcancel', vPinchEnd);
 }
-/** 확대 배율에 맞춘 쪽 너비 */
-function vPageWidth() { return (innerWidth || vhost.clientWidth) * vZoom; }
+/** 확대 배율에 맞춘 쪽 너비 (바깥쪽 여백 V_PAD 반영) */
+function vPageWidth() { return Math.max(40, ((innerWidth || vhost.clientWidth) - V_PAD * 2) * vZoom); }
 /** 화면보다 좁게 줄였으면 쪽을 가로 가운데에 (쪽 왼쪽 끝 자리) */
 function vLeft() {
   const VW = innerWidth || vhost.clientWidth, W = vPageWidth();
-  return W < VW - 0.5 ? Math.floor((VW - W) / 2) : 0;
+  return W < VW - 0.5 ? Math.floor((VW - W) / 2) : V_PAD;
 }
 // 쪽 크기는 쪽마다 정해 둔 비율 × 쪽 너비(--vw) — 확대·축소할 때는 너비 하나만 바꾸면 모든 쪽이 따라 바뀜
 let vRatios = [];
@@ -1151,8 +1152,8 @@ function vTrimFor(i) {
   return { x: x0 / W, y: y0 / H, w: Math.max(0.1, (x1 - x0) / W), h: Math.max(0.1, (y1 - y0) / H) };
 }
 function vVisRatio(i) { const t = vTrim[i], r = vRatios[i] || 1.414; return t ? r * t.h / t.w * TRIM_PAD : r; }
-// 여백 줄이기: 쪽 넘김 보기처럼 잘라 낸 본문이 화면 끝에 딱 붙지 않게 양옆을 2%씩 띄움 (두 보기의 크기 비율을 같게)
-const TRIM_PAD = 0.96;
+// 여백 줄이기: 바깥쪽 여백(V_PAD)이 이미 확보되어 있어 여백 줄이기 시에도 동일한 바깥쪽 회색 테두리 유지
+const TRIM_PAD = 1.0;
 function vSlotWidthCss(i) { return vTrim[i] ? `calc(var(--vw) * ${TRIM_PAD})` : ''; }
 function vSlotLeftCss(i) { return vTrim[i] ? `calc(var(--vml, 0px) + var(--vw) * ${(1 - TRIM_PAD) / 2})` : ''; }
 /** 쪽 전체가 화면에서 쓰는 너비 (여백 줄이기면 본문이 화면 너비를 채우도록 더 넓음) */
@@ -1177,15 +1178,15 @@ function vSize() {
   vhost.style.setProperty('--vw', `${W}px`);
   vhost.style.setProperty('--vml', `${vLeft()}px`);
   vhost.style.overflowX = vZoom > 1.001 ? 'auto' : 'hidden';
-  vTops = []; let y = 0;
-  for (let i = 0; i < vRatios.length; i++) { vTops.push(y); y += W * vVisRatio(i) + V_GAP; }
+  vTops = []; let y = V_PAD;
+  for (let i = 0; i < vRatios.length; i++) { vTops.push(y); y += W * vVisRatio(i) + (i < vRatios.length - 1 ? V_GAP : V_PAD); }
   vTops.push(y);
   // 쪽이 화면보다 짧으면(1쪽뿐인 문서 등) 위에 붙이지 않고 화면 가운데에
-  const total = y - V_GAP, viewH = innerHeight || vhost.clientHeight;
+  const total = y, viewH = innerHeight || vhost.clientHeight;
   const pad = total < viewH ? Math.floor((viewH - total) / 2) : 0;
   if (vSlots.length) {
-    vSlots[0].style.marginTop = pad ? `${pad}px` : '';
-    vSlots[vSlots.length - 1].style.marginBottom = pad ? '0px' : '';
+    vSlots[0].style.marginTop = `${V_PAD + pad}px`;
+    vSlots[vSlots.length - 1].style.marginBottom = `${V_PAD}px`;
   }
   if (pad) for (let i = 0; i < vTops.length; i++) vTops[i] += pad;
   for (const [i, m] of vMounted) m.source.style.transform = `scale(${vFullWidth(i) / m.entry.width})`;

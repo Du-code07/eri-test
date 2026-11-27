@@ -421,7 +421,8 @@ Widget _choiceDialogBody<T>(
       clipBehavior: Clip.antiAlias,
       child: InkWell(onTap: () => onTap(value), child: SizedBox(width: double.infinity, child: body)),
     );
-    final Widget? extra = below?.call(value);
+    // 가로 모드(wide)에서는 좁은 카드 열 안에 넣지 않고 카드 줄 아래 전체 너비로 배치 (세로 1자 줄바꿈 방지)
+    final Widget? extra = wide ? null : below?.call(value);
     if (extra == null) return m;
     return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [m, extra]);
   }
@@ -452,7 +453,7 @@ Widget _choiceDialogBody<T>(
                 ),
               ),
             SizedBox(height: wide ? 14 : 18),
-            if (wide)
+            if (wide) ...[
               IntrinsicHeight(
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -463,8 +464,11 @@ Widget _choiceDialogBody<T>(
                     ],
                   ],
                 ),
-              )
-            else
+              ),
+              for (final (value, _, _, _) in options)
+                if (below?.call(value) case final w?)
+                  Padding(padding: const EdgeInsets.only(top: 6), child: w),
+            ] else
               for (final (value, icon, label, desc) in options)
                 Padding(padding: const EdgeInsets.only(bottom: 12), child: card(value, icon, label, desc)),
           ],
@@ -1321,10 +1325,14 @@ class ContinuousPageList extends StatefulWidget {
     this.gapColor,
     this.zoomable = true,
     this.gap = 0,
+    this.outerMargin = 0,
     this.markedPages = const {},
     this.onViewportChanged,
     this.topLine,
   });
+
+  /// 스크롤 보기 바깥쪽(좌·우·상·하) 여백 (확대 1배 기준)
+  final double outerMargin;
 
   /// 스크롤 보기 맨 위(쪽이 시작하는 자리)에 긋는 가는 선 (한글·워드 스크롤 보기와 같게)
   final Color? topLine;
@@ -1419,6 +1427,8 @@ class _ContinuousPageListState extends State<ContinuousPageList> with SingleTick
     _oy = _oy.clamp(0.0, _maxY).toDouble();
   }
 
+  double get _pageW => math.max(1.0, _width - widget.outerMargin * 2);
+
   void _layout(double width, double height) {
     final bool sameWidth = width == _width && _tops.length == widget.count + 1;
     _height = height;
@@ -1430,9 +1440,11 @@ class _ContinuousPageListState extends State<ContinuousPageList> with SingleTick
     final int page = _placed && _tops.length > 1 ? _pageAt(_oy) : widget.initialPage.clamp(0, math.max(0, widget.count - 1)).toInt();
     final double within = _placed && _tops.length > 1 ? ((_oy / _scale) - _tops[page]) / math.max(1, _tops[page + 1] - _tops[page]) : 0;
     _width = width;
+    final double pw = math.max(1.0, width - widget.outerMargin * 2);
     final tops = List<double>.filled(widget.count + 1, 0);
+    tops[0] = widget.outerMargin;
     for (int i = 0; i < widget.count; i++) {
-      tops[i + 1] = tops[i] + width * widget.aspectOf(i) + (i < widget.count - 1 ? widget.gap : 0);
+      tops[i + 1] = tops[i] + pw * widget.aspectOf(i) + (i < widget.count - 1 ? widget.gap : widget.outerMargin);
     }
     _tops = tops;
     if (widget.count > 0) {
@@ -1486,18 +1498,20 @@ class _ContinuousPageListState extends State<ContinuousPageList> with SingleTick
     final double x1 = (_ox + _width) / _scale;
     final double y0 = (_oy - padY) / _scale;
     final double y1 = (_oy - padY + _height) / _scale;
+    final double pw = _pageW;
+    final double ox0 = widget.outerMargin;
     for (int i = 0; i < widget.count; i++) {
       final double top = _tops[i];
-      final double h = _width * widget.aspectOf(i);
+      final double h = pw * widget.aspectOf(i);
       final double bottom = top + h;
       if (bottom <= y0) continue;
       if (top >= y1) break;
-      final double l = x0.clamp(0.0, _width).toDouble();
-      final double r = x1.clamp(0.0, _width).toDouble();
+      final double l = (x0 - ox0).clamp(0.0, pw).toDouble();
+      final double r = (x1 - ox0).clamp(0.0, pw).toDouble();
       final double t = y0.clamp(top, bottom).toDouble();
       final double b = y1.clamp(top, bottom).toDouble();
       if (r - l < 2 || b - t < 2 || h <= 0) continue;
-      final Rect norm = Rect.fromLTRB(l / _width, (t - top) / h, r / _width, (b - top) / h);
+      final Rect norm = Rect.fromLTRB(l / pw, (t - top) / h, r / pw, (b - top) / h);
       out[i] = (norm, Size((r - l) * _scale, (b - t) * _scale));
     }
     return out;
@@ -1662,31 +1676,32 @@ class _ContinuousPageListState extends State<ContinuousPageList> with SingleTick
             while (i > 0 && _tops[i] > from) {
               i--;
             }
+            final double pw = _pageW;
+            final double ox0 = widget.outerMargin * s;
             for (; i < widget.count && _tops[i] < to; i++) {
-              final double h = (_tops[i + 1] - _tops[i] - (i < widget.count - 1 ? widget.gap : 0)) * s;
+              final double h = (_tops[i + 1] - _tops[i] - (i < widget.count - 1 ? widget.gap : widget.outerMargin)) * s;
               children.add(Positioned(
                 key: ValueKey(i),
-                left: -_ox,
+                left: ox0 - _ox,
                 top: _tops[i] * s - _oy + padY,
-                width: _width * s,
+                width: pw * s,
                 height: h,
                 child: RepaintBoundary(child: widget.pageBuilder(context, i)),
               ));
               if (widget.markedPages.contains(i)) {
                 children.add(Positioned(
                   key: ValueKey('bm$i'),
-                  left: -_ox + math.min(18.0, _width * s * 0.05),
+                  left: ox0 - _ox + math.min(18.0, pw * s * 0.05),
                   top: _tops[i] * s - _oy + padY,
                   child: const IgnorePointer(child: BookmarkRibbon()),
                 ));
               }
-              // 쪽 사이 간격 줄 (화면 너비 전체)
-              if (widget.gapColor != null && widget.gap > 0 && i < widget.count - 1) {
+              // 쪽 사이 간격 줄 (바탕색과 다를 때만 별도 표시)
+              if (widget.gapColor != null && widget.gapColor != widget.background && widget.gap > 0 && i < widget.count - 1) {
                 children.add(Positioned(
                   key: ValueKey('gap$i'),
-                  // 화면보다 작게 줄였을 때는 쪽 너비만큼만
-                  left: s < 1 ? -_ox : 0,
-                  width: s < 1 ? _width * s : c.maxWidth,
+                  left: s < 1 ? (ox0 - _ox) : 0,
+                  width: s < 1 ? pw * s : c.maxWidth,
                   top: _tops[i] * s - _oy + padY + h,
                   height: widget.gap * s,
                   child: ColoredBox(color: widget.gapColor!),
