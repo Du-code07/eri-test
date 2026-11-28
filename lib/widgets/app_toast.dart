@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../services/system_bars.dart';
@@ -23,7 +24,7 @@ void dismissAppToast() {
 }
 
 /// 모든 화면(메인·하위창·뷰어)에서 상단에 단 1개만 표시되는 통일 안내창.
-/// 새 안내가 호출되면 이전 안내는 즉시 교체되어 겹치지 않음.
+/// 4.5초간 표시되며, 화면 어디든 터치하면 터치 동작을 방해하지 않고 바로 사라짐.
 void showAppToast(
   BuildContext context,
   String message, {
@@ -50,8 +51,6 @@ void showAppToast(
       message: message,
       content: content,
       topOffset: topOffset,
-      actionLabel: actionLabel,
-      onAction: onAction,
       onDismissed: () {
         if (identical(_activeAppToast, entry)) {
           _activeAppToast = null;
@@ -75,16 +74,12 @@ class _AppToastOverlay extends StatefulWidget {
     required this.message,
     this.content,
     required this.topOffset,
-    this.actionLabel,
-    this.onAction,
     required this.onDismissed,
   });
 
   final String message;
   final Widget? content;
   final double topOffset;
-  final String? actionLabel;
-  final VoidCallback? onAction;
   final VoidCallback onDismissed;
 
   @override
@@ -106,16 +101,28 @@ class _AppToastOverlayState extends State<_AppToastOverlay> with SingleTickerPro
   );
 
   bool _dismissing = false;
+  late final DateTime _shownAt = DateTime.now();
+
+  void _onGlobalPointer(PointerEvent event) {
+    if (_dismissing || event is! PointerDownEvent) return;
+    // 알림을 띄운 직후 같은 터치 이벤트에 바로 닫히지 않도록 짧은 유예(120ms)
+    if (DateTime.now().difference(_shownAt).inMilliseconds < 120) return;
+    _activeAppToastTimer?.cancel();
+    _activeAppToastTimer = null;
+    dismiss();
+  }
 
   @override
   void initState() {
     super.initState();
     _ctrl.forward();
+    GestureBinding.instance.pointerRouter.addGlobalRoute(_onGlobalPointer);
   }
 
   Future<void> dismiss() async {
     if (_dismissing || !mounted) return;
     _dismissing = true;
+    GestureBinding.instance.pointerRouter.removeGlobalRoute(_onGlobalPointer);
     try {
       await _ctrl.reverse();
     } catch (_) {}
@@ -124,6 +131,7 @@ class _AppToastOverlayState extends State<_AppToastOverlay> with SingleTickerPro
 
   @override
   void dispose() {
+    GestureBinding.instance.pointerRouter.removeGlobalRoute(_onGlobalPointer);
     _ctrl.dispose();
     super.dispose();
   }
@@ -131,7 +139,6 @@ class _AppToastOverlayState extends State<_AppToastOverlay> with SingleTickerPro
   @override
   Widget build(BuildContext context) {
     final bool dark = Theme.of(context).brightness == Brightness.dark;
-    final bool hasAction = widget.actionLabel != null && widget.onAction != null;
     final Widget body = widget.content ??
         Text(
           widget.message,
@@ -147,33 +154,10 @@ class _AppToastOverlayState extends State<_AppToastOverlay> with SingleTickerPro
         side: BorderSide(color: dark ? Colors.white.withValues(alpha: 0.14) : Colors.transparent),
       ),
       child: Padding(
-        padding: hasAction
-            ? const EdgeInsets.fromLTRB(18, 6, 8, 6)
-            : const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
         child: DefaultTextStyle(
           style: const TextStyle(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.w600, height: 1.3),
-          child: hasAction
-              ? Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Flexible(child: body),
-                    const SizedBox(width: 6),
-                    TextButton(
-                      onPressed: () {
-                        widget.onAction?.call();
-                        dismiss();
-                      },
-                      style: TextButton.styleFrom(
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        minimumSize: Size.zero,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      child: Text(widget.actionLabel!, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5)),
-                    ),
-                  ],
-                )
-              : body,
+          child: body,
         ),
       ),
     );
@@ -182,20 +166,13 @@ class _AppToastOverlayState extends State<_AppToastOverlay> with SingleTickerPro
       left: 16,
       right: 16,
       top: widget.topOffset,
-      child: ClipRect(
-        child: Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: SlideTransition(
-            position: _slide,
-            child: FadeTransition(
-              opacity: _fade,
-              child: Center(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: dismiss,
-                  child: pill,
-                ),
-              ),
+      child: IgnorePointer(
+        child: ClipRect(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: SlideTransition(
+              position: _slide,
+              child: FadeTransition(opacity: _fade, child: Center(child: pill)),
             ),
           ),
         ),
