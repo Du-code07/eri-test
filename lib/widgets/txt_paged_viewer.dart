@@ -295,20 +295,51 @@ class _TxtPagedViewerState extends State<TxtPagedViewer> {
       ),
     );
     if (widget.scroll && _document != null) return _buildScroll(background, foreground, paper);
+    Widget pageCard(String text, int pIdx) => FittedBox(
+          fit: BoxFit.contain,
+          alignment: Alignment.center,
+          child: SizedBox.fromSize(
+            size: TxtPageDocument.paperSize,
+            child: DecoratedBox(
+              position: DecorationPosition.foreground,
+              decoration: background.computeLuminance() >= 0.5
+                  ? const BoxDecoration(border: Border.fromBorderSide(BorderSide(color: Color(0xFFC4C4CA), width: 1)))
+                  : const BoxDecoration(),
+              child: ColoredBox(
+                color: background,
+                child: WordSelectionLayer(
+                  pageIndex: pIdx,
+                  tr: _tr,
+                  onEdgeAutoScroll: null,
+                  loadWords: () async => _wordsOf(text),
+                  child: CustomPaint(
+                    painter: _TxtPaperPainter(text, foreground,
+                        query: _query, hits: _query.isEmpty ? const [] : _hitsOn(pIdx), current: _currentOn(pIdx)),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
     final children = [
-      for (int i = 0; i < _visibleText.length; i++) Expanded(child: paper(_visibleText[i], _page + i)),
+      for (int i = 0; i < _visibleText.length; i++) Expanded(child: pageCard(_visibleText[i], _page + i)),
     ];
     if (widget.spread && children.length == 1)
       children.add(const Expanded(child: SizedBox()));
+    final ordered = widget.rtl && widget.spread ? children.reversed.toList() : children;
+    final rowChildren = <Widget>[
+      for (int i = 0; i < ordered.length; i++) ...[
+        if (i > 0) const SizedBox(width: 4),
+        ordered[i],
+      ],
+    ];
     return ColoredBox(
-      color: background,
+      color: kViewerGapColor,
       child: _visibleText.isEmpty
-          ? FileLoadingView(label: AppI18n.t(StorageService.appLangNotifier.value, ko: '파일 여는 중…', en: 'Opening file…', zh: '正在打开文件', ja: 'ファイルを開いています'), background: background)
+          ? FileLoadingView(label: AppI18n.t(StorageService.appLangNotifier.value, ko: '파일 여는 중…', en: 'Opening file…', zh: '正在打开文件', ja: 'ファイルを開いています'), background: kViewerGapColor)
           : Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: widget.rtl && widget.spread
-                  ? children.reversed.toList()
-                  : children,
+              children: rowChildren,
             ),
     );
   }

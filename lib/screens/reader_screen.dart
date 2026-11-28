@@ -5305,7 +5305,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
       // 페이지 이동 창의 키보드가 올라와도 뒤의 책 화면은 줄이지 않는다 (줄어드는 동안 버벅임)
       resizeToAvoidBottomInset: false,
       key: _scaffoldKey,
-      backgroundColor: _slideShow ? Colors.black : ((_pageModeScroll && !_isEpub && !_isSpreadsheet) ? kViewerGapColor : bgColor),
+      backgroundColor: _slideShow ? Colors.black : ((!_isEpub && !_isSpreadsheet) ? kViewerGapColor : bgColor),
       onDrawerChanged: (open) {
         if (!open && _tocFreeze != null) {
           // 닫히는 움직임이 끝난 뒤 실제 화면으로

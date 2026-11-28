@@ -2930,7 +2930,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
       drawerEnableOpenDragGesture: false,
       // 페이지 이동 창의 키보드가 올라와도 뒤의 책 화면은 줄이지 않는다 (줄어드는 동안 버벅임)
       resizeToAvoidBottomInset: false,
-      backgroundColor: _pageModeScroll ? kViewerGapColor : _backdrop(context),
+      backgroundColor: kViewerGapColor,
       body: Stack(
         fit: StackFit.expand,
         children: [

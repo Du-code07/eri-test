@@ -5,7 +5,7 @@
 @font-face { font-family: FReaderMath; src: url(fonts/LatinModernMath-Regular.woff2); }
 html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }
 body { font-family: FReaderSans, sans-serif; -webkit-text-size-adjust: 100%; }
-#pages { display: flex; align-items: center; justify-content: center; gap: calc(8px / 3); width: 100%; height: 100%; overflow: hidden; background: var(--backdrop, transparent); }
+#pages { display: flex; align-items: center; justify-content: center; gap: calc(8px / 3); width: 100%; height: 100%; overflow: hidden; background: var(--gap); }
 #pages.rtl { flex-direction: row-reverse; }
 .page { flex: none; background: white; position: relative; overflow: hidden; }
 .page > svg { display: block; width: 100%; height: 100%; }
@@ -49,7 +49,7 @@ body[data-theme="white"] .page::after, body[data-theme="white"] #vpages .vslot::
 /* 넘겨 보기 확대: 손가락이 움직이는 동안에는 그려 둔 그림을 통째로 옮기고 크기만 바꿈 (멈추면 그 배율로 다시 그림) */
 #pages.zooming { position: relative; z-index: 1; transform-origin: 0 0; will-change: transform; background: transparent; }
 /* 넘겨 보기 확대 밑그림: 1배로 한 번 그려 둔 쪽 복사본 — 아직 안 그려진 가장자리를 같은 자리에서 채움 */
-#pages-under { position: fixed; left: 0; top: 0; z-index: 0; display: flex; align-items: center; justify-content: center; gap: calc(8px / 3); overflow: hidden; background: var(--backdrop, transparent); transform-origin: 0 0; will-change: transform; pointer-events: none; }
+#pages-under { position: fixed; left: 0; top: 0; z-index: 0; display: flex; align-items: center; justify-content: center; gap: calc(8px / 3); overflow: hidden; background: var(--gap); transform-origin: 0 0; will-change: transform; pointer-events: none; }
 #pages-under.rtl { flex-direction: row-reverse; }
 #pages-under > .page + .page { box-shadow: calc(-8px / 3) 0 0 0 var(--gap); }
 #pages-under.rtl > .page + .page { box-shadow: calc(8px / 3) 0 0 0 var(--gap); }
