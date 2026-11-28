@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import '../services/storage_service.dart';
 import '../widgets/push_aside_route.dart';
 import 'legal_screen.dart';
+import '../widgets/app_toast.dart';
 
 /// 도움말 > 문의하기: 본인 이메일·제목·내용을 적고 [보내기]를 누르면
 /// 메일 앱이 받는 사람·제목·내용이 채워진 채로 열림 (앱이 직접 메일 서버로 보내지는 않음)
@@ -65,8 +66,7 @@ class _ContactScreenState extends State<ContactScreen> {
     } catch (_) {}
     if (!mounted) return;
     if (opened) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(_t('메일 앱에서 보내기를 눌러 주세요', 'Tap Send in your email app', '请在邮件应用中点击发送', 'メールアプリで送信を押してください'))));
+      showAppToast(context, _t('메일 앱에서 전송', 'Send in mail app', '在邮件应用中发送', 'メールアプリで送信'), fromTop: true);
     } else {
       await Clipboard.setData(ClipboardData(text: '${ContactScreen.supportEmail}\n\n${_subject.text.trim()}\n\n$b'));
       if (!mounted) return;

@@ -4,12 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'storage_service.dart';
+import '../widgets/app_toast.dart';
 
 /// 파일을 메모 없이 원본 그대로 다른 앱으로 공유 (안드로이드 공유 창)
 Future<void> shareFile(BuildContext context, String path, {String? title}) async {
   const channel = MethodChannel('ebook_reader/pdf_renderer');
   String tr(String ko, String en, String zh, String ja) => AppI18n.t(StorageService.appLangNotifier.value, ko: ko, en: en, zh: zh, ja: ja);
-  final messenger = ScaffoldMessenger.maybeOf(context);
   try {
     if (!File(path).existsSync()) throw Exception('missing');
     final ok = await channel.invokeMethod<bool>('shareFile', {
@@ -19,7 +19,7 @@ Future<void> shareFile(BuildContext context, String path, {String? title}) async
     });
     if (ok != true) throw Exception('share failed');
   } catch (_) {
-    messenger?.showSnackBar(SnackBar(content: Text(tr('파일을 공유하지 못했어요', 'Could not share the file', '无法分享文件', 'ファイルを共有できませんでした'))));
+    if (context.mounted) showAppToast(context, tr('실패', 'Failed', '失败', '失敗'), fromTop: true);
   }
 }
 

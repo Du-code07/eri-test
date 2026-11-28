@@ -24,6 +24,7 @@ import '../services/storage_service.dart';
 import '../widgets/choice_sheet.dart';
 import '../widgets/sheet_pull_to_close.dart';
 import 'language_select_screen.dart';
+import '../widgets/app_toast.dart';
 
 /// 앱 설정 화면: 항목을 누르면 아래에서 고르기 창이 올라온다.
 class AppSettingsScreen extends StatefulWidget {
@@ -730,7 +731,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
     PaintingBinding.instance.imageCache.clear();
     await _measureCache();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_t('캐시를 지웠어요', 'Cache cleared', '缓存已清除', 'キャッシュを削除しました'))));
+    showAppToast(context, _t('완료', 'Done', '完成', '完了'), fromTop: true);
   }
 
   Future<void> _clearData() async {
@@ -756,7 +757,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
     const ch = MethodChannel('ebook_reader/pdf_renderer');
     final done = await ch.invokeMethod<bool>('clearAppData').catchError((_) => false) ?? false;
     if (!done && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_t('데이터를 지우지 못했어요', 'Could not clear data', '无法清除数据', 'データを削除できませんでした'))));
+      showAppToast(context, _t('실패', 'Failed', '失败', '失敗'), fromTop: true);
     }
   }
 

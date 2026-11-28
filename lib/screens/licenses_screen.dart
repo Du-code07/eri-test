@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import '../services/asset_licenses.dart';
 import '../services/storage_service.dart';
 import '../widgets/push_aside_route.dart';
+import '../widgets/app_toast.dart';
 
 /// 도움말 '오픈소스 라이선스': 이름을 누르면 원본 주소(프로젝트·패키지 페이지)로, 오른쪽 아이콘은 라이선스 전문
 class LicensesScreen extends StatefulWidget {
@@ -63,7 +64,7 @@ class _LicensesScreenState extends State<LicensesScreen> {
       ok = await _channel.invokeMethod<bool>('openUrl', {'url': link}) ?? false;
     } catch (_) {}
     if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_tr('링크를 열 수 없어요', 'Could not open the link', '无法打开链接', 'リンクを開けません'))));
+      showAppToast(context, _tr('실패', 'Failed', '失败', '失敗'), fromTop: true);
     }
   }
 

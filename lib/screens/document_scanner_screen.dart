@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import '../services/storage_service.dart';
 import '../widgets/app_colors.dart';
 import '../widgets/pop_dialog.dart';
+import '../widgets/app_toast.dart';
 
 class _ScanPageItem {
   _ScanPageItem({
@@ -236,9 +237,7 @@ class _DocumentScannerScreenState extends State<DocumentScannerScreen>
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('카메라 오류: $e')),
-        );
+        showAppToast(context, _tr('실패', 'Failed', '失败', '失敗'), fromTop: true);
       }
     } finally {
       if (mounted) {
@@ -252,8 +251,7 @@ class _DocumentScannerScreenState extends State<DocumentScannerScreen>
     if (state == 'granted') return true;
     if (!mounted) return false;
     if (state != 'blocked') {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_tr(
-          '문서를 스캔하려면 카메라 권한이 필요해요', 'Camera permission is needed to scan documents', '扫描文档需要相机权限', '書類をスキャンするにはカメラの権限が必要です'))));
+      showAppToast(context, _tr('카메라 권한 필요', 'Camera permission required', '需要相机权限', 'カメラ権限が必要'), fromTop: true);
       return false;
     }
     final go = await showPopDialog<bool>(
@@ -284,8 +282,7 @@ class _DocumentScannerScreenState extends State<DocumentScannerScreen>
     final String again = await _pdfChannel.invokeMethod<String>('ensureCameraPermission', {'ask': false}).catchError((_) => 'denied') ?? 'denied';
     if (again == 'granted') return true;
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_tr(
-          '카메라 권한이 허용되지 않았어요', 'Camera permission was not allowed', '未允许相机权限', 'カメラの権限が許可されていません'))));
+      showAppToast(context, _tr('카메라 권한 필요', 'Camera permission required', '需要相机权限', 'カメラ権限が必要'), fromTop: true);
     }
     return false;
   }
@@ -498,19 +495,7 @@ class _DocumentScannerScreenState extends State<DocumentScannerScreen>
       p.contrast = cur.contrast;
       unawaited(_processPage(p));
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        duration: const Duration(milliseconds: 1300),
-        content: Text(
-          _tr(
-            '전체 ${_pages.length}쪽에 [${_modeName(cur.mode)}] 필터를 적용했어요',
-            'Applied [${_modeName(cur.mode)}] to all ${_pages.length} pages',
-            '已将 [${_modeName(cur.mode)}] 应用到全部 ${_pages.length} 页',
-            '全${_pages.length}ページに[${_modeName(cur.mode)}]を適用しました',
-          ),
-        ),
-      ),
-    );
+    showAppToast(context, _tr('완료', 'Done', '完成', '完了'), fromTop: true, duration: const Duration(milliseconds: 1300));
   }
 
   Future<void> _saveAndCreatePdf() async {
@@ -620,9 +605,7 @@ class _DocumentScannerScreenState extends State<DocumentScannerScreen>
     } catch (e) {
       if (mounted) {
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('PDF 생성 오류: $e')),
-        );
+        showAppToast(context, _tr('실패', 'Failed', '失败', '失敗'), fromTop: true);
       }
     } finally {
       _pdfChannel.setMethodCallHandler(null);

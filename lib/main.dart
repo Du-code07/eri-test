@@ -1339,8 +1339,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
       if (path == null || !mounted) return;
       if (path.isEmpty) {
         // 보낸 앱이 읽기 허락 없이 파일 경로만 넘긴 경우 (옛날 파일 관리자 등)
-        _showNotice(_tr('보낸 앱에서 파일을 읽을 수 없어요\n파일 추가로 열어 주세요', 'Could not read the file from the sending app\nPlease open it with Add Files',
-            '无法读取发送应用中的文件\n请通过添加文件打开', '送信元のアプリからファイルを読み込めません\nファイル追加で開いてください'));
+        _showNotice(_tr('실패', 'Failed', '失败', '失敗'));
         return;
       }
       File src = File(path);
@@ -1359,7 +1358,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
         }
       }
       if (!_supportedExts.contains(ext)) {
-        _showNotice(_tr('열 수 없는 파일 형식이에요', 'This file type is not supported', '不支持此文件格式', 'このファイル形式は開けません'));
+        _showNotice(_tr('미지원 형식', 'Unsupported format', '不支持的格式', '非対応形式'));
         return;
       }
       final appDir = await getApplicationDocumentsDirectory();
@@ -1812,12 +1811,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
 
     if (validPicked.isEmpty) {
       if (mounted) {
-        _showNotice(_tr(
-          '지원되는 파일 형식(PDF, EPUB, TXT, CBZ, 워드, 한글, PPT, 엑셀)을 선택해 주세요',
-          'Please select supported files (PDF, EPUB, TXT, CBZ, Word, HWP, PPT, Excel)',
-          '请选择受支持的文件格式 (PDF, EPUB, TXT, CBZ, Word, HWP, PPT, Excel)',
-          '対応ファイル形式(PDF, EPUB, TXT, CBZ, Word, HWP, PPT, Excel)を選択してください',
-        ));
+        _showNotice(_tr('미지원 형식', 'Unsupported format', '不支持的格式', '非対応形式'));
       }
       return;
     }
@@ -1882,26 +1876,15 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
 
     await _loadLibrary();
     if (mounted && importedFiles.isEmpty && alreadyIn > 0) {
-      _showNotice(alreadyIn == 1
-          ? _tr('해당 파일은 이미 서재에 있어요', 'This file is already in your library', '该文件已在书架中', 'このファイルはすでにライブラリにあります')
-          : _tr('고른 파일 $alreadyIn개는 이미 서재에 있어요', 'The $alreadyIn selected files are already in your library', '所选的 $alreadyIn 个文件已在书架中', '選んだ$alreadyIn個のファイルはすでにライブラリにあります'));
+      _showNotice(_tr('이미 있음', 'Already exists', '已存在', 'すでにあります'));
       return;
     }
     if (mounted) {
-      String msg = _tr(
-        '${importedFiles.length}개의 파일이 서재에 추가됐어요',
-        'Added ${importedFiles.length} file(s) to bookshelf',
-        '已添加 ${importedFiles.length} 个文件到书架',
-        '${importedFiles.length}個のファイルが追加されました',
-      );
-      if (alreadyIn > 0) {
-        msg += _tr('\n(이미 서재에 있는 $alreadyIn개는 빼고 넣었어요)', '\n($alreadyIn already in your library were skipped)', '\n（已在书架中的 $alreadyIn 个未重复添加）', '\n(すでにあった$alreadyIn個は除きました)');
-      }
+      final String msg = _tr('저장', 'Saved', '已保存', '保存');
       if (importedFiles.length == 1) {
-        // 파일 하나만 넣었으면 바로 열 수 있게
         _showCreatedSnack(msg, importedFiles.first);
       } else {
-        showAppToast(context, msg);
+        _showNotice(msg);
       }
     }
   }
@@ -1935,7 +1918,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
       } catch (e) {
         if (e is! TimeoutException) rethrow;
         if (mounted) {
-          _showNotice(_tr('찾는 데 너무 오래 걸려 멈췄어요', 'Search took too long and was stopped', '查找时间过长，已停止', '時間がかかりすぎたため中止しました'));
+          _showNotice(_tr('시간 초과', 'Timed out', '超时', 'タイムアウト'));
         }
         return;
       }
@@ -1962,7 +1945,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
       }
       if (!mounted) return;
       if (newFiles.isEmpty && inLibrary.isEmpty) {
-        _showNotice(_tr('새로 넣을 파일을 찾지 못했어요', 'No new files found', '没有找到新的文件', '新しいファイルは見つかりませんでした'));
+        _showNotice(_tr('새 파일 없음', 'No new files', '没有新文件', '新しいファイルなし'));
         return;
       }
       final n = newFiles.length + inLibrary.length;
@@ -1996,10 +1979,10 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
       }
       await _loadLibrary();
       if (!mounted) return;
-      _showNotice(_tr("'$groupLabel' 그룹에 파일 $added개를 넣었어요", "Put $added file(s) in '$groupLabel'", "已将 $added 个文件放入“$groupLabel”", "「$groupLabel」に$added個のファイルを入れました"));
+      _showNotice(_tr('저장', 'Saved', '已保存', '保存'));
     } catch (e) {
       if (mounted) {
-        _showNotice(_tr('파일을 찾지 못했어요 ($e)', 'Could not search files ($e)', '无法查找文件 ($e)', 'ファイルを探せませんでした ($e)'));
+        _showNotice(_tr('실패', 'Failed', '失败', '失敗'));
       }
     } finally {
       if (mounted) setState(() => _groupScanBusy = false);
@@ -2151,16 +2134,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
 
     await _loadLibrary();
     if (mounted) {
-      final grpDisplay = _localizeGroupName(targetGroup);
-      _showCreatedSnack(
-        _tr(
-          'cbz 파일이 [$grpDisplay]에 만들어졌어요\n($safeTitle.cbz)',
-          'cbz file created in [$grpDisplay]\n($safeTitle.cbz)',
-          'cbz 文件已创建于 [$grpDisplay]\n($safeTitle.cbz)',
-          'cbzファイルが [$grpDisplay] に作成されました\n($safeTitle.cbz)',
-        ),
-        outFile,
-      );
+      _showCreatedSnack(_tr('저장', 'Saved', '已保存', '保存'), outFile);
     }
   }
 
@@ -2174,7 +2148,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
     if (files.length >= 2) {
       await _createMangaBookFromImages(files);
     } else if (mounted) {
-      _showNotice(_tr('이미지를 2개 이상 선택해 주세요', 'Please select at least 2 images', '请选择至少 2 张图片', '画像を2つ以上選択してください'));
+      _showNotice(_tr('2개 이상 선택', 'Select 2 or more', '请选择2个以上', '2つ以上選択'));
     }
   }
 
@@ -2345,21 +2319,12 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
       await _loadLibrary();
 
       if (mounted) {
-        final grpDisplay = _localizeGroupName(targetGroup);
-        _showCreatedSnack(
-          _tr(
-            'PDF 파일이 [$grpDisplay]에 만들어졌어요\n($safeTitle.pdf)',
-            'PDF file created in [$grpDisplay]\n($safeTitle.pdf)',
-            'PDF 文件已创建于 [$grpDisplay]\n($safeTitle.pdf)',
-            'PDFファイルが [$grpDisplay] に作成されました\n($safeTitle.pdf)',
-          ),
-          outFile,
-        );
+        _showCreatedSnack(_tr('저장', 'Saved', '已保存', '保存'), outFile);
       }
     } catch (e) {
       if (mounted) {
         Navigator.pop(context);
-        showAppToast(context, 'PDF Merge Error: $e');
+        _showNotice(_tr('실패', 'Failed', '失败', '失敗'));
       }
     } finally {
       _pdfChannel.setMethodCallHandler(null);
@@ -2384,7 +2349,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
         final files = result.files.where((f) => f.path != null).map((f) => File(f.path!)).toList();
         await _createMergedPdfFromFiles(files, deleteSourceAfter: false);
       } else if (mounted) {
-        _showNotice(_tr('PDF 파일을 2개 이상 선택해 주세요', 'Please select at least 2 PDF files', '请选择至少 2 个 PDF 文件', 'PDFファイルを2つ以上選択してください'));
+        _showNotice(_tr('2개 이상 선택', 'Select 2 or more', '请选择2个以上', '2つ以上選択'));
       }
       return;
     }
@@ -2410,7 +2375,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
         final files = picked.files.where((f) => f.path != null).map((f) => File(f.path!)).toList();
         await _createMergedPdfFromFiles(files, deleteSourceAfter: false);
       } else if (mounted) {
-        _showNotice(_tr('PDF 파일을 2개 이상 선택해 주세요', 'Please select at least 2 PDF files', '请选择至少 2 个 PDF 文件', 'PDFファイルを2つ以上選択してください'));
+        _showNotice(_tr('2개 이상 선택', 'Select 2 or more', '请选择2个以上', '2つ以上選択'));
       }
       return;
     }
@@ -2485,7 +2450,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
     final newPath = '${file.parent.path}/$newFileName';
     if (await File(newPath).exists()) {
       if (mounted) {
-        _showNotice(_tr('같은 이름의 파일이 이미 있어요', 'A file with that name already exists', '同名文件已存在', '同じ名前のファイルが既に存在します'));
+        _showNotice(_tr('이미 있음', 'Already exists', '已存在', 'すでにあります'));
       }
       return;
     }
@@ -2512,7 +2477,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
     showAppToast(
       context,
       message,
-      aboveBottomBar: !_isSelectionMode && !StorageService.simpleStyle,
+      fromTop: true,
       duration: duration,
       actionLabel: actionLabel,
       onAction: onAction,
@@ -2683,16 +2648,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
     await _loadLibrary();
     if (!mounted) return;
     final fileName = createdPdf.path.split(Platform.pathSeparator).last;
-    final grpDisplay = _localizeGroupName(targetGroup);
-    _showCreatedSnack(
-      _tr(
-        '스캔 PDF 파일이 [$grpDisplay]에 만들어졌어요\n($fileName)',
-        'Scanned PDF created in [$grpDisplay]\n($fileName)',
-        '扫描 PDF 已创建于 [$grpDisplay]\n($fileName)',
-        'スキャンPDFが [$grpDisplay] に作成されました\n($fileName)',
-      ),
-      createdPdf,
-    );
+    _showCreatedSnack(_tr('저장', 'Saved', '已保存', '保存'), createdPdf);
   }
 
   /// 파일 탐색을 지금 쓸 수 없는 이유 (찾는 중이거나, 그룹 이름이 파일 형식 이름이 아님)
@@ -3633,7 +3589,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
       if (mounted) setState(() {});
     } catch (_) {
       if (!mounted) return;
-      _showNotice(_tr('표지를 바꾸지 못했어요', 'Could not change the cover', '无法更换封面', '表紙を変更できませんでした'));
+      _showNotice(_tr('실패', 'Failed', '失败', '失敗'));
     }
   }
 
@@ -3839,7 +3795,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
     );
     if (name == null || name.isEmpty || name == group || !mounted) return null;
     if (name == '전체' || name == '미분류' || name == _localizeGroupName('전체') || name == _localizeGroupName('미분류') || _groups.contains(name)) {
-      _showNotice(_tr('같은 이름의 그룹이 있어요', 'A group with that name already exists', '已有同名分组', '同じ名前のグループがあります'));
+      _showNotice(_tr('이미 있음', 'Already exists', '已存在', 'すでにあります'));
       return null;
     }
     final ok = await StorageService.renameGroup(group, name);

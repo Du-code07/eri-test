@@ -11,6 +11,7 @@ import '../widgets/pop_dialog.dart';
 
 import '../services/user_fonts.dart';
 import '../services/scan_folders.dart';
+import '../widgets/app_toast.dart';
 
 typedef FontsTr = String Function(String ko, String en, String zh, String ja);
 
@@ -63,9 +64,7 @@ class _UserFontsScreenState extends State<UserFontsScreen> {
     if (widget.category == 'app') await UserFonts.loadAppFont();
     await _reload();
     if (!mounted) return;
-    _snack(widget.category == 'epub'
-        ? _t('EPUB 글꼴을 바꿨어요\n책을 다시 열면 적용돼요', 'EPUB font changed\nReopen books to apply', '已更换EPUB字体，重新打开书籍后生效', 'EPUBのフォントを変更しました\n本を開き直すと反映されます')
-        : _t('앱 글꼴을 바꿨어요', 'App font changed', '已更换应用字体', 'アプリのフォントを変更しました'));
+    _snack(_t('완료', 'Done', '完成', '完了'));
   }
 
   Future<void> _add() async {
@@ -76,7 +75,7 @@ class _UserFontsScreenState extends State<UserFontsScreen> {
         if (f.path != null && RegExp(r'\.(ttf|otf|ttc)$', caseSensitive: false).hasMatch(f.name)) f.path!,
     ];
     if (res != null && paths.isEmpty && mounted) {
-      _snack(_t('글꼴 파일(.ttf, .otf, .ttc)을 골라 주세요', 'Please choose font files (.ttf, .otf, .ttc)', '请选择字体文件（.ttf、.otf、.ttc）', 'フォントファイル（.ttf・.otf・.ttc）を選んでください'));
+      _snack(_t('실패', 'Failed', '失败', '失敗'));
       return;
     }
     if (paths.isEmpty) return;
@@ -86,13 +85,7 @@ class _UserFontsScreenState extends State<UserFontsScreen> {
     if (!mounted) return;
     setState(() => _busy = false);
     await _reload();
-    _snack(n > 0
-        ? (widget.category == 'app'
-            ? _t('앱 글꼴을 바꿨어요', 'App font changed', '已更换应用字体', 'アプリのフォントを変更しました')
-            : widget.category == 'epub'
-                ? _t('EPUB 글꼴을 바꿨어요\n책을 다시 열면 적용돼요', 'EPUB font changed\nReopen books to apply', '已更换EPUB字体，重新打开书籍后生效', 'EPUBのフォントを変更しました\n本を開き直すと反映されます')
-                : _t('글꼴 $n개를 넣었어요\n문서를 다시 열면 적용돼요', 'Added $n font(s)\nReopen documents to apply', '已添加 $n 个字体\n重新打开文档后生效', '$n 個のフォントを追加しました\n文書を開き直すと反映されます'))
-        : _t('글꼴을 읽지 못했어요', 'Could not read the font', '无法读取字体', 'フォントを読み込めませんでした'));
+    _snack(n > 0 ? _t('완료', 'Done', '完成', '完了') : _t('실패', 'Failed', '失败', '失敗'));
   }
 
 
@@ -102,7 +95,7 @@ class _UserFontsScreenState extends State<UserFontsScreen> {
     final folders = await ScanFolders.ensure(context, _t);
     if (folders.isEmpty || !mounted) return;
     setState(() => _busy = true);
-    _snack(_t('폴더에서 글꼴을 찾는 중이에요…', 'Searching for fonts…', '正在查找字体…', 'フォントを探しています…'));
+    _snack(_t('찾는 중…', 'Searching…', '查找中…', '検索中…'));
     int n = 0;
     try {
       final found = await ScanFolders.scan(folders, const ['ttf', 'otf', 'ttc'], minSize: 1024, maxSize: 80 << 20);
@@ -124,9 +117,7 @@ class _UserFontsScreenState extends State<UserFontsScreen> {
     if (!mounted) return;
     setState(() => _busy = false);
     await _reload();
-    _snack(n > 0
-        ? _t('글꼴 $n개를 찾아 넣었어요', 'Found and added $n font(s)', '已找到并添加 $n 个字体', '$n 個のフォントを見つけて追加しました')
-        : _t('새로 넣을 글꼴을 찾지 못했어요', 'No new fonts found', '没有找到新的字体', '新しいフォントは見つかりませんでした'));
+    _snack(n > 0 ? _t('완료', 'Done', '完成', '完了') : _t('새 글꼴 없음', 'No new fonts', '没有新字体', '新しいフォントなし'));
   }
 
   /// 초기화: 이 화면에 넣어 둔 글꼴을 모두 빼고 기본 글꼴로 되돌림 (먼저 물어봄)
@@ -152,7 +143,7 @@ class _UserFontsScreenState extends State<UserFontsScreen> {
     if (_pickable) await UserFonts.setActive(widget.category, '');
     if (widget.category == 'app') await UserFonts.loadAppFont();
     await _reload();
-    if (mounted) _snack(_t('기본 글꼴로 되돌렸어요', 'Reset to the default font', '已恢复默认字体', '既定のフォントに戻しました'));
+    if (mounted) _snack(_t('완료', 'Done', '完成', '完了'));
   }
 
   Future<void> _remove(UserFontEntry e) async {
@@ -177,22 +168,9 @@ class _UserFontsScreenState extends State<UserFontsScreen> {
             _t('본고딕·본명조로 대신 보여 줘요 (글꼴을 넣으면 그 글꼴로)', 'Shown in Noto Sans/Serif KR (or the font you add)', '用 Noto Sans/Serif KR 代替显示（添加字体后使用该字体）', 'Noto Sans/Serif KR で代わりに表示（追加するとそのフォントで）')),
       ];
 
-  String? _notice;
-  Timer? _noticeTimer;
-
   void _snack(String text) {
-    _noticeTimer?.cancel();
     if (!mounted) return;
-    setState(() => _notice = text);
-    _noticeTimer = Timer(const Duration(milliseconds: 2200), () {
-      if (mounted) setState(() => _notice = null);
-    });
-  }
-
-  @override
-  void dispose() {
-    _noticeTimer?.cancel();
-    super.dispose();
+    showAppToast(context, text, fromTop: true);
   }
 
   String get _title => switch (widget.category) {
@@ -435,38 +413,6 @@ class _UserFontsScreenState extends State<UserFontsScreen> {
               ),
             ],
           ),
-      if (_notice != null)
-        Positioned(
-          left: 16,
-          right: 152,
-          bottom: MediaQuery.paddingOf(context).bottom + 16,
-          child: IgnorePointer(
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Material(
-                color: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF2B2F2D) : const Color(0xFF242725),
-                elevation: 4,
-                borderRadius: BorderRadius.circular(16),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(minHeight: 56),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      widthFactor: 1,
-                      child: Text(
-                        _notice!,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
         ],
       ),
     );

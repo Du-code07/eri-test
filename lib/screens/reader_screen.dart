@@ -309,12 +309,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     }
     if (_epubLoadFailureShown) return;
     _epubLoadFailureShown = true;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${_tr('문서를 표시하지 못했어요', 'Could not display the document', '无法显示文档', '文書を表示できませんでした')}: $message'),
-        duration: const Duration(seconds: 8),
-      ),
-    );
+    showAppToast(context, _tr('실패', 'Failed', '失败', '失敗'), fromTop: true);
   }
 
   bool _showControls = false;
@@ -693,13 +688,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
     final nextName = nextFile.path.split(Platform.pathSeparator).last;
     final nextExt = nextName.split('.').last.toLowerCase();
 
-    ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(nextName),
-        duration: const Duration(milliseconds: 900),
-      ),
-    );
+    showAppToast(context, nextName, fromTop: true, duration: const Duration(milliseconds: 1100));
 
     final bool fromLeft = step < 0;
     if (const ['epub', 'txt', 'docx', 'doc', 'hwpx', 'hwp', 'pptx', 'ppt', 'xlsx', 'xlsm', 'xls'].contains(nextExt)) {
@@ -4618,15 +4607,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
         onTap: () async {
           // 스크롤 모드는 원본 순서 그대로라 읽기 방향을 바꾸지 않음
           if (_pageModeScroll) {
-            ScaffoldMessenger.of(context)
-              ..clearSnackBars()
-              ..showSnackBar(SnackBar(
-                content: Text(_tr('스크롤 모드에서는 읽기 방향이 바뀌지 않아요\n탭·슬라이드 모드에서 바꿀 수 있어요',
-                    'Reading direction does not change in scroll mode\nChange it in tap/slide mode',
-                    '滚动模式下不能切换阅读方向，请在点击/滑动模式下切换',
-                    'スクロールモードでは読書方向は変わりません\nタップ・スライドモードで変更できます')),
-                duration: const Duration(seconds: 2),
-              ));
+            showAppToast(context, _tr('스크롤 모드 미지원', 'Not available in scroll mode', '滚动模式不支持', 'スクロールモード非対応'), fromTop: true);
             return;
           }
           final nextRtl = !_isMangaRtlMode;
@@ -4638,21 +4619,13 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
             } catch (_) {}
           }
           if (mounted) {
-            ScaffoldMessenger.of(context).clearSnackBars();
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(_tr('읽기 방향 전환 (', 'Reading Direction (', '切换阅读方向 (', '読書方向切替 (')),
-                    Text(nextRtl ? _tr('우 ', 'R ', '右 ', '右 ') : _tr('좌 ', 'L ', '左 ', '左 ')),
-                    // 알림 바탕이 밝아지는 다크·밝은 다크 테마에서는 검은 화살표
-                    Icon(Icons.arrow_forward_rounded, color: Theme.of(context).colorScheme.onInverseSurface, size: 14),
-                    Text(nextRtl ? _tr(' 좌)', ' L)', ' 左)', ' 左)') : _tr(' 우)', ' R)', ' 右)', ' 右)')),
-                  ],
-                ),
-                duration: const Duration(milliseconds: 900),
-              ),
+            showAppToast(
+              context,
+              nextRtl
+                  ? _tr('읽기 방향 (우 → 좌)', 'Reading (R → L)', '阅读方向 (右 → 左)', '読書方向 (右 → 左)')
+                  : _tr('읽기 방향 (좌 → 우)', 'Reading (L → R)', '阅读方向 (左 → 右)', '読書方向 (左 → 右)'),
+              fromTop: true,
+              duration: const Duration(milliseconds: 1100),
             );
           }
         },

@@ -5,6 +5,7 @@ import '../services/app_lock.dart';
 import '../widgets/app_colors.dart';
 import '../widgets/push_aside_route.dart';
 import 'lock_screen.dart';
+import '../widgets/app_toast.dart';
 
 typedef PrivacyTr = String Function(String ko, String en, String zh, String ja);
 
@@ -31,9 +32,7 @@ class _PrivacyLockScreenState extends State<PrivacyLockScreen> {
   }
 
   void _say(String text) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(text), duration: const Duration(seconds: 2)));
+    showAppToast(context, text, fromTop: true, duration: const Duration(milliseconds: 1800));
   }
 
   Route<bool> _route(Widget page) => PushAsideRoute<bool>(builder: (_) => page);
@@ -73,9 +72,7 @@ class _PrivacyLockScreenState extends State<PrivacyLockScreen> {
     final ok = await Navigator.of(context).push<bool>(_route(LockSetupPage(kind: kind)));
     if (ok == true && mounted) {
       setState(() {});
-      _say(kind == 'pin'
-          ? _t('비밀번호로 잠가요', 'Now locked with a PIN', '已改为密码锁定', '暗証番号でロックします')
-          : _t('패턴으로 잠가요', 'Now locked with a pattern', '已改为图案锁定', 'パターンでロックします'));
+      _say(_t('완료', 'Done', '完成', '完了'));
     }
   }
 
@@ -84,7 +81,7 @@ class _PrivacyLockScreenState extends State<PrivacyLockScreen> {
     final ok = await Navigator.of(context).push<bool>(_route(LockSetupPage(kind: AppLock.method.value)));
     if (ok == true && mounted) {
       setState(() {});
-      _say(_t('바꿨어요', 'Changed', '已更改', '変更しました'));
+      _say(_t('완료', 'Done', '完成', '完了'));
     }
   }
 
@@ -94,9 +91,7 @@ class _PrivacyLockScreenState extends State<PrivacyLockScreen> {
       if (!mounted) return;
       setState(() => _bioStatus = s);
       if (s != 1) {
-        _say(s == 2
-            ? _t('휴대폰에 등록된 지문·얼굴이 없어요', 'No fingerprint or face is registered on this phone', '手机上没有登记指纹或面部', 'スマホに登録された指紋・顔がありません')
-            : _t('이 기기에서는 생체 인식을 쓸 수 없어요', 'Biometrics are not available on this device', '此设备不支持生物识别', 'この端末では生体認証を使えません'));
+        _say(_t('생체 정보 없음', 'No biometrics', '无生物识别信息', '生体情報なし'));
         return;
       }
       if (!await _ensureSecret()) return;

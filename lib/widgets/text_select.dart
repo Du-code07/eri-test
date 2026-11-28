@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'app_toast.dart';
 
 // 길게 눌러 글 고르기: 고른 글 위에 뜨는 [복사 | 모두 선택 | 공유] 막대와,
 // 글자 위치를 아는 쪽(PDF)에서 글을 고르는 층 (손잡이로 범위 조절)
@@ -24,9 +25,7 @@ Future<void> copyText(BuildContext context, String text, String Function(String 
   if (text.isEmpty) return;
   await Clipboard.setData(ClipboardData(text: text));
   if (!context.mounted) return;
-  ScaffoldMessenger.of(context)
-    ..hideCurrentSnackBar()
-    ..showSnackBar(SnackBar(content: Text(tr('복사했어요', 'Copied', '已复制', 'コピーしました')), duration: const Duration(milliseconds: 1400)));
+  showAppToast(context, tr('복사', 'Copied', '已复制', 'コピー'), fromTop: true, duration: const Duration(milliseconds: 1400));
 }
 
 /// 고른 글 위에 뜨는 어두운 막대: 복사 | 모두 선택 | 공유

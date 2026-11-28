@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../services/storage_service.dart';
 import '../widgets/app_colors.dart';
+import '../widgets/app_toast.dart';
 
 typedef TapZoneTr = String Function(String ko, String en, String zh, String ja);
 
@@ -33,12 +34,7 @@ class _TapZoneScreenState extends State<TapZoneScreen> {
     final String next = _cycle[(_cycle.indexOf(cur) + 1) % _cycle.length];
     // 메뉴 칸이 하나도 없으면 도구 모음을 열 수 없으므로 마지막 메뉴 칸은 바꾸지 않음
     if (cur == 'M' && 'M'.allMatches(_zones).length == 1) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(
-          content: Text(_t('메뉴 칸은 하나 이상 있어야 해요', 'At least one cell must be Menu', '至少需要一个菜单格', 'メニューのマスは1つ以上必要です')),
-          duration: const Duration(seconds: 2),
-        ));
+      showAppToast(context, _t('메뉴 1개 이상 필요', 'At least 1 Menu cell', '至少需要1个菜单格', 'メニュー1つ以上必要'), fromTop: true);
       return;
     }
     _save(_zones.replaceRange(i, i + 1, next));

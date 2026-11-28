@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -11,14 +12,24 @@ OverlayEntry? _activeAppToast;
 bool get appToastVisible => _activeAppToast != null;
 Timer? _activeAppToastTimer;
 
-/// 메인 화면에서는 하단 내비게이션 막대 뒤에서 전체 막대가 위로 스르륵 올라왔다가 다시 아래로 스르륵 사라지고,
-/// 파일 열람 중([fromTop]: true)에는 상단바 아래 가운데에 글자 크기에 맞게 나타났다가 위로 스르륵 사라지는 알림.
+/// 현재 떠 있는 상단 안내창을 즉시 닫음
+void dismissAppToast() {
+  _activeAppToastTimer?.cancel();
+  _activeAppToastTimer = null;
+  if (_activeAppToast?.mounted == true) {
+    _activeAppToast!.remove();
+  }
+  _activeAppToast = null;
+}
+
+/// 모든 화면(메인·하위창·뷰어)에서 상단에 단 1개만 표시되는 통일 안내창.
+/// 새 안내가 호출되면 이전 안내는 즉시 교체되어 겹치지 않음.
 void showAppToast(
   BuildContext context,
   String message, {
-  bool fromTop = false,
+  bool fromTop = true,
   bool aboveBottomBar = false,
-  Duration duration = const Duration(milliseconds: 2200),
+  Duration duration = const Duration(milliseconds: 2000),
   Widget? content,
   String? actionLabel,
   VoidCallback? onAction,
@@ -26,16 +37,11 @@ void showAppToast(
   final overlay = Overlay.maybeOf(context, rootOverlay: true);
   if (overlay == null) return;
 
-  _activeAppToastTimer?.cancel();
-  _activeAppToastTimer = null;
-  _activeAppToast?.remove();
-  _activeAppToast = null;
+  dismissAppToast();
 
   final GlobalKey<_AppToastOverlayState> key = GlobalKey<_AppToastOverlayState>();
-  final double topOffset = fromTop ? (SystemBars.stableTop(context) + 56.0) : 0.0;
-  final double sysBottom = MediaQuery.viewPaddingOf(context).bottom;
-  final double navBarHeight = aboveBottomBar ? (66.0 + (sysBottom > 32 ? sysBottom : 0.0)) : MediaQuery.paddingOf(context).bottom;
-  final double bottomOffset = fromTop ? 0.0 : navBarHeight;
+  final double topInset = math.max(MediaQuery.paddingOf(context).top, SystemBars.stableTop(context));
+  final double topOffset = topInset + 56.0;
 
   late OverlayEntry entry;
   entry = OverlayEntry(
@@ -43,9 +49,7 @@ void showAppToast(
       key: key,
       message: message,
       content: content,
-      fromTop: fromTop,
       topOffset: topOffset,
-      bottomOffset: bottomOffset,
       actionLabel: actionLabel,
       onAction: onAction,
       onDismissed: () {
@@ -70,9 +74,7 @@ class _AppToastOverlay extends StatefulWidget {
     super.key,
     required this.message,
     this.content,
-    required this.fromTop,
     required this.topOffset,
-    required this.bottomOffset,
     this.actionLabel,
     this.onAction,
     required this.onDismissed,
@@ -80,9 +82,7 @@ class _AppToastOverlay extends StatefulWidget {
 
   final String message;
   final Widget? content;
-  final bool fromTop;
   final double topOffset;
-  final double bottomOffset;
   final String? actionLabel;
   final VoidCallback? onAction;
   final VoidCallback onDismissed;
@@ -94,14 +94,14 @@ class _AppToastOverlay extends StatefulWidget {
 class _AppToastOverlayState extends State<_AppToastOverlay> with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl = AnimationController(
     vsync: this,
-    duration: Anim.off.value ? Duration.zero : const Duration(milliseconds: 380),
-    reverseDuration: Anim.off.value ? Duration.zero : const Duration(milliseconds: 360),
+    duration: Anim.off.value ? Duration.zero : const Duration(milliseconds: 300),
+    reverseDuration: Anim.off.value ? Duration.zero : const Duration(milliseconds: 260),
   );
   late final Animation<Offset> _slide = Tween<Offset>(
-    begin: widget.fromTop ? const Offset(0, -1.25) : const Offset(0, 1.15),
+    begin: const Offset(0, -1.25),
     end: Offset.zero,
   ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutQuart, reverseCurve: Curves.easeInOutCubic));
-  late final Animation<double> _fade = Tween<double>(begin: 0.35, end: 1.0).animate(
+  late final Animation<double> _fade = Tween<double>(begin: 0.25, end: 1.0).animate(
     CurvedAnimation(parent: _ctrl, curve: Curves.easeOut, reverseCurve: Curves.easeIn),
   );
 
@@ -135,25 +135,29 @@ class _AppToastOverlayState extends State<_AppToastOverlay> with SingleTickerPro
     final Widget body = widget.content ??
         Text(
           widget.message,
-          textAlign: widget.fromTop ? TextAlign.center : TextAlign.start,
+          textAlign: TextAlign.center,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
         );
     final Widget pill = Material(
       color: dark ? const Color(0xF22B2F2D) : const Color(0xF22D2824),
       elevation: 6,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(widget.fromTop ? 20 : 18),
+        borderRadius: BorderRadius.circular(20),
         side: BorderSide(color: dark ? Colors.white.withValues(alpha: 0.14) : Colors.transparent),
       ),
       child: Padding(
-        padding: widget.fromTop
-            ? const EdgeInsets.symmetric(horizontal: 20, vertical: 10)
-            : EdgeInsets.fromLTRB(18, hasAction ? 6 : 14, hasAction ? 8 : 18, hasAction ? 6 : 14),
+        padding: hasAction
+            ? const EdgeInsets.fromLTRB(18, 6, 8, 6)
+            : const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
         child: DefaultTextStyle(
           style: const TextStyle(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.w600, height: 1.3),
           child: hasAction
               ? Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Expanded(child: body),
+                    Flexible(child: body),
+                    const SizedBox(width: 6),
                     TextButton(
                       onPressed: () {
                         widget.onAction?.call();
@@ -161,7 +165,7 @@ class _AppToastOverlayState extends State<_AppToastOverlay> with SingleTickerPro
                       },
                       style: TextButton.styleFrom(
                         foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                         minimumSize: Size.zero,
                         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
@@ -174,40 +178,18 @@ class _AppToastOverlayState extends State<_AppToastOverlay> with SingleTickerPro
       ),
     );
 
-    if (widget.fromTop) {
-      return Positioned(
-        left: 16,
-        right: 16,
-        top: widget.topOffset,
-        child: IgnorePointer(
-          ignoring: !hasAction,
-          child: ClipRect(
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: SlideTransition(
-                position: _slide,
-                child: Center(child: pill),
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    // 하단 안내창: 하단 내비게이션 막대 바로 위 경계에서 ClipRect로 잘라
-    // 막대 전체가 아래에서 위로 올라왔다가 다시 아래로 스르륵 들어가게 표현
     return Positioned(
-      left: 12,
-      right: 12,
-      bottom: widget.bottomOffset,
+      left: 16,
+      right: 16,
+      top: widget.topOffset,
       child: IgnorePointer(
         ignoring: !hasAction,
         child: ClipRect(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(4, 12, 4, 10),
+            padding: const EdgeInsets.only(bottom: 10),
             child: SlideTransition(
               position: _slide,
-              child: FadeTransition(opacity: _fade, child: pill),
+              child: FadeTransition(opacity: _fade, child: Center(child: pill)),
             ),
           ),
         ),
