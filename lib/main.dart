@@ -2484,16 +2484,9 @@ class _BookshelfScreenState extends State<BookshelfScreen> with TickerProviderSt
     );
   }
 
-  /// 파일을 만들었다·넣었다는 아래 알림 + 오른쪽 끝 [열기]
+  /// 파일을 만들었다·넣었다는 상단 알림 (열기 버튼 없음)
   void _showCreatedSnack(String message, File file) {
-    _showNotice(
-      message,
-      duration: const Duration(seconds: 5),
-      actionLabel: _tr('열기', 'Open', '打开', '開く'),
-      onAction: () {
-        if (mounted && file.existsSync()) _openFile(file);
-      },
-    );
+    _showNotice(message);
   }
 
   Future<void> _openFile(File file) async {

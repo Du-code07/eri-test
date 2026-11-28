@@ -406,9 +406,13 @@ async function preparePages(html, current) {
 function clampPage(value) { return Math.max(0, Math.min(pages.length - 1, Number.isFinite(value) ? Math.trunc(value) : 0)); }
 function reportLocation() { emit('location', { page, pageCount: pages.length, position: `${options.format === 'doc' ? 'doc' : 'docx'}:${page}`, progress: pages.length > 1 ? page / (pages.length - 1) : 1 }); }
 function trimImages() {
+  const liveUrls = new Set();
+  for (const m of vMounted.values()) {
+    for (const img of m.frame.querySelectorAll('img[src]')) liveUrls.add(img.src);
+  }
   for (const [path, item] of imageCache) {
-    if (imageCacheBytes <= IMAGE_CACHE_BYTES && imageCache.size <= 24) break;
-    if (activeImagePaths.has(path)) continue;
+    if (imageCacheBytes <= IMAGE_CACHE_BYTES && imageCache.size <= 80) break;
+    if (activeImagePaths.has(path) || liveUrls.has(item.url)) continue;
     imageCache.delete(path); imageCacheBytes -= item.size; URL.revokeObjectURL(item.url);
   }
 }
@@ -897,7 +901,7 @@ function setVertical(on) {
 }
 // ── FReader: 스크롤 보기 두 손가락 확대·축소 (줄이면 쪽이 작아져 가운데에, 늘리면 옆으로도 움직일 수 있음) ──
 let vZoom = 1, vPinch = null, vinner = null;
-const V_ZOOM_MIN = 0.5, V_ZOOM_MAX = 3;
+const V_ZOOM_MIN = 0.85, V_ZOOM_MAX = 3;
 function vTouchInfo(t) {
   return { d: Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY), x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 };
 }
@@ -905,13 +909,10 @@ function vPinchStart(e) {
   if (!vertical || !vhost || e.touches.length !== 2 || !vTops.length) return;
   if (docxEditMode) document.body.classList.add('eri-scrolling');
   const t = vTouchInfo(e.touches);
-  // 손가락 가운데에 있던 글 자리 (몇째 쪽의 어느 비율 자리인지) — 크기를 바꿔도 그 글이 손가락 아래 남게
+  if (t.d < 20) return;
   const cy = vhost.scrollTop + t.y, cx = vhost.scrollLeft + t.x, i = vIndexAt(cy);
   const sh = Math.max(1, vTops[i + 1] - vTops[i] - V_GAP), sw = Math.max(1, vPageWidth());
-  vPinch = { d0: Math.max(1, t.d), z0: vZoom, z: vZoom, i, fy: (cy - vTops[i]) / sh, fx: (cx - vLeft()) / sw, cx, cy, x: t.x, y: t.y, raf: 0 };
-  // 줄이면 화면에 들어올 위아래 쪽을 미리 붙여 둠 (줄이는 동안 빈 곳이 보이지 않게)
-  const r = V_ZOOM_MIN / vZoom, H = vhost.clientHeight || innerHeight;
-  vMountRange(vIndexAt(cy - t.y / r), vIndexAt(cy + (H - t.y) / r));
+  vPinch = { d0: Math.max(20, t.d), z0: vZoom, z: vZoom, active: false, i, fy: (cy - vTops[i]) / sh, fx: (cx - vLeft()) / sw, cx, cy, x: t.x, y: t.y, raf: 0 };
   e.preventDefault();
 }
 function vPinchMove(e) {
@@ -919,18 +920,20 @@ function vPinchMove(e) {
   e.preventDefault();
   if (e.touches.length !== 2) return;
   const t = vTouchInfo(e.touches);
+  if (!vPinch.active) {
+    if (Math.abs(t.d - vPinch.d0) < 16) return;
+    vPinch.active = true;
+  }
   vPinch.z = Math.max(V_ZOOM_MIN, Math.min(V_ZOOM_MAX, vPinch.z0 * t.d / vPinch.d0));
   vPinch.x = t.x; vPinch.y = t.y;
   if (!vPinch.raf) vPinch.raf = requestAnimationFrame(vPinchFrame);
 }
-// 손가락이 움직이는 동안: 이미 그려 둔 쪽들을 통째로 옮기고 크기만 바꿈 (다시 그리지 않아 빠르고 빈 곳이 없음)
 function vPinchFrame() {
-  const p = vPinch; if (!p || !vinner) return;
+  const p = vPinch; if (!p || !p.active || !vinner) return;
   p.raf = 0;
   const r = p.z / p.z0;
   const tx = p.x + vhost.scrollLeft - p.cx * r, ty = p.y + vhost.scrollTop - p.cy * r;
   vinner.style.transform = `translate(${tx}px, ${ty}px) scale(${r})`;
-  // 줄이고 늘리는 동안에도 쪽 자리를 앱에 알림 (고른 글 바탕이 글과 함께 움직이게)
   vReportMetrics();
 }
 function vPinchEnd(e) {
@@ -939,9 +942,12 @@ function vPinchEnd(e) {
   const p = vPinch;
   if (p.raf) { cancelAnimationFrame(p.raf); p.raf = 0; }
   vPinch = null;
-  // 거의 원래 크기면 딱 원래 크기로
-  if (Math.abs(p.z - 1) < 0.05) p.z = 1;
-  // 손가락을 떼면 그 크기로 다시 놓고 다시 그림 (또렷하게), 손가락 아래 글은 그대로
+  if (!p.active) {
+    if (vinner) vinner.style.transform = '';
+    if (docxEditMode) { if (docxScrollHideTimer) clearTimeout(docxScrollHideTimer); docxScrollHideTimer = setTimeout(() => { docxScrollHideTimer = 0; document.body.classList.remove('eri-scrolling'); }, 180); }
+    return;
+  }
+  if (Math.abs(p.z - 1) < 0.06) p.z = 1;
   vZoom = p.z;
   vSize();
   vinner.style.transform = '';
@@ -1354,16 +1360,17 @@ function vAdoptOriginal(index) {
     const other = vMakeClone(o.entry, ownerIdx);
     orig.replaceWith(other);
     o.source = other; o.original = false;
-    void vLoadImages(o.frame, vSerial);
   }
   clone.replaceWith(orig);
   m.source = orig; m.original = true; vOwner.set(orig, index);
-  void vLoadImages(m.frame, vSerial);
+  // 먼저 쪽 위치·배율을 맞춘 뒤 이미지를 불러와야 getBoundingClientRect 클립 판정이 정확히 일치함
   for (const [i, mm] of [[index, m], [ownerIdx, o]]) {
     if (!mm) continue;
     preparePageSource(mm.source, mm.entry, i);
     mm.source.style.transform = `scale(${vFullWidth(i) / mm.entry.width})`;
   }
+  if (o) void vLoadImages(o.frame, vSerial);
+  void vLoadImages(m.frame, vSerial);
   return true;
 }
 /** 편집으로 원래 글이 바뀐 뒤: 같은 구역을 보여 주는 복사본 쪽을 새로 복사 (넘친 줄이 다음 쪽에 바로 보이게) */
@@ -1381,10 +1388,10 @@ function vRefreshClones() {
   }
 }
 async function vLoadImages(frame, serial) {
-  // 구역 전체가 든 쪽이면 그 쪽 그림 목록에 있는 것만 자리를 재 봄 (그림이 수백 장이면 전부 재는 것도 무거움)
   const entry = pages[Number(frame.dataset.page)];
   const full = !frame.querySelector('.freader-vspacer') && frame.querySelector('.freader-columns')?.children.length > 40;
-  const want = full && entry?.images ? new Set(entry.images) : null;
+  // 편집 중·편집 후에는 쪽별 이미지 목록이 이동했을 수 있으므로 전체 가시 이미지를 검사
+  const want = (!docxEditMode && !docxEditDirty && full && entry?.images && entry.images.length) ? new Set(entry.images) : null;
   const imgs = [...frame.querySelectorAll('img[data-resource]')].filter(img => (!want || want.has(img.dataset.resource)) && (() => {
     const clip = (img.closest('.freader-content') || img.closest('.page')).getBoundingClientRect();
     return [...img.getClientRects()].some(r => r.width > 0 && r.height > 0 && r.right > clip.left + .1 && r.left < clip.right - .1 && r.bottom > clip.top + .1 && r.top < clip.bottom - .1);
@@ -1392,6 +1399,7 @@ async function vLoadImages(frame, serial) {
   for (const img of imgs) activeImagePaths.add(img.dataset.resource);
   for (const img of imgs) {
     if (!frame.isConnected || serial !== vSerial || disposed) return;
+    if (img.getAttribute('src') && img.complete && img.naturalWidth > 0) continue;
     try {
       const item = await imageFor(img.dataset.resource);
       if (!frame.isConnected) return;
@@ -1428,6 +1436,13 @@ function vUpdate() {
     try { vMount(i); made++; } catch (error) { console.warn(error); }
   }
   if (made) applySearchHighlights();
+  // 화면에 보이는 이미 마운트된 쪽에 아직 비어 있거나 해제된 그림이 있으면 즉시 다시 채움
+  for (let i = Math.max(0, first); i <= Math.min(pages.length - 1, last); i++) {
+    const m = vMounted.get(i);
+    if (!m) continue;
+    const needsImg = [...m.frame.querySelectorAll('img[data-resource]')].some(img => !img.getAttribute('src') || (img.complete && img.naturalWidth === 0));
+    if (needsImg) void vLoadImages(m.frame, vSerial);
+  }
 }
 // ── 파일 내 단어 검색: 찾은 곳은 노란 형광펜(CSS Highlight), 지금 보는 결과는 조금 진하게 ──
 let searchState = { query: '', results: [], current: -1 };
@@ -3025,9 +3040,21 @@ function setEditMode(enabled) {
     }
     setKeyboardInset(0);
     if (vertical && vhost) {
-      if (vinner) vinner.style.paddingBottom = '';
+      if (vPinch) {
+        if (vPinch.raf) cancelAnimationFrame(vPinch.raf);
+        vPinch = null;
+      }
+      if (vinner) {
+        vinner.style.paddingBottom = '';
+        vinner.style.transform = '';
+      }
+      if (vZoom < 0.98) {
+        vZoom = 1;
+        vSize();
+      }
       const maxTop = Math.max(0, vhost.scrollHeight - vhost.clientHeight);
       if (maxTop <= 1 || vhost.scrollTop > maxTop) vhost.scrollTop = Math.min(vhost.scrollTop, maxTop);
+      for (const m of vMounted.values()) void vLoadImages(m.frame, vSerial);
       vUpdate();
       vReportMetrics();
     }

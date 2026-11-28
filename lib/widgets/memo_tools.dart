@@ -400,6 +400,9 @@ class MemoToolSettings {
   /// 테이프 숨기기: 테이프는 테두리만 남고 안쪽은 비쳐 보임
   bool tapeHidden = false;
 
+  /// 모든 메모 숨기기: 펜·형광펜·스티커를 화면에서 모두 숨김
+  bool allHidden = false;
+
   /// 지우개: 'area'(닿은 부분만) · 'stroke'(닿은 획 전체), 형광펜만·테이프만 지우기
   String eraserType = 'area';
   bool eraseOnlyHl = false;
@@ -476,6 +479,7 @@ class MemoToolSettings {
         'tw': tapeWidth,
         'ts': tapeStraight,
         'th': tapeHidden,
+        'ah': allHidden,
         'et': eraserType,
         'eh': eraseOnlyHl,
         'ex': eraseOnlyTape,
@@ -497,6 +501,7 @@ class MemoToolSettings {
     tapeWidth = n('tw', tapeWidth).clamp(6.0, 48.0).toDouble();
     tapeStraight = v('ts', false);
     tapeHidden = v('th', false);
+    allHidden = v('ah', false);
     final String e = v('et', 'area');
     eraserType = e == 'stroke' ? 'stroke' : 'area';
     eraseOnlyHl = v('eh', false);
@@ -662,6 +667,7 @@ void _paintTape(Canvas canvas, List<Offset> pts, Path body, Color color, double 
 
 /// 저장된 획들을 그림 ([toLocal]: 0~1 좌표 → 화면, [unit]: 굵기 기준 너비). 형광펜은 글씨 밑에 깔리게 먼저
 void paintMemoStrokes(Canvas canvas, List<MemoStroke> strokes, {required Offset Function(double fx, double fy) toLocal, required double unit}) {
+  if (MemoTools.s.allHidden) return;
   void one(MemoStroke s) {
     if (s.dxList.isEmpty) return;
     paintMemoLine(

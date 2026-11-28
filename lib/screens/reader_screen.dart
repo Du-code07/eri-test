@@ -1606,7 +1606,7 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
   Future<void>? _scrollSlotsLoad;
   final Map<int, List<MemoStroke>> _scrollEraseBefore = {};
 
-  static List<Map<String, Object>> _jsStrokes(List<MemoStroke> list) => [
+  static List<Map<String, Object>> _jsStrokes(List<MemoStroke> list) => MemoTools.s.allHidden ? const [] : [
         for (final s in list)
           if (s.dxList.isNotEmpty)
             {'x': s.dxList, 'y': s.dyList, 'c': s.colorValue, 'w': s.strokeWidth < 0.5 ? s.strokeWidth : s.strokeWidth / 400, 'k': s.kind, 'th': MemoTools.s.tapeHidden},
@@ -1982,6 +1982,20 @@ class _ReaderScreenState extends State<ReaderScreen> with WidgetsBindingObserver
         active: _isEraserMode,
         onTap: () => setState(() => _isEraserMode = true),
         onReselect: (_) => _openEraserPanel(),
+      ),
+      MemoToolButton(
+        iconBuilder: (c) => Icon(st.allHidden ? Icons.visibility_off_outlined : Icons.visibility_outlined, color: c, size: 21),
+        label: st.allHidden
+            ? _tr('모든 메모 보이기', 'Show All Memos', '显示所有笔记', 'すべてのメモを表示')
+            : _tr('모든 메모 숨기기', 'Hide All Memos', '隐藏所有笔记', 'すべてのメモを隠す'),
+        active: st.allHidden,
+        onTap: () {
+          setState(() => st.allHidden = !st.allHidden);
+          MemoTools.save();
+          if (_docVertical) {
+            unawaited(_hwpController.setScrollMemos({for (final e in _scrollMemos.entries) e.key: _jsStrokes(e.value)}));
+          }
+        },
       ),
     ];
   }

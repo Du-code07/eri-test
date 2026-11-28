@@ -29,7 +29,7 @@ void showAppToast(
   String message, {
   bool fromTop = true,
   bool aboveBottomBar = false,
-  Duration duration = const Duration(milliseconds: 2000),
+  Duration duration = const Duration(milliseconds: 4500),
   Widget? content,
   String? actionLabel,
   VoidCallback? onAction,
@@ -63,7 +63,7 @@ void showAppToast(
 
   _activeAppToast = entry;
   overlay.insert(entry);
-  _activeAppToastTimer = Timer(duration, () {
+  _activeAppToastTimer = Timer(const Duration(milliseconds: 4500), () {
     _activeAppToastTimer = null;
     key.currentState?.dismiss();
   });
@@ -182,14 +182,20 @@ class _AppToastOverlayState extends State<_AppToastOverlay> with SingleTickerPro
       left: 16,
       right: 16,
       top: widget.topOffset,
-      child: IgnorePointer(
-        ignoring: !hasAction,
-        child: ClipRect(
-          child: Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: SlideTransition(
-              position: _slide,
-              child: FadeTransition(opacity: _fade, child: Center(child: pill)),
+      child: ClipRect(
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: SlideTransition(
+            position: _slide,
+            child: FadeTransition(
+              opacity: _fade,
+              child: Center(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: dismiss,
+                  child: pill,
+                ),
+              ),
             ),
           ),
         ),

@@ -1492,6 +1492,17 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
         onTap: () => setState(() => _isEraserMode = true),
         onReselect: (_) => _openEraserPanel(),
       ),
+      MemoToolButton(
+        iconBuilder: (c) => Icon(st.allHidden ? Icons.visibility_off_outlined : Icons.visibility_outlined, color: c, size: 21),
+        label: st.allHidden
+            ? _tr('모든 메모 보이기', 'Show All Memos', '显示所有笔记', 'すべてのメモを表示')
+            : _tr('모든 메모 숨기기', 'Hide All Memos', '隐藏所有笔记', 'すべてのメモを隠す'),
+        active: st.allHidden,
+        onTap: () {
+          setState(() => st.allHidden = !st.allHidden);
+          MemoTools.save();
+        },
+      ),
     ];
   }
 
@@ -1767,7 +1778,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
   /// 쪽 화면 + 책처럼 넘기기 막 + 글 고르기 막
   Widget _buildPageStage(BuildContext context, Widget pages) {
     final List<Widget> children = [RepaintBoundary(key: _curlKey, child: pages)];
-    children.add(Positioned.fill(child: BookCurlLayer(drag: _book, paper: _backdrop(context), backsideFromPaper: true /* 한 쪽 보기 종이 뒷면: 앱 테마와 상관없이 쪽의 종이 색(흰색·검은색·세피아) */)));
+    children.add(Positioned.fill(child: BookCurlLayer(drag: _book, paper: kViewerGapColor, backsideFromPaper: true /* 한 쪽 보기 종이 뒷면: 앱 테마와 상관없이 쪽의 종이 색(흰색·검은색·세피아) */)));
     // 길게 눌러 고른 글: 바탕·손잡이·[복사 | 모두 선택 | 공유] 막대 (확대·이동 시 글자와 함께 이동)
     children.add(Positioned.fill(
       child: AnimatedBuilder(
@@ -2868,7 +2879,7 @@ class _UniversalMediaReaderScreenState extends State<UniversalMediaReaderScreen>
     SystemBars.viewerStatus(_showControls);
     if (_isPreparingPages || _pageController == null) {
       return Scaffold(
-        backgroundColor: _backdrop(context),
+        backgroundColor: kViewerGapColor,
         body: FileLoadingView(label: _tr('파일 여는 중…', 'Opening file…', '正在打开文件', 'ファイルを開いています'), dark: Theme.of(context).brightness == Brightness.dark),
       );
     }
